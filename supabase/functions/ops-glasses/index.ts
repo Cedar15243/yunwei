@@ -58,9 +58,9 @@ type AiBrainDecision = {
   step: OpsStep;
   displayTitle: string;
   displayText: string;
-  fullText?: string;
-  displayPages?: string[];
-  textOverflowMode?: TextOverflowMode;
+  fullText: string;
+  displayPages: string[];
+  textOverflowMode: TextOverflowMode;
   displayHint: string;
   safeCommandKey?: string | null;
   humanEscalationSuggestion: boolean;
@@ -72,44 +72,28 @@ type GlassesResponse = {
   sessionId: string;
   step: OpsStep;
   text: string;
-  resultType?: ResultType;
-  feedbackCode?: FeedbackCode;
-  displayTitle?: string;
-  displayText?: string;
-  fullText?: string;
-  displayPages?: string[];
-  textOverflowMode?: TextOverflowMode;
-  currentPage?: number;
-  totalPages?: number;
-  displayHint?: string;
+  resultType: ResultType;
+  feedbackCode: FeedbackCode;
+  displayTitle: string;
+  displayText: string;
+  fullText: string;
+  displayPages: string[];
+  textOverflowMode: TextOverflowMode;
+  currentPage: number;
+  totalPages: number;
+  displayHint: string;
   safeCommandKey?: string | null;
-  humanEscalationSuggestion?: boolean;
+  humanEscalationSuggestion: boolean;
   requiresPhoto: boolean;
   canRetake: boolean;
+  canUseVoice: boolean;
   canEscalate: boolean;
+  canHumanEscalate: boolean;
   imageBytes?: number;
   voiceIntent?: VoiceIntent;
   transcript?: string;
   retestResult?: Record<string, unknown>;
   timestamp: string;
-};
-
-type AiObservation = {
-  screenType: string;
-  recognizedText: string;
-  photoQuality: "readable" | "unclear";
-  workflowSignal:
-    | "login_screen"
-    | "shell_prompt"
-    | "ssh_service_running"
-    | "ssh_service_stopped"
-    | "ssh_service_unknown"
-    | "photo_unclear"
-    | "unexpected_error";
-  riskLevel: "low" | "medium" | "high";
-  confidence: number;
-  needsBetterPhoto: boolean;
-  needsHumanExpert: boolean;
 };
 
 type Env = {
@@ -139,7 +123,9 @@ const corsHeaders = {
 };
 
 const storageBucket = "ops-glasses-captures";
-const promptVersion = "ssh-console-recovery-v1";
+const aiBrainPromptVersion = "air3-v2-ai-brain-v1";
+const taskGoal = "指导现场人员恢复服务器 SSH 远程访问";
+const operatorProfile = "现场小白，不懂 Linux 运维，需要一步一步指导";
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
@@ -204,46 +190,62 @@ async function handleSessionEvent(
   const action = normalizeAction(payload.action);
   const session = await loadOrCreateSession(supabase, env, stringOrEmpty(payload.sessionId));
   let imageId: string | null = null;
+  let imageBase64ForAi = "";
   let imageBytes = 0;
-  let observation: AiObservation | null = null;
 
   if (typeof payload.imageBase64 === "string" && payload.imageBase64.trim()) {
     const uploaded = await uploadImage(supabase, session.id, payload.imageBase64, stringOr(payload.imageKind, "console"));
     imageId = uploaded.imageId;
+    imageBase64ForAi = payload.imageBase64;
     imageBytes = uploaded.imageBytes;
-
-    if (env.OPENAI_API_KEY) {
-      observation = await analyzeConsoleImage({ supabase, env, sessionId: session.id, imageId, imageBase64: payload.imageBase64 });
-    }
   }
 
-  const next = await decideNextStep(supabase, session, action, observation, payload);
+  const contextBundle = await createContextBundle(supabase, {
+    session,
+    imageId,
+    voiceInputId: null,
+    transcript: "",
+    payload: { ...payload, source: stringOr(payload.source, "photo") },
+  });
+  const commands = await loadSafeCommands(supabase);
+  const aiResult = imageBase64ForAi
+    ? await requestAiBrainDecision({
+      supabase,
+      env,
+      session,
+      imageId,
+      contextBundle,
+      imageBase64: imageBase64ForAi,
+      transcript: "",
+      commands,
+    })
+    : null;
+  const next = aiResult?.decision ?? (imageBase64ForAi
+    ? unavailableDecision()
+    : noPhotoDecision());
+  const aiDecisionId = await storeAiDecision(supabase, {
+    session,
+    contextBundleId: contextBundle.id,
+    aiRequestId: aiResult?.aiRequestId ?? null,
+    decision: next,
+  });
   const event = await insertEvent(supabase, {
     sessionId: session.id,
     step: next.step,
     action,
     imageId,
-    instructionText: next.text,
-    payload: { imageBytes, observation },
+    instructionText: next.displayText,
+    payload: { imageBytes, aiDecisionId },
   });
 
   if (imageId) {
     await supabase.from("ops_images").update({ event_id: event.id }).eq("id", imageId);
   }
 
-  await updateSession(supabase, session.id, next.step, next.text, next.status);
+  const status = statusFromDecision(next);
+  await updateSession(supabase, session.id, next.step, next.displayText, status);
 
-  return {
-    ok: true,
-    sessionId: session.id,
-    step: next.step,
-    text: next.text,
-    requiresPhoto: next.requiresPhoto,
-    canRetake: true,
-    canEscalate: true,
-    imageBytes,
-    timestamp: new Date().toISOString(),
-  };
+  return responseFromDecision(session.id, next, { imageBytes, canRetake: true, canEscalate: true });
 }
 
 async function handleVoice(
@@ -277,7 +279,6 @@ async function handleVoice(
   }
 
   const voiceIntent = classifyVoiceIntent(transcript);
-  const next = voiceIntentToStep(session.current_step as OpsStep, voiceIntent);
 
   const { data: voiceInput, error: voiceError } = await supabase.from("voice_inputs").insert({
     session_id: sessionId,
@@ -290,28 +291,62 @@ async function handleVoice(
   }).select("id").single();
   throwIf(voiceError);
 
+  const latestImage = await latestImageForSession(supabase, sessionId);
+  const contextBundle = await createContextBundle(supabase, {
+    session,
+    imageId: latestImage?.id ?? null,
+    voiceInputId: voiceInput.id,
+    transcript,
+    payload: { ...payload, source: "voice", voiceIntent, transcriptError },
+  });
+  const commands = await loadSafeCommands(supabase);
+  const imageBase64 = latestImage ? await downloadImageBase64(supabase, latestImage.file_path) : "";
+  const aiResult = imageBase64
+    ? await requestAiBrainDecision({
+      supabase,
+      env,
+      session,
+      imageId: latestImage?.id ?? null,
+      contextBundle,
+      imageBase64,
+      transcript,
+      commands,
+    })
+    : null;
+  const next = aiResult?.decision ?? (latestImage
+    ? unavailableDecision()
+    : aiDecisionFromLegacy(
+      {
+        step: "needs_better_photo" as OpsStep,
+        text: "我还没有看到可用于判断的服务器控制台照片。请先把控制台或终端文字放进绿色框内拍照，再长按补充语音。",
+        requiresPhoto: true,
+      },
+      "insufficient_info",
+    ));
+  const aiDecisionId = await storeAiDecision(supabase, {
+    session,
+    contextBundleId: contextBundle.id,
+    aiRequestId: aiResult?.aiRequestId ?? null,
+    decision: next,
+  });
+
   await insertEvent(supabase, {
     sessionId,
     step: next.step,
     action: "voice_intent",
     voiceInputId: voiceInput.id,
-    instructionText: next.text,
-    payload: { transcript, voiceIntent, transcriptError },
+    imageId: latestImage?.id ?? null,
+    instructionText: next.displayText,
+    payload: { transcript, voiceIntent, transcriptError, aiDecisionId },
   });
-  await updateSession(supabase, sessionId, next.step, next.text, next.status);
+  await updateSession(supabase, sessionId, next.step, next.displayText, statusFromDecision(next));
 
-  return {
-    ok: true,
-    sessionId,
-    step: next.step,
-    text: next.text,
-    requiresPhoto: next.requiresPhoto,
-    canRetake: true,
-    canEscalate: true,
+  return responseFromDecision(sessionId, next, {
     transcript,
     voiceIntent,
-    timestamp: new Date().toISOString(),
-  };
+    canRetake: true,
+    canEscalate: true,
+  });
 }
 
 async function handleProbe(
@@ -357,17 +392,19 @@ async function handleProbe(
   });
   await updateSession(supabase, sessionId, step, result.text, status);
 
-  return {
-    ok: true,
+  return responseFromDecision(
     sessionId,
-    step,
-    text: result.text,
-    requiresPhoto: false,
-    canRetake: false,
-    canEscalate: step !== "completed",
-    retestResult: result,
-    timestamp: new Date().toISOString(),
-  };
+    decisionFromText({
+      step,
+      text: result.text,
+      title: step === "completed" ? "SSH 已恢复" : "远程复测结果",
+      resultType: step === "completed" ? "completed" : "remote_probe",
+      feedbackCode: null,
+      requiresPhoto: false,
+      hint: step === "completed" ? "本次会话完成。" : "请按 AI 指导继续补充现场画面。",
+    }),
+    { canRetake: false, canEscalate: step !== "completed", retestResult: result },
+  );
 }
 
 async function escalateSession(supabase: Supabase, sessionId: string): Promise<GlassesResponse> {
@@ -381,16 +418,20 @@ async function escalateSession(supabase: Supabase, sessionId: string): Promise<G
     payload: {},
   });
   await updateSession(supabase, sessionId, "needs_human_expert", text, "escalated");
-  return {
-    ok: true,
+  return responseFromDecision(
     sessionId,
-    step: "needs_human_expert",
-    text,
-    requiresPhoto: false,
-    canRetake: false,
-    canEscalate: false,
-    timestamp: new Date().toISOString(),
-  };
+    decisionFromText({
+      step: "needs_human_expert",
+      text,
+      title: "已转人工",
+      resultType: "human_suggested",
+      feedbackCode: null,
+      requiresPhoto: false,
+      hint: "请保持现场画面，等待人工运维接管。",
+      humanEscalationSuggestion: true,
+    }),
+    { canRetake: false, canEscalate: false },
+  );
 }
 
 async function getSessionResponse(supabase: Supabase, sessionId: string) {
@@ -442,121 +483,6 @@ async function mustGetSession(supabase: Supabase, sessionId: string) {
   return data;
 }
 
-async function decideNextStep(
-  supabase: Supabase,
-  session: Record<string, unknown>,
-  action: EventAction,
-  observation: AiObservation | null,
-  payload: Record<string, unknown>,
-): Promise<{ step: OpsStep; text: string; requiresPhoto: boolean; status: "running" | "completed" | "escalated" }> {
-  const currentStep = String(session.current_step || "locate_server") as OpsStep;
-
-  if (action === "escalate") {
-    return {
-      step: "needs_human_expert",
-      text: "已停止自动指导，并转人工运维专家接管。",
-      requiresPhoto: false,
-      status: "escalated",
-    };
-  }
-
-  if (observation?.needsHumanExpert || observation?.riskLevel === "high") {
-    return {
-      step: "needs_human_expert",
-      text: "AI 识别到高风险或异常状态。请停止操作，转人工运维专家接管。",
-      requiresPhoto: false,
-      status: "escalated",
-    };
-  }
-
-  if (observation?.workflowSignal === "unexpected_error") {
-    return {
-      step: "needs_better_photo",
-      text: "当前画面不像服务器本地控制台或终端输出。请把眼镜对准服务器本地屏幕、登录界面或命令行窗口重新拍摄，不要拍聊天窗口、浏览器资料或普通桌面。",
-      requiresPhoto: true,
-      status: "running",
-    };
-  }
-
-  if (observation?.needsBetterPhoto || observation?.workflowSignal === "photo_unclear") {
-    return {
-      step: "needs_better_photo",
-      text: "照片不清晰，无法可靠识别。请靠近控制台屏幕重新拍摄，避免反光。",
-      requiresPhoto: true,
-      status: "running",
-    };
-  }
-
-  const commands = await loadSafeCommands(supabase);
-
-  const isNewStartWithoutPhoto = !stringOrEmpty(payload.sessionId) &&
-    (action === "start_task" || !stringOrEmpty(payload.imageBase64));
-
-  if (isNewStartWithoutPhoto) {
-    return {
-      step: "locate_server",
-      text: [
-        `服务器 ${session.target_asset} 远程 SSH 不可达。`,
-        "请到服务器本地控制台前，拍摄屏幕和资产标签。",
-        "单击拍摄，长按可转人工。",
-      ].join("\n"),
-      requiresPhoto: true,
-      status: "running",
-    };
-  }
-
-  if (currentStep === "locate_server" || action === "console_photo_uploaded") {
-    return {
-      step: "run_diagnostic_command",
-      text: [
-        "已收到本地控制台照片。",
-        `请输入：${commands.ssh_status}`,
-        "只输入这一条命令。执行后请单击拍摄完整输出。",
-      ].join("\n"),
-      requiresPhoto: true,
-      status: "running",
-    };
-  }
-
-  if (currentStep === "run_diagnostic_command" || action === "diagnostic_output_uploaded") {
-    const signal = observation?.workflowSignal ?? "ssh_service_unknown";
-    if (signal === "ssh_service_running") {
-      return {
-        step: "verify_remote_access",
-        text: "控制台显示 SSH 服务可能已运行。现在开始远程复测，请等待结果。",
-        requiresPhoto: false,
-        status: "running",
-      };
-    }
-    return {
-      step: "run_recovery_command",
-      text: [
-        "SSH 服务未运行或状态异常。",
-        `请输入：${commands.ssh_start}`,
-        "只允许输入这一条恢复命令。执行后请拍摄命令输出。",
-      ].join("\n"),
-      requiresPhoto: true,
-      status: "running",
-    };
-  }
-
-  if (currentStep === "run_recovery_command" || action === "recovery_output_uploaded") {
-    return {
-      step: "verify_remote_access",
-      text: "已收到恢复命令输出。后台将复测 Ping、22 端口和应用端口，请等待结果。",
-      requiresPhoto: false,
-      status: "running",
-    };
-  }
-
-  return {
-    step: "needs_better_photo",
-    text: "当前步骤信息不足。请重新拍摄清晰的本地控制台屏幕。",
-    requiresPhoto: true,
-    status: "running",
-  };
-}
-
 async function loadSafeCommands(supabase: Supabase): Promise<Record<string, string>> {
   const { data, error } = await supabase.from("safe_commands")
     .select("command_key, command_text")
@@ -568,6 +494,66 @@ async function loadSafeCommands(supabase: Supabase): Promise<Record<string, stri
       row.command_text,
     ]),
   );
+}
+
+async function createContextBundle(
+  supabase: Supabase,
+  input: {
+    session: Record<string, unknown>;
+    imageId: string | null;
+    voiceInputId: string | null;
+    transcript: string;
+    payload: Record<string, unknown>;
+  },
+): Promise<{ id: string; context_json: Record<string, unknown> }> {
+  const currentStep = normalizeStep(input.session.current_step);
+  const context = {
+    taskGoal: taskGoal,
+    currentStep,
+    operatorProfile,
+    transcript: input.transcript,
+    imageId: input.imageId,
+    voiceInputId: input.voiceInputId,
+    source: stringOr(input.payload.source, ""),
+    timestamp: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase.from("ai_context_bundles").insert({
+    session_id: input.session.id,
+    image_id: input.imageId,
+    voice_input_id: input.voiceInputId,
+    current_step: currentStep,
+    task_goal: taskGoal,
+    transcript: input.transcript,
+    context_json: context,
+  }).select("id, context_json").single();
+  throwIf(error);
+  return data as { id: string; context_json: Record<string, unknown> };
+}
+
+async function latestImageForSession(
+  supabase: Supabase,
+  sessionId: string,
+): Promise<{ id: string; file_path: string } | null> {
+  const { data, error } = await supabase.from("ops_images")
+    .select("id, file_path")
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  throwIf(error);
+  return data ?? null;
+}
+
+async function downloadImageBase64(supabase: Supabase, filePath: string): Promise<string> {
+  const { data, error } = await supabase.storage.from(storageBucket).download(filePath);
+  throwIf(error);
+  const bytes = new Uint8Array(await data.arrayBuffer());
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
 }
 
 async function uploadImage(
@@ -599,85 +585,64 @@ async function uploadBytes(supabase: Supabase, filePath: string, bytes: Uint8Arr
   throwIf(error);
 }
 
-async function analyzeConsoleImage(
-  { supabase, env, sessionId, imageId, imageBase64 }: {
+async function requestAiBrainDecision(
+  { supabase, env, session, imageId, contextBundle, imageBase64, transcript, commands }: {
     supabase: Supabase;
     env: Env;
-    sessionId: string;
-    imageId: string;
+    session: Record<string, unknown>;
+    imageId: string | null;
+    contextBundle: { id: string; context_json: Record<string, unknown> };
     imageBase64: string;
+    transcript: string;
+    commands: Record<string, string>;
   },
-): Promise<AiObservation> {
+): Promise<{ decision: AiBrainDecision; aiRequestId: string | null } | null> {
+  if (!env.OPENAI_API_KEY || !imageBase64) {
+    return null;
+  }
+
   const started = Date.now();
   const model = env.OPENAI_VISION_MODEL;
+  const prompt = aiBrainPrompt({ ...contextBundle.context_json, transcript }, commands);
+  const imageUrl = ensureDataUrl(imageBase64, "image/jpeg");
 
   try {
-    const { raw, outputText } = await requestVisionObservation(env, model, imageBase64);
-    const observation = validateObservation(JSON.parse(extractJsonObject(outputText)));
-
-    const { data: requestRow, error: requestError } = await supabase.from("ai_requests").insert({
-      session_id: sessionId,
+    const responseResult = await callResponsesAiBrain(env, model, prompt, imageUrl);
+    const rawResult = responseResult.ok ? responseResult : await callChatCompletionsAiBrain(env, model, prompt, imageUrl);
+    if (!rawResult.ok) {
+      throw new Error(JSON.stringify(rawResult.raw));
+    }
+    const parsed = JSON.parse(extractJsonObject(rawResult.outputText));
+    const decision = validateAiBrainDecision(parsed, commands);
+    const { data: requestRow, error } = await supabase.from("ai_requests").insert({
+      session_id: session.id,
       image_id: imageId,
       model,
-      prompt_version: promptVersion,
+      prompt_version: aiBrainPromptVersion,
       status: "success",
       latency_ms: Date.now() - started,
-      raw_response: raw,
+      raw_response: rawResult.raw,
     }).select("id").single();
-    throwIf(requestError);
-
-    const { error: observationError } = await supabase.from("ai_observations").insert({
-      session_id: sessionId,
-      image_id: imageId,
-      ai_request_id: requestRow.id,
-      screen_type: observation.screenType,
-      recognized_text: observation.recognizedText,
-      workflow_signal: observation.workflowSignal,
-      risk_level: observation.riskLevel,
-      confidence: observation.confidence,
-      raw_json: observation,
-    });
-    throwIf(observationError);
-    return observation;
+    throwIf(error);
+    return { decision, aiRequestId: requestRow.id };
   } catch (error) {
-    await supabase.from("ai_requests").insert({
-      session_id: sessionId,
+    const { data } = await supabase.from("ai_requests").insert({
+      session_id: session.id,
       image_id: imageId,
       model,
-      prompt_version: promptVersion,
+      prompt_version: aiBrainPromptVersion,
       status: "failed",
       latency_ms: Date.now() - started,
       error_message: error instanceof Error ? error.message : String(error),
-    });
+    }).select("id").maybeSingle();
     return {
-      screenType: "unknown",
-      recognizedText: "",
-      photoQuality: "readable",
-      workflowSignal: "ssh_service_unknown",
-      riskLevel: "medium",
-      confidence: 0.4,
-      needsBetterPhoto: false,
-      needsHumanExpert: false,
+      decision: unavailableDecision(),
+      aiRequestId: data?.id ?? null,
     };
   }
 }
 
-async function requestVisionObservation(
-  env: Env,
-  model: string,
-  imageBase64: string,
-): Promise<{ raw: Record<string, unknown>; outputText: string }> {
-  const prompt = consoleObservationPrompt();
-  const imageUrl = ensureDataUrl(imageBase64, "image/jpeg");
-  const responseResult = await callResponsesVision(env, model, prompt, imageUrl);
-  if (responseResult.ok) return responseResult;
-
-  const chatResult = await callChatCompletionsVision(env, model, prompt, imageUrl);
-  if (chatResult.ok) return chatResult;
-  throw new Error(JSON.stringify({ responses: responseResult.raw, chat_completions: chatResult.raw }));
-}
-
-async function callResponsesVision(
+async function callResponsesAiBrain(
   env: Env,
   model: string,
   prompt: string,
@@ -703,8 +668,8 @@ async function callResponsesVision(
       text: {
         format: {
           type: "json_schema",
-          name: "console_observation",
-          schema: observationJsonSchema(),
+          name: "air3_ai_brain_decision",
+          schema: aiBrainJsonSchema(),
           strict: true,
         },
       },
@@ -712,17 +677,10 @@ async function callResponsesVision(
   });
   const raw = await safeJson(response);
   if (!response.ok) return { ok: false, raw };
-
-  const outputText = stringOr(raw.output_text, "") ||
-    (Array.isArray(raw.output)
-      ? raw.output.flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? [])
-        .map((content: { text?: string }) => content.text ?? "")
-        .join("")
-      : "");
-  return { ok: true, raw, outputText };
+  return { ok: true, raw, outputText: outputTextFromResponses(raw) };
 }
 
-async function callChatCompletionsVision(
+async function callChatCompletionsAiBrain(
   env: Env,
   model: string,
   prompt: string,
@@ -756,52 +714,82 @@ async function callChatCompletionsVision(
   return { ok: true, raw, outputText: first?.message?.content ?? "" };
 }
 
-function consoleObservationPrompt(): string {
+function aiBrainPrompt(context: Record<string, unknown>, commands: Record<string, string>): string {
   return [
-    "如果画面是聊天软件、网页资料、普通桌面或与服务器本地控制台无关，请将 workflowSignal 设为 unexpected_error，needsBetterPhoto 设为 false。",
-    "如果画面确实是服务器本地控制台、登录界面或终端，但文字模糊、反光或过远，请将 workflowSignal 设为 photo_unclear，needsBetterPhoto 设为 true。",
-    "你是企业内部服务器运维眼镜的控制台识别模块。",
-    "只识别照片内容并输出 JSON，不要生成任何 shell 命令。",
-    "判断照片是否清晰、是否是登录界面/shell/命令输出、SSH 服务状态。",
-    "允许 workflowSignal: login_screen, shell_prompt, ssh_service_running, ssh_service_stopped, ssh_service_unknown, photo_unclear, unexpected_error。",
-    "输出 JSON 字段: screenType, recognizedText, photoQuality, workflowSignal, riskLevel, confidence, needsBetterPhoto, needsHumanExpert。",
+    "你是 Air3 AI 运维眼镜的主 AI 大脑，直接指导现场小白恢复服务器 SSH 远程访问。",
+    "你会同时获得服务器控制台图片、现场人员语音转写文字、当前步骤和任务目标。",
+    "现场人员不是运维专家，请用短句、明确、可执行的中文指导。",
+    "如果需要展示命令，只能使用 allowedCommands 中的命令文本，不要自由生成新命令。",
+    "如果画面不是服务器控制台，返回 resultType=recognition_problem, feedbackCode=wrong_target。",
+    "如果画面是控制台但文字不清，返回 feedbackCode=unclear_photo。",
+    "如果缺少关键命令输出，返回 feedbackCode=insufficient_info。",
+    "如果语音转写不清楚，返回 feedbackCode=voice_unclear。",
+    "如果图片和语音转写冲突，返回 feedbackCode=image_voice_conflict。",
+    "如果建议人工介入，返回 resultType=human_suggested；最终是否人工介入由小白决定。",
+    "displayTitle、displayText、displayHint 必须是给现场小白看的中文，不要包含 HTTP、bytes、session、异常类名、原始 JSON 或 debug 信息。",
+    "只返回 JSON，不要 Markdown。",
+    JSON.stringify({ context, allowedCommands: commands }),
   ].join("\n");
 }
 
-function observationJsonSchema(): Record<string, unknown> {
+function aiBrainJsonSchema(): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
     required: [
-      "screenType",
-      "recognizedText",
-      "photoQuality",
-      "workflowSignal",
-      "riskLevel",
-      "confidence",
-      "needsBetterPhoto",
-      "needsHumanExpert",
+      "resultType",
+      "feedbackCode",
+      "step",
+      "displayTitle",
+      "displayText",
+      "displayHint",
+      "safeCommandKey",
+      "humanEscalationSuggestion",
+      "requiresPhoto",
     ],
     properties: {
-      screenType: { type: "string" },
-      recognizedText: { type: "string" },
-      photoQuality: { type: "string", enum: ["readable", "unclear"] },
-      workflowSignal: {
+      resultType: {
         type: "string",
-        enum: [
-          "login_screen",
-          "shell_prompt",
-          "ssh_service_running",
-          "ssh_service_stopped",
-          "ssh_service_unknown",
-          "photo_unclear",
-          "unexpected_error",
+        enum: ["instruction", "recognition_problem", "network_error", "remote_probe", "completed", "human_suggested"],
+      },
+      feedbackCode: {
+        anyOf: [
+          {
+            type: "string",
+            enum: [
+              "wrong_target",
+              "unclear_photo",
+              "insufficient_info",
+              "voice_unclear",
+              "image_voice_conflict",
+              "ai_unavailable",
+              "network_error",
+            ],
+          },
+          { type: "null" },
         ],
       },
-      riskLevel: { type: "string", enum: ["low", "medium", "high"] },
-      confidence: { type: "number" },
-      needsBetterPhoto: { type: "boolean" },
-      needsHumanExpert: { type: "boolean" },
+      step: {
+        type: "string",
+        enum: [
+          "locate_server",
+          "inspect_console",
+          "run_diagnostic_command",
+          "confirm_diagnostic_output",
+          "run_recovery_command",
+          "verify_remote_access",
+          "new_issue_triage",
+          "completed",
+          "needs_better_photo",
+          "needs_human_expert",
+        ],
+      },
+      displayTitle: { type: "string" },
+      displayText: { type: "string" },
+      displayHint: { type: "string" },
+      safeCommandKey: { anyOf: [{ type: "string" }, { type: "null" }] },
+      humanEscalationSuggestion: { type: "boolean" },
+      requiresPhoto: { type: "boolean" },
     },
   };
 }
@@ -814,6 +802,16 @@ async function safeJson(response: Response): Promise<Record<string, unknown>> {
   } catch {
     return { text };
   }
+}
+
+function outputTextFromResponses(raw: Record<string, unknown>): string {
+  const direct = stringOr(raw.output_text, "");
+  if (direct) return direct;
+  if (!Array.isArray(raw.output)) return "";
+  return raw.output
+    .flatMap((item: { content?: Array<{ text?: string }> }) => item.content ?? [])
+    .map((content: { text?: string }) => content.text ?? "")
+    .join("");
 }
 
 function extractJsonObject(value: string): string {
@@ -929,41 +927,6 @@ function classifyProbe(probe: { sshReachable: boolean; appPort?: number; appPort
   };
 }
 
-function voiceIntentToStep(currentStep: OpsStep, voiceIntent: VoiceIntent) {
-  if (voiceIntent === "escalate") {
-    return {
-      step: "needs_human_expert" as OpsStep,
-      text: "已转人工运维专家，请保持现场等待进一步指示。",
-      requiresPhoto: false,
-      status: "escalated" as const,
-    };
-  }
-  if (voiceIntent === "retake") {
-    return {
-      step: "needs_better_photo" as OpsStep,
-      text: "请重新拍摄清晰的控制台屏幕，文字尽量完整。",
-      requiresPhoto: true,
-      status: "running" as const,
-    };
-  }
-  if (voiceIntent === "confirm_done") {
-    return {
-      step: currentStep === "run_recovery_command" ? "verify_remote_access" as OpsStep : "confirm_diagnostic_output" as OpsStep,
-      text: currentStep === "run_recovery_command"
-        ? "收到确认。后台开始复测 SSH，请等待结果。"
-        : "收到确认。请拍摄完整命令输出，方便 AI 判断下一步。",
-      requiresPhoto: currentStep !== "run_recovery_command",
-      status: "running" as const,
-    };
-  }
-  return {
-    step: currentStep,
-    text: "已收到语音，但没有识别出明确动作。请单击继续、重拍，或说“转人工”。",
-    requiresPhoto: true,
-    status: "running" as const,
-  };
-}
-
 async function insertEvent(
   supabase: Supabase,
   event: {
@@ -989,6 +952,37 @@ async function insertEvent(
   return data;
 }
 
+async function storeAiDecision(
+  supabase: Supabase,
+  input: {
+    session: Record<string, unknown>;
+    contextBundleId: string | null;
+    aiRequestId: string | null;
+    decision: AiBrainDecision;
+  },
+): Promise<string | null> {
+  const { data, error } = await supabase.from("ai_decisions").insert({
+    session_id: input.session.id,
+    context_bundle_id: input.contextBundleId,
+    ai_request_id: input.aiRequestId,
+    result_type: input.decision.resultType,
+    feedback_code: input.decision.feedbackCode,
+    step: input.decision.step,
+    safe_command_key: input.decision.safeCommandKey ?? null,
+    display_title: input.decision.displayTitle,
+    display_text: input.decision.displayText,
+    full_text: input.decision.fullText,
+    display_pages: input.decision.displayPages,
+    text_overflow_mode: input.decision.textOverflowMode,
+    page_count: input.decision.displayPages.length || 1,
+    display_hint: input.decision.displayHint,
+    human_escalation_suggestion: input.decision.humanEscalationSuggestion,
+    raw_json: input.decision,
+  }).select("id").maybeSingle();
+  throwIf(error);
+  return data?.id ?? null;
+}
+
 async function updateSession(
   supabase: Supabase,
   sessionId: string,
@@ -1006,27 +1000,280 @@ async function updateSession(
   throwIf(error);
 }
 
-function validateObservation(value: Record<string, unknown>): AiObservation {
-  const workflowSignal = stringOr(value.workflowSignal, "ssh_service_unknown") as AiObservation["workflowSignal"];
-  const allowedSignals = new Set([
-    "login_screen",
-    "shell_prompt",
-    "ssh_service_running",
-    "ssh_service_stopped",
-    "ssh_service_unknown",
-    "photo_unclear",
-    "unexpected_error",
-  ]);
+function validateAiBrainDecision(value: Record<string, unknown>, commands: Record<string, string>): AiBrainDecision {
+  const safeCommandKey = nullableString(value.safeCommandKey);
+  if (safeCommandKey && !(safeCommandKey in commands)) {
+    return humanSuggestedDecision();
+  }
+  const resultType = normalizeResultType(value.resultType);
+  const feedbackCode = normalizeFeedbackCode(value.feedbackCode);
+  const displayTitle = stripDebugText(stringOr(value.displayTitle, ""));
+  const displayText = stripDebugText(stringOr(value.displayText, ""));
+  const displayHint = stripDebugText(stringOr(value.displayHint, ""));
+  const fullText = stripDebugText(stringOr(value.fullText, displayText || displayTitle));
+  const pages = Array.isArray(value.displayPages)
+    ? value.displayPages.map((page) => stripDebugText(String(page))).filter(Boolean)
+    : paginateFullText(fullText);
+  const displayPages = pages.length ? pages : paginateFullText(displayText || displayTitle);
+  const textOverflowMode: TextOverflowMode = displayPages.length > 1 ? "paged" : "single";
+
   return {
-    screenType: stringOr(value.screenType, "unknown"),
-    recognizedText: stringOr(value.recognizedText, ""),
-    photoQuality: value.photoQuality === "unclear" ? "unclear" : "readable",
-    workflowSignal: allowedSignals.has(workflowSignal) ? workflowSignal : "ssh_service_unknown",
-    riskLevel: value.riskLevel === "high" ? "high" : value.riskLevel === "medium" ? "medium" : "low",
-    confidence: clampNumber(Number(value.confidence ?? 0.5), 0, 1),
-    needsBetterPhoto: Boolean(value.needsBetterPhoto),
-    needsHumanExpert: Boolean(value.needsHumanExpert),
+    resultType,
+    feedbackCode,
+    step: normalizeStep(value.step),
+    displayTitle: displayTitle || defaultTitleFor(resultType, feedbackCode),
+    displayText: displayPages[0] || displayText || displayTitle || "请按提示继续。",
+    fullText: fullText || displayText || displayTitle || "请按提示继续。",
+    displayPages,
+    textOverflowMode,
+    displayHint: displayHint || defaultHintFor(resultType, feedbackCode),
+    safeCommandKey,
+    humanEscalationSuggestion: Boolean(value.humanEscalationSuggestion) || resultType === "human_suggested",
+    requiresPhoto: Boolean(value.requiresPhoto),
   };
+}
+
+function aiDecisionFromLegacy(
+  legacy: { step: OpsStep; text: string; requiresPhoto: boolean },
+  feedbackCode: FeedbackCode,
+): AiBrainDecision {
+  const resultType: ResultType = legacy.step === "needs_human_expert"
+    ? "human_suggested"
+    : feedbackCode
+    ? feedbackCode === "ai_unavailable" || feedbackCode === "network_error" ? "network_error" : "recognition_problem"
+    : legacy.step === "completed"
+    ? "completed"
+    : "instruction";
+  return decisionFromText({
+    step: legacy.step,
+    text: legacy.text,
+    title: defaultTitleFor(resultType, feedbackCode),
+    resultType,
+    feedbackCode,
+    requiresPhoto: legacy.requiresPhoto,
+    hint: defaultHintFor(resultType, feedbackCode),
+    humanEscalationSuggestion: resultType === "human_suggested",
+  });
+}
+
+function decisionFromText(input: {
+  step: OpsStep;
+  text: string;
+  title: string;
+  resultType: ResultType;
+  feedbackCode: FeedbackCode;
+  requiresPhoto: boolean;
+  hint: string;
+  safeCommandKey?: string | null;
+  humanEscalationSuggestion?: boolean;
+}): AiBrainDecision {
+  const fullText = stripDebugText(input.text);
+  const displayPages = paginateFullText(fullText);
+  return {
+    resultType: input.resultType,
+    feedbackCode: input.feedbackCode,
+    step: input.step,
+    displayTitle: stripDebugText(input.title),
+    displayText: displayPages[0] || fullText,
+    fullText,
+    displayPages,
+    textOverflowMode: displayPages.length > 1 ? "paged" : "single",
+    displayHint: stripDebugText(input.hint),
+    safeCommandKey: input.safeCommandKey ?? null,
+    humanEscalationSuggestion: Boolean(input.humanEscalationSuggestion),
+    requiresPhoto: input.requiresPhoto,
+  };
+}
+
+function unavailableDecision(): AiBrainDecision {
+  return decisionFromText({
+    step: "needs_better_photo",
+    text: "AI 运维服务暂时不可用。请保持现场画面，稍后重试；如果现场情况紧急，可以选择转人工。",
+    title: "AI 暂时不可用",
+    resultType: "network_error",
+    feedbackCode: "ai_unavailable",
+    requiresPhoto: true,
+    hint: "请检查网络后重试，或由你决定是否转人工。",
+    humanEscalationSuggestion: true,
+  });
+}
+
+function noPhotoDecision(): AiBrainDecision {
+  return decisionFromText({
+    step: "locate_server",
+    text: "请先到服务器本地控制台前，把登录界面、黑底终端或命令输出放进绿色框内拍照。AI 需要先看到现场画面，才能给下一步操作指导。",
+    title: "请先拍摄控制台",
+    resultType: "recognition_problem",
+    feedbackCode: "insufficient_info",
+    requiresPhoto: true,
+    hint: "单击中心拍照，长按中心可补充语音。",
+  });
+}
+
+function humanSuggestedDecision(): AiBrainDecision {
+  return decisionFromText({
+    step: "needs_human_expert",
+    text: "当前指令超出安全范围，我建议请运维专家介入。",
+    title: "建议转人工",
+    resultType: "human_suggested",
+    feedbackCode: null,
+    requiresPhoto: false,
+    hint: "AI 只是建议，是否转人工由你决定。",
+    humanEscalationSuggestion: true,
+  });
+}
+
+function responseFromDecision(
+  sessionId: string,
+  decision: AiBrainDecision,
+  extras: {
+    imageBytes?: number;
+    transcript?: string;
+    voiceIntent?: VoiceIntent;
+    retestResult?: Record<string, unknown>;
+    canRetake?: boolean;
+    canEscalate?: boolean;
+  } = {},
+): GlassesResponse {
+  const displayPages = decision.displayPages.length ? decision.displayPages : paginateFullText(decision.fullText);
+  const textOverflowMode: TextOverflowMode = displayPages.length > 1 ? "paged" : "single";
+  return {
+    ok: true,
+    sessionId,
+    step: decision.step,
+    text: decision.displayText,
+    resultType: decision.resultType,
+    feedbackCode: decision.feedbackCode,
+    displayTitle: decision.displayTitle,
+    displayText: displayPages[0] || decision.displayText,
+    fullText: decision.fullText,
+    displayPages,
+    textOverflowMode,
+    currentPage: 1,
+    totalPages: displayPages.length || 1,
+    displayHint: decision.displayHint,
+    safeCommandKey: decision.safeCommandKey ?? null,
+    humanEscalationSuggestion: decision.humanEscalationSuggestion,
+    requiresPhoto: decision.requiresPhoto,
+    canRetake: extras.canRetake ?? decision.requiresPhoto,
+    canUseVoice: true,
+    canEscalate: extras.canEscalate ?? true,
+    canHumanEscalate: extras.canEscalate ?? true,
+    imageBytes: extras.imageBytes,
+    voiceIntent: extras.voiceIntent,
+    transcript: extras.transcript,
+    retestResult: extras.retestResult,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function statusFromDecision(decision: AiBrainDecision): "running" | "completed" | "escalated" {
+  if (decision.resultType === "completed" || decision.step === "completed") return "completed";
+  if (decision.step === "needs_human_expert") return "escalated";
+  return "running";
+}
+
+function paginateFullText(text: string): string[] {
+  const clean = stripDebugText(text).trim();
+  if (!clean) return ["请按提示继续。"];
+  const hardLimit = 54;
+  const sentences = clean
+    .split(/(?<=[。！？；\n])/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const pages: string[] = [];
+  let current = "";
+  for (const sentence of sentences.length ? sentences : [clean]) {
+    if ((current + sentence).length > hardLimit && current) {
+      pages.push(current.trim());
+      current = "";
+    }
+    if (sentence.length > hardLimit) {
+      for (let index = 0; index < sentence.length; index += hardLimit) {
+        const chunk = sentence.slice(index, index + hardLimit).trim();
+        if (chunk) pages.push(chunk);
+      }
+      continue;
+    }
+    current = current ? `${current}${sentence}` : sentence;
+  }
+  if (current.trim()) pages.push(current.trim());
+  return pages.length ? pages : [clean];
+}
+
+function normalizeStep(value: unknown): OpsStep {
+  const allowed = new Set<OpsStep>([
+    "locate_server",
+    "inspect_console",
+    "run_diagnostic_command",
+    "confirm_diagnostic_output",
+    "run_recovery_command",
+    "verify_remote_access",
+    "new_issue_triage",
+    "completed",
+    "needs_better_photo",
+    "needs_human_expert",
+  ]);
+  return allowed.has(value as OpsStep) ? value as OpsStep : "needs_better_photo";
+}
+
+function normalizeResultType(value: unknown): ResultType {
+  const allowed = new Set<ResultType>([
+    "instruction",
+    "recognition_problem",
+    "network_error",
+    "remote_probe",
+    "completed",
+    "human_suggested",
+  ]);
+  return allowed.has(value as ResultType) ? value as ResultType : "recognition_problem";
+}
+
+function normalizeFeedbackCode(value: unknown): FeedbackCode {
+  if (value === null || value === undefined || value === "") return null;
+  const allowed = new Set<Exclude<FeedbackCode, null>>([
+    "wrong_target",
+    "unclear_photo",
+    "insufficient_info",
+    "voice_unclear",
+    "image_voice_conflict",
+    "ai_unavailable",
+    "network_error",
+  ]);
+  return allowed.has(value as Exclude<FeedbackCode, null>) ? value as FeedbackCode : "insufficient_info";
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stripDebugText(value: string): string {
+  return value
+    .replace(/\bhttps?:\/\/\S+/gi, "")
+    .replace(/\b(session|bytes|debug|exception|http)\b\s*[:=]?\s*\S*/gi, "")
+    .trim();
+}
+
+function defaultTitleFor(resultType: ResultType, feedbackCode: FeedbackCode): string {
+  if (resultType === "completed") return "SSH 已恢复";
+  if (resultType === "human_suggested") return "建议转人工";
+  if (resultType === "network_error") return "服务暂时不可用";
+  if (feedbackCode === "wrong_target") return "拍错目标";
+  if (feedbackCode === "unclear_photo") return "照片不清楚";
+  if (feedbackCode === "voice_unclear") return "语音不清楚";
+  if (feedbackCode === "insufficient_info") return "信息不足";
+  return "下一步操作";
+}
+
+function defaultHintFor(resultType: ResultType, feedbackCode: FeedbackCode): string {
+  if (resultType === "completed") return "本次会话完成。";
+  if (resultType === "human_suggested") return "AI 只是建议，是否转人工由你决定。";
+  if (resultType === "network_error") return "请检查网络后重试，或由你决定是否转人工。";
+  if (feedbackCode === "wrong_target") return "请只拍服务器登录界面、黑底终端或命令输出。";
+  if (feedbackCode === "unclear_photo") return "请靠近屏幕，避免反光，把文字放进绿色框后重拍。";
+  if (feedbackCode === "voice_unclear") return "请重新长按，说短一点。";
+  if (feedbackCode === "insufficient_info") return "请补拍完整控制台画面。";
+  return "输入完成后，单击中心拍摄输出结果。";
 }
 
 function classifyVoiceIntent(text: string): VoiceIntent {

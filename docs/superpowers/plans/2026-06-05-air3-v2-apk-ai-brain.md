@@ -505,7 +505,7 @@ git commit -m "feat: add AI brain context schema"
 - Modify: `supabase/functions/ops-glasses/index.ts`
 - Test by command: `deno check`, `npm run validate:supabase`, HTTP calls to `/sessions/events` and `/sessions/:id/voice`
 
-- [ ] **Step 1: Add response types**
+- [x] **Step 1: Add response types**
 
 Add these types near the current `GlassesResponse` type:
 
@@ -541,7 +541,7 @@ type AiBrainDecision = {
 };
 ```
 
-- [ ] **Step 2: Extend `GlassesResponse`**
+- [x] **Step 2: Extend `GlassesResponse`**
 
 Add fields:
 
@@ -558,7 +558,7 @@ canUseVoice: boolean;
 
 Keep `text` temporarily for backward compatibility with the current APK.
 
-- [ ] **Step 3: Build context bundle after photo upload**
+- [x] **Step 3: Build context bundle after photo upload**
 
 Add a helper:
 
@@ -596,7 +596,7 @@ async function createContextBundle(
 }
 ```
 
-- [ ] **Step 4: Replace voice-only intent flow**
+- [x] **Step 4: Replace voice-only intent flow**
 
 Change `handleVoice` so it:
 
@@ -613,7 +613,7 @@ Change `handleVoice` so it:
 
 Do not use `voiceIntentToStep` as the primary V2 path. Keep it only as fallback if the main AI is unavailable.
 
-- [ ] **Step 5: Add latest-image lookup**
+- [x] **Step 5: Add latest-image lookup**
 
 Add:
 
@@ -630,7 +630,7 @@ async function latestImageForSession(supabase: Supabase, sessionId: string): Pro
 }
 ```
 
-- [ ] **Step 6: Add AI brain prompt**
+- [x] **Step 6: Add AI brain prompt**
 
 Add:
 
@@ -652,7 +652,7 @@ function aiBrainPrompt(context: Record<string, unknown>, commands: Record<string
 }
 ```
 
-- [ ] **Step 7: Add response schema enforcement**
+- [x] **Step 7: Add response schema enforcement**
 
 The main AI response must include:
 
@@ -680,7 +680,7 @@ When `safeCommandKey` is present, check it exists in `safe_commands`. If not, re
 }
 ```
 
-- [ ] **Step 8: Store AI decision**
+- [x] **Step 8: Store AI decision**
 
 Insert into `ai_decisions` after each AI brain call:
 
@@ -701,7 +701,7 @@ await supabase.from("ai_decisions").insert({
 });
 ```
 
-- [ ] **Step 9: Deno check**
+- [x] **Step 9: Deno check**
 
 Run:
 
@@ -711,7 +711,7 @@ Run:
 
 Expected: no type errors.
 
-- [ ] **Step 10: Validate Supabase assets**
+- [x] **Step 10: Validate Supabase assets**
 
 Run:
 
@@ -722,7 +722,7 @@ npm run validate:supabase
 
 Expected: validation passes.
 
-- [ ] **Step 11: Commit backend checkpoint**
+- [x] **Step 11: Commit backend checkpoint**
 
 ```powershell
 git add supabase/functions/ops-glasses/index.ts

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "validate:supabase": "node scripts/validate-supabase-assets.mjs && node scripts/check-text-balance.mjs"
+    "validate:supabase": "node scripts/validate-supabase-assets.mjs && node scripts/validate-ai-brain-flow.mjs && node scripts/check-text-balance.mjs",
+    "validate:ai-brain": "node scripts/validate-ai-brain-flow.mjs"
   },
   "engines": {
     "node": ">=20"
