@@ -900,7 +900,7 @@ git commit -m "feat: render structured AI brain HUD responses"
 - Verify: `supabase/functions/ops-glasses/automigrate.ts`
 - Evidence: `tmp/air3-v2-*.json`
 
-- [ ] **Step 1: Check function health**
+- [x] **Step 1: Check function health**
 
 Run:
 
@@ -915,11 +915,11 @@ Expected:
 {"ok":true,"service":"ops-glasses"}
 ```
 
-- [ ] **Step 2: Validate unauthorized protection**
+- [x] **Step 2: Validate unauthorized protection**
 
 Run a POST without `x-ops-glasses-key`. Expected: 401.
 
-- [ ] **Step 3: Test photo event with known console image**
+- [x] **Step 3: Test photo event with known console image**
 
 Use an existing test image or captured console image and call `/sessions/events` with:
 
@@ -945,7 +945,7 @@ canUseVoice
 canHumanEscalate
 ```
 
-- [ ] **Step 4: Test voice event after photo**
+- [x] **Step 4: Test voice event after photo**
 
 Call `/sessions/:id/voice` with either `audioBase64` or direct `transcript`:
 
@@ -959,7 +959,7 @@ Call `/sessions/:id/voice` with either `audioBase64` or direct `transcript`:
 
 Expected: the transcript is included in the AI brain context and response.
 
-- [ ] **Step 5: Verify database records**
+- [x] **Step 5: Verify database records**
 
 Use Supabase SQL Editor or CLI to verify latest records exist in:
 
@@ -973,7 +973,7 @@ ai_requests
 ai_decisions
 ```
 
-- [ ] **Step 6: Save evidence**
+- [x] **Step 6: Save evidence**
 
 Save request/response evidence under `tmp/`:
 
@@ -982,7 +982,7 @@ tmp/air3-v2-photo-response.json
 tmp/air3-v2-voice-response.json
 ```
 
-- [ ] **Step 7: Commit verification notes**
+- [x] **Step 7: Commit verification notes**
 
 Update `agent_memory/progress.md` with what passed and what remains.
 
