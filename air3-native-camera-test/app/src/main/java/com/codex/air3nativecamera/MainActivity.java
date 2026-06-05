@@ -24,13 +24,11 @@ import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
-import android.speech.RecognitionListener;
-import android.speech.RecognizerIntent;
-import android.speech.SpeechRecognizer;
 import android.util.Base64;
 import android.util.Size;
 import android.view.Gravity;
@@ -47,13 +45,14 @@ import android.widget.TextView;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
 
@@ -68,6 +67,8 @@ public final class MainActivity extends Activity {
     private static final float GUIDE_FRAME_WIDTH_RATIO = 0.72f;
     private static final float GUIDE_FRAME_HEIGHT_RATIO = 0.50f;
     private static final float GUIDE_FRAME_TOP_OFFSET_RATIO = 0.27f;
+    private static final boolean UPLOAD_FULL_CAMERA_JPEG = true;
+    private static final int JPEG_QUALITY = 94;
 
     private TextureView previewView;
     private TextView titleText;
@@ -82,12 +83,14 @@ public final class MainActivity extends Activity {
     private ImageReader imageReader;
     private Size captureSize = new Size(1280, 720);
     private Size previewSize = new Size(1280, 720);
+    private int sensorOrientation;
     private String cameraId;
     private String sessionId = "";
     private String currentStep = "locate_server";
     private boolean captureInFlight;
-    private SpeechRecognizer speechRecognizer;
-    private boolean listening;
+    private MediaRecorder voiceRecorder;
+    private File voiceFile;
+    private boolean recordingVoice;
     private int cameraOpenRetryCount;
 
     @Override
@@ -110,7 +113,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        destroySpeechRecognizer();
+        stopVoiceRecording(false);
         closeCamera();
         stopCameraThread();
         super.onDestroy();
@@ -161,7 +164,7 @@ public final class MainActivity extends Activity {
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_CAMERA) {
-            captureStillImage("key-camera");
+            setStatus("相机键已记录。当前版本请使用中心点击拍照，避免系统快捷键退出应用。");
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_BACK) {
@@ -288,7 +291,7 @@ public final class MainActivity extends Activity {
         View.OnLongClickListener longClickListener = new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
-                startLocalSpeechTest();
+                startCloudVoiceCapture();
                 return true;
             }
         };
@@ -317,8 +320,8 @@ public final class MainActivity extends Activity {
             public void run() {
                 stepText.setText(stepLabel(currentStep));
                 resultText.setText("任务待开始");
-                hintText.setText("请对准服务器本地控制台或终端窗口\n单击开始采集，长按尝试语音入口");
-                statusText.setText("单击：拍照/下一步    长按：语音    返回键：重拍    相机键：拍照");
+                hintText.setText("请对准服务器本地控制台或终端窗口\n中心点击开始采集，长按语音确认");
+                statusText.setText("1 中心点击：拍照/下一步    2 长按中心：语音确认    3 返回键：重拍/上一步");
             }
         });
         android.util.Log.i("Air3NativeCameraTest", "Formal HUD home shown.");
@@ -365,118 +368,101 @@ public final class MainActivity extends Activity {
             float centerY = frame.centerY();
             canvas.drawLine(centerX - 42f, centerY, centerX + 42f, centerY, framePaint);
             canvas.drawLine(centerX, centerY - 42f, centerX, centerY + 42f, framePaint);
-            canvas.drawText("把服务器控制台文字放入绿色框内，靠近屏幕并避免反光", centerX, frame.bottom + 42f, textPaint);
+            canvas.drawText("让控制台窗口填满绿色框，文字清楚后再拍", centerX, frame.bottom + 42f, textPaint);
         }
     }
 
-    private void startLocalSpeechTest() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            setResultText("语音不可用");
-            setStatus("这台 Air3 当前不支持系统语音识别，请改用单击拍照继续。");
-            return;
-        }
+    private void startCloudVoiceCapture() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             setResultText("需要麦克风权限");
-            setStatus("请允许麦克风权限，授权后长按可再次尝试语音。");
+            setStatus("请允许麦克风权限，授权后长按可录音确认现场操作。");
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_AUDIO);
             return;
         }
-        if (listening) {
-            setStatus("正在听取语音，请说出现场操作结果。");
+        if (recordingVoice) {
+            setStatus("正在录音，请说完后稍等，系统会自动上传。");
+            return;
+        }
+        if (sessionId.length() == 0) {
+            setResultText("请先拍照");
+            setStatus("请先中心点击拍照创建运维会话，再长按进行语音确认。");
             return;
         }
 
-        ensureSpeechRecognizer();
-        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
-        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
-        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
-        listening = true;
-        setResultText("正在听取");
-        setStatus("请说：好了，已经完成。");
-        speechRecognizer.startListening(intent);
+        try {
+            voiceFile = new File(getCacheDir(), "ops_voice_" + System.currentTimeMillis() + ".m4a");
+            voiceRecorder = new MediaRecorder();
+            voiceRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            voiceRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+            voiceRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+            voiceRecorder.setAudioSamplingRate(16000);
+            voiceRecorder.setAudioEncodingBitRate(64000);
+            voiceRecorder.setOutputFile(voiceFile.getAbsolutePath());
+            voiceRecorder.prepare();
+            voiceRecorder.start();
+            recordingVoice = true;
+            setResultText("正在录音");
+            setStatus("请说出现场确认内容，例如：好了，已经完成。录音约 5 秒后自动上传。");
+            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    stopVoiceRecording(true);
+                }
+            }, 5200L);
+        } catch (Exception error) {
+            recordingVoice = false;
+            releaseVoiceRecorder();
+            setResultText("录音失败");
+            setStatus("语音录制失败，请改用中心点击拍照继续。");
+            android.util.Log.w("Air3NativeCameraTest", "Voice recording failed", error);
+        }
     }
 
-    private void ensureSpeechRecognizer() {
-        if (speechRecognizer != null) {
+    private void stopVoiceRecording(boolean upload) {
+        if (!recordingVoice && voiceRecorder == null) {
             return;
         }
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
-        speechRecognizer.setRecognitionListener(new RecognitionListener() {
-            @Override
-            public void onReadyForSpeech(Bundle params) {
-                setStatus("语音已准备好，请开始说话。");
+        File finishedFile = voiceFile;
+        try {
+            if (voiceRecorder != null) {
+                voiceRecorder.stop();
             }
-
-            @Override
-            public void onBeginningOfSpeech() {
-                setStatus("已检测到语音。");
-            }
-
-            @Override
-            public void onRmsChanged(float rmsdB) {
-            }
-
-            @Override
-            public void onBufferReceived(byte[] buffer) {
-            }
-
-            @Override
-            public void onEndOfSpeech() {
-                setStatus("语音已结束，正在识别。");
-            }
-
-            @Override
-            public void onError(int error) {
-                listening = false;
-                setResultText("语音失败");
-                setStatus("语音识别失败，请单击拍照继续，或稍后重试语音。");
-                android.util.Log.w("Air3NativeCameraTest",
-                        "SpeechRecognizer error=" + error + " (" + speechErrorName(error) + ")");
-            }
-
-            @Override
-            public void onResults(Bundle results) {
-                listening = false;
-                ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                String transcript = matches == null || matches.isEmpty() ? "" : matches.get(0);
-                setResultText(transcript.length() == 0 ? "未听清" : transcript);
-                setStatus("已收到语音内容，正在同步到当前运维会话。");
-                uploadTranscript(transcript);
-            }
-
-            @Override
-            public void onPartialResults(Bundle partialResults) {
-            }
-
-            @Override
-            public void onEvent(int eventType, Bundle params) {
-            }
-        });
+        } catch (Exception error) {
+            android.util.Log.w("Air3NativeCameraTest", "Voice recorder stop failed", error);
+        } finally {
+            recordingVoice = false;
+            releaseVoiceRecorder();
+        }
+        if (upload && finishedFile != null && finishedFile.exists() && finishedFile.length() > 0) {
+            setResultText("语音上传中");
+            setStatus("语音已录制，正在上传给 AI 转文字。");
+            uploadVoiceAudio(finishedFile);
+        }
     }
 
-    private void destroySpeechRecognizer() {
-        if (speechRecognizer == null) {
+    private void releaseVoiceRecorder() {
+        if (voiceRecorder == null) {
             return;
         }
         try {
-            speechRecognizer.destroy();
+            voiceRecorder.release();
         } catch (Exception ignored) {
         }
-        speechRecognizer = null;
+        voiceRecorder = null;
     }
 
-    private void uploadTranscript(String transcript) {
+    private void uploadVoiceAudio(File audioFile) {
         new Thread(new Runnable() {
             @Override
             public void run() {
                 HttpURLConnection connection = null;
                 try {
+                    byte[] audioBytes = readFileBytes(audioFile);
                     JSONObject payload = new JSONObject();
-                    payload.put("transcript", transcript);
+                    payload.put("audioBase64", "data:audio/mp4;base64," + Base64.encodeToString(audioBytes, Base64.NO_WRAP));
+                    payload.put("audioFormat", "audio/mp4");
                     payload.put("timestamp", System.currentTimeMillis());
-                    payload.put("source", "android-local-speech");
+                    payload.put("source", "air3-media-recorder");
                     byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
 
                     if (sessionId.length() == 0) {
@@ -484,7 +470,7 @@ public final class MainActivity extends Activity {
                     }
                     connection = (HttpURLConnection) new URL(voiceEndpoint()).openConnection();
                     connection.setConnectTimeout(8000);
-                    connection.setReadTimeout(15000);
+                    connection.setReadTimeout(60000);
                     connection.setRequestMethod("POST");
                     connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                     connection.setRequestProperty("x-ops-glasses-key", OPS_GLASSES_API_KEY);
@@ -498,17 +484,23 @@ public final class MainActivity extends Activity {
                             ? connection.getInputStream()
                             : connection.getErrorStream();
                     String responseText = readAll(input);
+                    persistVoiceResponse(status, audioBytes.length, responseText, null);
                     JSONObject response = new JSONObject(responseText);
                     String intent = response.optString("voiceIntent", "unknown");
+                    String transcript = response.optString("transcript", "");
                     String text = response.optString("text", responseText);
                     persistSession(response.optString("sessionId", sessionId), response.optString("step", currentStep));
                     setResultText(voiceIntentLabel(intent));
-                    setStatus("语音内容已同步，请按屏幕提示继续操作。");
+                    setStatus(transcript.length() == 0
+                            ? "语音已上传，但未识别出明确指令。请按屏幕提示继续。"
+                            : "语音已识别，请按屏幕提示继续操作。");
                     android.util.Log.i("Air3NativeCameraTest",
-                            "Voice OK http=" + status + " transcript=" + transcript + " text=" + text);
+                            "Voice OK http=" + status + " bytes=" + audioBytes.length
+                                    + " transcript=" + transcript + " text=" + text);
                 } catch (Exception error) {
                     setResultText("语音同步失败");
                     setStatus("语音没有同步成功，请改用单击拍照继续。");
+                    persistVoiceResponse(-1, audioFile.length(), "", error);
                     android.util.Log.w("Air3NativeCameraTest", "Voice upload failed", error);
                 } finally {
                     if (connection != null) {
@@ -516,32 +508,7 @@ public final class MainActivity extends Activity {
                     }
                 }
             }
-        }, "Air3VoiceUpload").start();
-    }
-
-    private static String speechErrorName(int error) {
-        switch (error) {
-            case SpeechRecognizer.ERROR_AUDIO:
-                return "ERROR_AUDIO";
-            case SpeechRecognizer.ERROR_CLIENT:
-                return "ERROR_CLIENT";
-            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
-                return "ERROR_INSUFFICIENT_PERMISSIONS";
-            case SpeechRecognizer.ERROR_NETWORK:
-                return "ERROR_NETWORK";
-            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
-                return "ERROR_NETWORK_TIMEOUT";
-            case SpeechRecognizer.ERROR_NO_MATCH:
-                return "ERROR_NO_MATCH";
-            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
-                return "ERROR_RECOGNIZER_BUSY";
-            case SpeechRecognizer.ERROR_SERVER:
-                return "ERROR_SERVER";
-            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
-                return "ERROR_SPEECH_TIMEOUT";
-            default:
-                return "UNKNOWN";
-        }
+        }, "Air3VoiceAudioUpload").start();
     }
 
     private void startCameraFlow() {
@@ -618,6 +585,7 @@ public final class MainActivity extends Activity {
             }
 
             logCameraCapabilities(manager, cameraId);
+            sensorOrientation = readSensorOrientation(manager, cameraId);
             captureSize = chooseCaptureSize(manager, cameraId);
             previewSize = choosePreviewSize(manager, cameraId);
             imageReader = ImageReader.newInstance(
@@ -698,7 +666,8 @@ public final class MainActivity extends Activity {
             }
             CameraCharacteristics c = manager.getCameraCharacteristics(id);
             Integer facing = c.get(CameraCharacteristics.LENS_FACING);
-            if (facing == null || facing != CameraCharacteristics.LENS_FACING_FRONT) {
+            android.util.Log.i("Air3NativeCameraTest", "candidate cameraId=" + id + " facing=" + facing);
+            if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
                 return id;
             }
         }
@@ -743,13 +712,13 @@ public final class MainActivity extends Activity {
         }
 
         Size best = sizes[0];
-        double targetAspect = 16.0 / 9.0;
+        double targetAspect = (double) captureSize.getWidth() / (double) captureSize.getHeight();
         double bestScore = Double.MAX_VALUE;
         for (Size size : sizes) {
             double aspect = (double) size.getWidth() / (double) size.getHeight();
             double aspectPenalty = Math.abs(aspect - targetAspect) * 10000.0;
             double pixelDelta = Math.abs(((double) size.getWidth() * (double) size.getHeight())
-                    - (1920.0 * 1080.0)) / 100000.0;
+                    - ((double) captureSize.getWidth() * (double) captureSize.getHeight())) / 100000.0;
             double undersizePenalty = (size.getWidth() < 1280 || size.getHeight() < 720) ? 5000.0 : 0.0;
             double score = aspectPenalty + pixelDelta + undersizePenalty;
             if (score < bestScore) {
@@ -776,6 +745,12 @@ public final class MainActivity extends Activity {
                 "Preview sizes=" + Arrays.toString(map.getOutputSizes(SurfaceTexture.class)));
     }
 
+    private int readSensorOrientation(CameraManager manager, String id) throws CameraAccessException {
+        CameraCharacteristics c = manager.getCameraCharacteristics(id);
+        Integer orientation = c.get(CameraCharacteristics.SENSOR_ORIENTATION);
+        return orientation == null ? 0 : orientation;
+    }
+
     private void configurePreviewTransform() {
         if (previewView == null || previewSize == null) {
             return;
@@ -798,10 +773,20 @@ public final class MainActivity extends Activity {
         float dy = (viewRect.height() - scaledHeight) / 2f;
         matrix.setScale(scale, scale);
         matrix.postTranslate(dx, dy);
+        int previewRotation = previewRotationDegrees();
+        if (previewRotation != 0) {
+            matrix.postRotate(previewRotation, viewRect.centerX(), viewRect.centerY());
+        }
         previewView.setTransform(matrix);
         android.util.Log.i("Air3NativeCameraTest", "Preview transform view="
                 + viewWidth + "x" + viewHeight + " buffer="
-                + previewSize.getWidth() + "x" + previewSize.getHeight());
+                + previewSize.getWidth() + "x" + previewSize.getHeight()
+                + " sensorOrientation=" + sensorOrientation
+                + " previewRotation=" + previewRotation);
+    }
+
+    private int previewRotationDegrees() {
+        return 0;
     }
 
     private void createPreviewSession() {
@@ -865,6 +850,7 @@ public final class MainActivity extends Activity {
                     cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             request.addTarget(imageReader.getSurface());
             request.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
+            request.set(CaptureRequest.JPEG_ORIENTATION, 0);
             setResultText("正在采集");
             hintText.setText("保持画面稳定\n请等待 AI 分析结果");
             setStatus("正在采集服务器本地控制台画面，请保持稳定。");
@@ -897,6 +883,7 @@ public final class MainActivity extends Activity {
             ByteBuffer buffer = image.getPlanes()[0].getBuffer();
             byte[] bytes = new byte[buffer.remaining()];
             buffer.get(bytes);
+            persistRawCapture(bytes);
             setResultText("AI 分析中");
             hintText.setText("照片已上传\n正在生成下一步维修指令");
             setStatus("正在处理取景框内画面，并上传给 AI 分析。");
@@ -918,8 +905,8 @@ public final class MainActivity extends Activity {
     private void uploadImage(byte[] jpegBytes) {
         HttpURLConnection connection = null;
         try {
-            byte[] uploadBytes = prepareUploadJpeg(jpegBytes);
-            String imageBase64 = Base64.encodeToString(uploadBytes, Base64.NO_WRAP);
+            UploadImage uploadImage = prepareUploadJpeg(jpegBytes);
+            String imageBase64 = Base64.encodeToString(uploadImage.bytes, Base64.NO_WRAP);
             JSONObject payload = new JSONObject();
             payload.put("sessionId", sessionId);
             payload.put("taskType", "ssh_console_recovery");
@@ -927,21 +914,23 @@ public final class MainActivity extends Activity {
             payload.put("action", actionForCurrentStep());
             payload.put("imageKind", "console");
             payload.put("imageBase64", "data:image/jpeg;base64," + imageBase64);
-            payload.put("width", captureSize.getWidth());
-            payload.put("height", captureSize.getHeight());
+            payload.put("width", uploadImage.width);
+            payload.put("height", uploadImage.height);
             payload.put("format", "jpg");
             payload.put("timestamp", System.currentTimeMillis());
             payload.put("source", "native-camera2");
-            payload.put("preprocess", "center-guide-crop");
+            payload.put("preprocess", uploadImage.preprocess);
             byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
 
             if (OPS_GLASSES_API_KEY.length() == 0) {
                 throw new IllegalStateException("OPS_GLASSES_API_KEY missing in APK build.");
             }
-            persistDebugUpload(uploadBytes);
-            setStatus("照片已截取，正在上传给 AI 识别服务器控制台。");
+            persistDebugUpload(uploadImage.bytes);
+            setStatus("真实照片已采集，正在上传给 AI 识别服务器控制台。");
             android.util.Log.i("Air3NativeCameraTest",
-                    "Uploading focused JPEG bytes=" + uploadBytes.length
+                    "Uploading focused JPEG bytes=" + uploadImage.bytes.length
+                            + " size=" + uploadImage.width + "x" + uploadImage.height
+                            + " preprocess=" + uploadImage.preprocess
                             + " originalBytes=" + jpegBytes.length);
             connection = (HttpURLConnection) new URL(EVENTS_ENDPOINT).openConnection();
             connection.setConnectTimeout(8000);
@@ -973,7 +962,7 @@ public final class MainActivity extends Activity {
             android.util.Log.i("Air3NativeCameraTest", String.format(Locale.US,
                     "OK http=%d step=%s session=%s serverImageBytes=%d uploadBytes=%d rawBytes=%d text=%s",
                     status, nextStep, shortSessionId(nextSessionId), imageBytes,
-                    uploadBytes.length, jpegBytes.length, text));
+                    uploadImage.bytes.length, jpegBytes.length, text));
         } catch (Exception error) {
             setResultText("上传失败");
             setStatus("暂时连接不到 AI 运维服务。请确认网络后单击重试。");
@@ -986,14 +975,38 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private byte[] prepareUploadJpeg(byte[] jpegBytes) {
+    private UploadImage prepareUploadJpeg(byte[] jpegBytes) {
         Bitmap bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length);
         if (bitmap == null || bitmap.getWidth() < 640 || bitmap.getHeight() < 360) {
-            return jpegBytes;
+            return new UploadImage(
+                    jpegBytes,
+                    captureSize.getWidth(),
+                    captureSize.getHeight(),
+                    "raw-camera-jpeg-decode-fallback");
         }
 
-        int width = bitmap.getWidth();
-        int height = bitmap.getHeight();
+        Bitmap normalized = normalizeCameraBitmap(bitmap);
+        if (normalized != bitmap) {
+            bitmap.recycle();
+        }
+
+        if (UPLOAD_FULL_CAMERA_JPEG) {
+            byte[] result = encodeJpeg(normalized, JPEG_QUALITY);
+            int width = normalized.getWidth();
+            int height = normalized.getHeight();
+            normalized.recycle();
+            android.util.Log.i("Air3NativeCameraTest",
+                    "Prepared normalized full camera JPEG size=" + width + "x" + height
+                            + " bytes=" + result.length
+                            + " sensorOrientation=" + sensorOrientation);
+            return new UploadImage(result.length > 0 ? result : jpegBytes,
+                    result.length > 0 ? width : captureSize.getWidth(),
+                    result.length > 0 ? height : captureSize.getHeight(),
+                    result.length > 0 ? "normalized-full-camera-jpeg" : "raw-camera-jpeg-encode-fallback");
+        }
+
+        int width = normalized.getWidth();
+        int height = normalized.getHeight();
         int cropWidth = Math.max(640, Math.round(width * GUIDE_FRAME_WIDTH_RATIO));
         int cropHeight = Math.max(360, Math.round(height * GUIDE_FRAME_HEIGHT_RATIO));
         int left = Math.max(0, Math.round((width - cropWidth) / 2f));
@@ -1005,23 +1018,65 @@ public final class MainActivity extends Activity {
             cropHeight = height - top;
         }
 
-        Bitmap cropped = Bitmap.createBitmap(bitmap, left, top, cropWidth, cropHeight);
-        Bitmap uploadBitmap = rotateForAiUpload(cropped);
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        uploadBitmap.compress(Bitmap.CompressFormat.JPEG, 94, output);
-        byte[] result = output.toByteArray();
-        if (uploadBitmap != cropped) {
-            uploadBitmap.recycle();
-        }
-        cropped.recycle();
-        bitmap.recycle();
-        return result.length > 0 ? result : jpegBytes;
+        Bitmap uploadBitmap = Bitmap.createBitmap(normalized, left, top, cropWidth, cropHeight);
+        byte[] result = encodeJpeg(uploadBitmap, JPEG_QUALITY);
+        android.util.Log.i("Air3NativeCameraTest",
+                "Prepared upload crop source=" + width + "x" + height
+                        + " crop=" + cropWidth + "x" + cropHeight
+                        + " left=" + left + " top=" + top
+                        + " bytes=" + result.length);
+        uploadBitmap.recycle();
+        normalized.recycle();
+        return new UploadImage(
+                result.length > 0 ? result : jpegBytes,
+                result.length > 0 ? cropWidth : captureSize.getWidth(),
+                result.length > 0 ? cropHeight : captureSize.getHeight(),
+                result.length > 0 ? "normalized-center-guide-crop" : "raw-camera-jpeg-encode-fallback");
     }
 
-    private Bitmap rotateForAiUpload(Bitmap bitmap) {
+    private Bitmap normalizeCameraBitmap(Bitmap source) {
+        int rotation = uploadRotationDegrees();
+        if (rotation == 0) {
+            return source;
+        }
         Matrix matrix = new Matrix();
-        matrix.postRotate(270f);
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        matrix.postRotate(rotation);
+        Bitmap rotated = Bitmap.createBitmap(source, 0, 0, source.getWidth(), source.getHeight(), matrix, true);
+        android.util.Log.i("Air3NativeCameraTest",
+                "Normalized camera bitmap from=" + source.getWidth() + "x" + source.getHeight()
+                        + " to=" + rotated.getWidth() + "x" + rotated.getHeight()
+                        + " rotation=" + rotation);
+        return rotated;
+    }
+
+    private int uploadRotationDegrees() {
+        if (sensorOrientation == 270) {
+            return 180;
+        }
+        if (sensorOrientation == 90) {
+            return 0;
+        }
+        return 0;
+    }
+
+    private static byte[] encodeJpeg(Bitmap bitmap, int quality) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output);
+        return output.toByteArray();
+    }
+
+    private static final class UploadImage {
+        final byte[] bytes;
+        final int width;
+        final int height;
+        final String preprocess;
+
+        UploadImage(byte[] bytes, int width, int height, String preprocess) {
+            this.bytes = bytes;
+            this.width = width;
+            this.height = height;
+            this.preprocess = preprocess;
+        }
     }
 
     private void persistDebugUpload(byte[] uploadBytes) {
@@ -1029,6 +1084,37 @@ public final class MainActivity extends Activity {
             output.write(uploadBytes);
         } catch (Exception error) {
             android.util.Log.w("Air3NativeCameraTest", "Persist upload crop failed", error);
+        }
+        try (OutputStream output = openFileOutput("last_upload_full.jpg", MODE_PRIVATE)) {
+            output.write(uploadBytes);
+        } catch (Exception error) {
+            android.util.Log.w("Air3NativeCameraTest", "Persist upload full failed", error);
+        }
+    }
+
+    private void persistRawCapture(byte[] jpegBytes) {
+        try (OutputStream output = openFileOutput("last_raw_capture.jpg", MODE_PRIVATE)) {
+            output.write(jpegBytes);
+        } catch (Exception error) {
+            android.util.Log.w("Air3NativeCameraTest", "Persist raw capture failed", error);
+        }
+    }
+
+    private void persistVoiceResponse(int status, long audioBytes, String responseText, Exception error) {
+        try {
+            JSONObject diagnostic = new JSONObject();
+            diagnostic.put("status", status);
+            diagnostic.put("audioBytes", audioBytes);
+            diagnostic.put("response", responseText == null ? "" : responseText);
+            diagnostic.put("timestamp", System.currentTimeMillis());
+            if (error != null) {
+                diagnostic.put("errorType", error.getClass().getName());
+                diagnostic.put("errorMessage", error.getMessage() == null ? "" : error.getMessage());
+            }
+            try (OutputStream output = openFileOutput("last_voice_response.json", MODE_PRIVATE)) {
+                output.write(diagnostic.toString().getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (Exception ignored) {
         }
     }
 
@@ -1196,6 +1282,18 @@ public final class MainActivity extends Activity {
             output.write(buffer, 0, read);
         }
         return output.toString(StandardCharsets.UTF_8.name());
+    }
+
+    private static byte[] readFileBytes(File file) throws Exception {
+        try (InputStream input = new FileInputStream(file);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
     }
 
     private void closeCamera() {

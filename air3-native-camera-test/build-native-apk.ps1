@@ -45,7 +45,7 @@ $flatFiles = Get-ChildItem -LiteralPath $compiledRes -Filter "*.flat" | ForEach-
   --min-sdk-version 34 `
   --target-sdk-version 34 `
   --version-code 1 `
-  --version-name "1.0" `
+  --version-name "1.01" `
   -o $unsigned `
   $flatFiles
 if ($LASTEXITCODE -ne 0) { throw "aapt2 link failed" }
