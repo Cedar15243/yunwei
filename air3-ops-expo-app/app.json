@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Air3 Ops Glasses",
+    "slug": "air3-ops-glasses",
+    "version": "0.1.0",
+    "orientation": "landscape",
+    "scheme": "air3ops",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.codex.air3opsglasses"
+    },
+    "plugins": [
+      "expo-router"
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+.env
+.env.*
+!.env.example
+node_modules/
+npm-debug.log*
+
+# Local secrets
+*.local
+tmp/*key*
+tmp/*secret*
+ssh-keys/
+agent_memory/
+
+# Expo / web output
+air3-ops-expo-app/node_modules/
+air3-ops-expo-app/.expo/
+air3-ops-expo-app/dist/
+air3-ops-expo-app/expo-web*.log
+
+# Android build intermediates
+air3-native-camera-test/build/
+air3-native-camera-test/build/generated-src/
+air3-native-camera-test/build/classes/
+air3-native-camera-test/build/dex/
+air3-native-camera-test/build/compiled-res/
+air3-native-camera-test/build/*-unsigned.apk
+air3-native-camera-test/build/*-unaligned.apk
+air3-native-camera-test/build/*-aligned.apk
+air3-native-camera-test/build/*.idsig
+
+# Captures and transient outputs
+tmp/
+tmp/air3-captures/
+tmp/*.log
+tmp/*.txt
+
+# Local analysis/cache artifacts
+_repo_analysis/
+cache.db
+mihomo-*.yaml
+.superpowers/

@@ -1,0 +1,4 @@
+project_id = "air3-ops-glasses"
+
+[functions.ops-glasses]
+verify_jwt = false

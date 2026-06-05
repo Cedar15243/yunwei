@@ -1,0 +1,16 @@
+{
+  "name": "feishu-codex-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "validate:supabase": "node scripts/validate-supabase-assets.mjs && node scripts/check-text-balance.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "supabase": "^2.104.0"
+  }
+}

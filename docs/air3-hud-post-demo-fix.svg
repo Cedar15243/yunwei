@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .bg { fill: #081219; }
+      .panel { fill: #030c12; fill-opacity: .78; stroke: #57ffb0; stroke-opacity: .52; stroke-width: 2; }
+      .bottom { fill: #02090d; fill-opacity: .86; stroke: #daeaf5; stroke-opacity: .28; stroke-width: 1; }
+      .green { fill: #57ffb0; }
+      .white { fill: #e8fff4; }
+      .muted { fill: #daeaf5; }
+      .subtle { fill: #8fa5af; }
+      .terminal { fill: #78909a; fill-opacity: .25; }
+      .terminal-hot { fill: #57ffb0; fill-opacity: .48; }
+      text { font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; letter-spacing: 0; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1920" height="1080"/>
+
+  <!-- Simulated camera preview / server console -->
+  <rect x="0" y="0" width="1920" height="1080" fill="#000" opacity=".08"/>
+  <g>
+    <rect class="terminal-hot" x="150" y="140" width="520" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="174" width="602" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="208" width="684" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="242" width="766" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="276" width="848" height="10" rx="2"/>
+    <rect class="terminal-hot" x="150" y="310" width="930" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="344" width="520" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="378" width="602" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="412" width="684" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="446" width="766" height="10" rx="2"/>
+    <rect class="terminal-hot" x="150" y="480" width="848" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="514" width="930" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="548" width="520" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="582" width="602" height="10" rx="2"/>
+    <rect class="terminal" x="150" y="616" width="684" height="10" rx="2"/>
+    <rect class="terminal-hot" x="150" y="650" width="766" height="10" rx="2"/>
+  </g>
+
+  <!-- Top bar -->
+  <rect class="panel" x="32" y="24" width="1856" height="84" rx="8"/>
+  <text class="white" x="62" y="76" font-size="30" font-weight="700">叮当X  AI 运维眼镜</text>
+  <text class="green" x="1646" y="74" font-size="23" font-weight="700" text-anchor="middle">服务器 SSH 恢复</text>
+
+  <!-- Dim regions and guide frame -->
+  <rect x="0" y="108" width="1920" height="162" fill="#000" opacity=".16"/>
+  <rect x="0" y="810" width="1920" height="270" fill="#000" opacity=".26"/>
+  <rect x="0" y="270" width="268.8" height="540" fill="#000" opacity=".22"/>
+  <rect x="1651.2" y="270" width="268.8" height="540" fill="#000" opacity=".22"/>
+  <rect x="268.8" y="270" width="1382.4" height="540" rx="12" fill="none" stroke="#57ffb0" stroke-width="4"/>
+  <line x1="906" y1="540" x2="1014" y2="540" stroke="#57ffb0" stroke-width="2"/>
+  <line x1="960" y1="486" x2="960" y2="594" stroke="#57ffb0" stroke-width="2"/>
+  <text class="muted" x="960" y="855" font-size="28" font-weight="500" text-anchor="middle">把服务器控制台文字放入绿色框内</text>
+
+  <!-- Main instruction -->
+  <rect class="panel" x="410" y="368" width="1100" height="180" rx="8"/>
+  <text class="green" x="960" y="430" font-size="40" font-weight="700" text-anchor="middle">对准服务器本地控制台</text>
+  <text class="white" x="960" y="494" font-size="26" font-weight="600" text-anchor="middle">中心点击拍照，AI 会识别画面并给出下一步安全指令</text>
+
+  <!-- Status -->
+  <text class="muted" x="62" y="897" font-size="22" font-weight="600">状态：相机已就绪。请保持 25-35cm 距离，避免反光。</text>
+  <text class="subtle" x="1828" y="897" font-size="20" text-anchor="end">调试信息仅写入日志，不显示给现场人员</text>
+
+  <!-- Bottom controls -->
+  <rect class="bottom" x="32" y="914" width="1856" height="138" rx="8"/>
+  <g>
+    <rect x="118" y="942" width="520" height="82" rx="8" fill="#07151b" fill-opacity=".78" stroke="#57ffb0" stroke-opacity=".32"/>
+    <circle cx="174" cy="983" r="22" fill="none" stroke="#57ffb0" stroke-width="3"/>
+    <text class="green" x="174" y="983" font-size="22" font-weight="700" text-anchor="middle" dominant-baseline="central">1</text>
+    <text class="white" x="218" y="972" font-size="22" font-weight="700">中心点击</text>
+    <text fill="#b9cad3" x="218" y="1008" font-size="20">拍照 / 下一步</text>
+  </g>
+  <g>
+    <rect x="700" y="942" width="520" height="82" rx="8" fill="#07151b" fill-opacity=".78" stroke="#57ffb0" stroke-opacity=".32"/>
+    <circle cx="756" cy="983" r="22" fill="none" stroke="#57ffb0" stroke-width="3"/>
+    <text class="green" x="756" y="983" font-size="22" font-weight="700" text-anchor="middle" dominant-baseline="central">2</text>
+    <text class="white" x="800" y="972" font-size="22" font-weight="700">长按中心</text>
+    <text fill="#b9cad3" x="800" y="1008" font-size="20">语音确认 / 补充说明</text>
+  </g>
+  <g>
+    <rect x="1282" y="942" width="520" height="82" rx="8" fill="#07151b" fill-opacity=".78" stroke="#57ffb0" stroke-opacity=".32"/>
+    <circle cx="1338" cy="983" r="22" fill="none" stroke="#57ffb0" stroke-width="3"/>
+    <text class="green" x="1338" y="983" font-size="22" font-weight="700" text-anchor="middle" dominant-baseline="central">3</text>
+    <text class="white" x="1382" y="972" font-size="22" font-weight="700">返回键</text>
+    <text fill="#b9cad3" x="1382" y="1008" font-size="20">重拍 / 返回上一步</text>
+  </g>
+</svg>
