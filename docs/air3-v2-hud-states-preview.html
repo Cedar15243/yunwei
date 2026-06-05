@@ -20,10 +20,10 @@
 
       body {
         margin: 0;
-        padding: 32px;
+        padding: 28px;
         background:
-          radial-gradient(circle at 20% 12%, rgba(36, 161, 100, 0.18), transparent 28%),
-          linear-gradient(135deg, #050807 0%, #0d1512 46%, #0a1118 100%);
+          linear-gradient(180deg, rgba(8, 16, 14, 0.94), rgba(3, 7, 8, 0.98)),
+          #050807;
       }
 
       h1 {
@@ -34,182 +34,259 @@
       }
 
       p {
-        margin: 0 0 24px;
+        margin: 0 0 22px;
         color: #a9c8b8;
         font-size: 15px;
       }
 
       .grid {
         display: grid;
-        grid-template-columns: repeat(2, minmax(480px, 1fr));
+        grid-template-columns: repeat(2, minmax(500px, 1fr));
         gap: 28px;
       }
 
-      .frame {
+      .state-card {
+        min-width: 0;
+      }
+
+      .caption {
+        margin-top: 9px;
+        color: #bde9d3;
+        font-size: 14px;
+      }
+
+      .hud {
+        --tone: #5effad;
         position: relative;
         aspect-ratio: 16 / 9;
         overflow: hidden;
-        border: 1px solid rgba(94, 255, 173, 0.28);
-        border-radius: 8px;
-        background:
-          linear-gradient(0deg, rgba(2, 6, 5, 0.72), rgba(2, 6, 5, 0.18)),
-          repeating-linear-gradient(0deg, rgba(42, 255, 148, 0.08) 0 2px, transparent 2px 46px),
-          linear-gradient(120deg, #0d1417 0%, #111916 52%, #090d10 100%);
-        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
+        border: 1px solid rgba(94, 255, 173, 0.22);
+        background: #02090b;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
       }
 
-      .frame::before {
+      .hud::before {
         content: "";
         position: absolute;
         inset: 0;
         background:
-          linear-gradient(90deg, transparent 0 7%, rgba(95, 255, 176, 0.08) 7.1% 7.25%, transparent 7.35% 100%),
-          linear-gradient(0deg, transparent 0 19%, rgba(95, 255, 176, 0.06) 19.1% 19.22%, transparent 19.32% 100%);
-        opacity: 0.72;
+          linear-gradient(0deg, rgba(2, 8, 9, 0.5), rgba(2, 8, 9, 0.18)),
+          linear-gradient(112deg, #061013 0%, #0a1516 44%, #03090b 100%);
       }
 
-      .topbar,
-      .bottombar {
+      .terminal-lines {
         position: absolute;
-        left: 32px;
-        right: 32px;
-        border: 1px solid rgba(94, 255, 173, 0.42);
-        background: rgba(4, 12, 10, 0.74);
-        backdrop-filter: blur(4px);
+        left: 7.7%;
+        top: 9.6%;
+        width: 52%;
+        height: 52%;
+        opacity: 0.85;
+      }
+
+      .terminal-lines span {
+        position: absolute;
+        left: var(--x);
+        top: var(--y);
+        width: var(--w);
+        height: 0.7%;
+        min-height: 3px;
+        background: var(--c);
       }
 
       .topbar {
-        top: 24px;
-        height: 84px;
+        position: absolute;
+        left: 1.55%;
+        right: 1.55%;
+        top: 0;
+        height: 6.45%;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0 30px;
+        padding: 0 1.6%;
+        border: 1px solid rgba(94, 255, 173, 0.48);
+        border-top: 0;
+        border-radius: 0 0 4px 4px;
+        background: rgba(3, 11, 13, 0.7);
       }
 
       .brand {
         color: #f1fff8;
-        font-size: clamp(16px, 2vw, 30px);
+        font-size: clamp(12px, 1.56vw, 32px);
         font-weight: 700;
       }
 
       .task {
-        color: #7dffb0;
-        font-size: clamp(14px, 1.7vw, 24px);
+        color: #66ffad;
+        font-size: clamp(10px, 1.08vw, 22px);
+        font-weight: 700;
       }
 
       .guide {
         position: absolute;
         left: 14%;
-        top: 27%;
+        top: 21.9%;
         width: 72%;
-        height: 50%;
-        border: 3px solid var(--tone, #5effad);
+        height: 52.2%;
+        border: 2px solid #5effad;
+        border-radius: 8px;
         box-shadow:
-          inset 0 0 28px color-mix(in srgb, var(--tone, #5effad) 32%, transparent),
-          0 0 22px color-mix(in srgb, var(--tone, #5effad) 28%, transparent);
-      }
-
-      .guide::before,
-      .guide::after {
-        content: "";
-        position: absolute;
-        background: color-mix(in srgb, var(--tone, #5effad) 76%, transparent);
-      }
-
-      .guide::before {
-        left: 50%;
-        top: 38%;
-        width: 2px;
-        height: 24%;
-      }
-
-      .guide::after {
-        left: 44%;
-        top: 50%;
-        width: 12%;
-        height: 2px;
-      }
-
-      .terminal {
-        position: absolute;
-        left: 18%;
-        top: 33%;
-        color: rgba(147, 255, 185, 0.32);
-        font-family: Consolas, monospace;
-        font-size: clamp(10px, 1vw, 15px);
-        line-height: 1.9;
-        white-space: pre;
+          inset 0 0 18px rgba(94, 255, 173, 0.1),
+          0 0 16px rgba(94, 255, 173, 0.14);
       }
 
       .instruction {
         position: absolute;
-        left: 20%;
-        right: 20%;
-        top: 41%;
-        min-height: 150px;
+        left: 21%;
+        top: 31.4%;
+        width: 58%;
+        min-height: 17.4%;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        padding: 18px 30px;
+        padding: 1.8% 2.5%;
         text-align: center;
-        background: rgba(3, 8, 7, 0.7);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 8px;
+        border: 1px solid rgba(94, 255, 173, 0.42);
+        border-radius: 5px;
+        background: rgba(2, 10, 12, 0.75);
       }
 
       .title {
-        margin-bottom: 12px;
-        color: var(--tone, #5effad);
-        font-size: clamp(24px, 4vw, 58px);
+        color: var(--tone);
+        font-size: clamp(18px, 2.35vw, 46px);
         font-weight: 800;
-        line-height: 1.08;
+        line-height: 1.12;
       }
 
-      .text {
-        color: #eefcf5;
-        font-size: clamp(15px, 2vw, 31px);
-        line-height: 1.25;
-        word-break: keep-all;
+      .subtitle {
+        margin-top: 2.6%;
+        color: #dcebe6;
+        font-size: clamp(10px, 1.12vw, 22px);
+        font-weight: 500;
+        line-height: 1.28;
       }
 
-      .command .text {
-        font-family: Consolas, "Microsoft YaHei", monospace;
+      .command .subtitle {
         color: #ffffff;
+        font-family: Consolas, "Microsoft YaHei", monospace;
+        font-size: clamp(12px, 1.42vw, 28px);
       }
 
-      .bottombar {
-        bottom: 28px;
-        min-height: 126px;
-        display: grid;
-        grid-template-columns: 1fr 1.3fr;
-        gap: 18px;
-        align-items: center;
-        padding: 18px 28px;
-      }
-
-      .status {
-        color: #e8f6ef;
-        font-size: clamp(13px, 1.7vw, 23px);
-        line-height: 1.35;
-      }
-
-      .hint {
-        color: #a9c8b8;
-        font-size: clamp(12px, 1.45vw, 20px);
-        line-height: 1.35;
-      }
-
-      .tag {
+      .crosshair {
         position: absolute;
-        right: 44px;
-        bottom: 170px;
-        color: rgba(238, 252, 245, 0.7);
-        font-size: clamp(10px, 1vw, 15px);
+        left: 50%;
+        top: 48.1%;
+        width: 0;
+        height: 5.4%;
+        border-left: 1px solid var(--tone);
       }
 
-      @media (max-width: 1100px) {
+      .crosshair::before {
+        content: "";
+        position: absolute;
+        left: -2.8vw;
+        top: 0;
+        width: 5.6vw;
+        max-width: 112px;
+        border-top: 1px solid rgba(94, 255, 173, 0.24);
+      }
+
+      .guide-note {
+        position: absolute;
+        left: 10%;
+        right: 10%;
+        top: 76.5%;
+        color: #d7e8e2;
+        text-align: center;
+        font-size: clamp(11px, 1.18vw, 24px);
+        font-weight: 700;
+      }
+
+      .status-row {
+        position: absolute;
+        left: 3.2%;
+        right: 3.2%;
+        top: 81%;
+        display: flex;
+        justify-content: space-between;
+        gap: 3%;
+        color: #bed0cb;
+        font-size: clamp(9px, 0.98vw, 20px);
+        line-height: 1.3;
+      }
+
+      .status-row .left {
+        min-width: 0;
+        color: #d5e4e0;
+      }
+
+      .status-row .right {
+        flex: 0 0 auto;
+        color: rgba(190, 208, 203, 0.72);
+        text-align: right;
+      }
+
+      .operation-bar {
+        position: absolute;
+        left: 1.55%;
+        right: 1.55%;
+        bottom: 2.35%;
+        height: 13.3%;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 3.2%;
+        align-items: center;
+        padding: 1.4% 4.5%;
+        border: 1px solid rgba(180, 220, 208, 0.18);
+        border-radius: 4px;
+        background: rgba(1, 7, 9, 0.68);
+      }
+
+      .action {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        align-items: center;
+        gap: 4.5%;
+        height: 100%;
+        min-width: 0;
+        padding: 0 6%;
+        border: 1px solid rgba(94, 255, 173, 0.18);
+        border-radius: 4px;
+        background: rgba(5, 20, 22, 0.58);
+      }
+
+      .action.active {
+        border-color: var(--tone);
+        box-shadow: inset 0 0 16px rgba(94, 255, 173, 0.08);
+      }
+
+      .num {
+        display: grid;
+        width: clamp(20px, 2.05vw, 40px);
+        aspect-ratio: 1;
+        place-items: center;
+        border: 2px solid var(--tone);
+        border-radius: 50%;
+        color: var(--tone);
+        font-size: clamp(10px, 1.05vw, 20px);
+        font-weight: 800;
+      }
+
+      .action-title {
+        color: #f4fffb;
+        font-size: clamp(10px, 1.02vw, 20px);
+        font-weight: 800;
+        line-height: 1.1;
+      }
+
+      .action-detail {
+        margin-top: 4px;
+        color: #9bbab0;
+        font-size: clamp(9px, 0.9vw, 18px);
+        line-height: 1.1;
+      }
+
+      @media (max-width: 1120px) {
         body {
           padding: 18px;
         }
@@ -222,52 +299,192 @@
   </head>
   <body>
     <h1>Air3 V2 HUD 状态预览</h1>
-    <p>14 个 1920×1080 横屏 HUD 状态，用于即时设计/Figma 对齐、Expo 原型和原生 APK 实现。</p>
+    <p>以用户截图为固定布局基准：顶部任务栏、中央绿色取景框、框内 AI 指导面板、底部状态行与三段操作栏。</p>
     <main class="grid" id="grid"></main>
     <script>
-      const states = [
-        ["相机就绪", "ready", "", "对准服务器控制台", "把登录界面、黑底终端或命令输出放进绿色框", "相机已就绪", "单击中心拍照，长按说话", "#5effad"],
-        ["拍照上传", "uploading", "", "照片上传中", "请保持画面稳定", "正在把现场图片发送给 AI", "请稍等，不要重复点击", "#4cc9ff"],
-        ["语音录入", "recording_voice", "", "正在录音", "请用一句短话说明你刚刚做了什么", "正在记录现场语音", "松开后开始转文字", "#7aa8ff"],
-        ["语音转写", "transcribing_voice", "", "语音转文字中", "自部署语音模型正在识别你的话", "正在生成 transcript", "请稍等", "#8bd1ff"],
-        ["AI 综合分析", "ai_analyzing", "", "AI 综合分析中", "主 AI 正在结合图片和文字生成指导", "图片和文字已交给主 AI", "请不要移动画面", "#56e0c1"],
-        ["操作指令", "instruction", "", "请输入恢复命令", "sudo systemctl start ssh", "AI 已返回下一步", "输入完成后，单击中心拍摄输出结果", "#5effad", "command"],
-        ["拍错目标", "recognition_problem", "wrong_target", "拍错目标", "当前画面不是服务器控制台", "AI 需要你重新拍摄目标", "请只拍登录界面、黑底终端或命令输出", "#ffd166"],
-        ["照片不清晰", "recognition_problem", "unclear_photo", "照片不清晰", "AI 看不清屏幕文字", "请重新补充现场图片", "靠近屏幕，避免反光，把文字放进绿色框", "#ffd166"],
-        ["信息不足", "recognition_problem", "insufficient_info", "信息不足", "当前画面缺少完整命令输出", "AI 需要完整终端内容", "请拍完整终端内容后重试", "#ffd166"],
-        ["语音不清楚", "recognition_problem", "voice_unclear", "语音不清楚", "AI 没听清你的补充说明", "语音需要重新录入", "请重新长按，说短一点", "#ff9f6e"],
-        ["网络错误", "network_error", "network_error", "网络连接失败", "暂时连接不到 AI 运维服务", "服务暂时不可用", "确认网络后，单击中心重试", "#ff5d73"],
-        ["远程复测", "remote_probe", "", "正在远程复测", "后台正在检测 SSH 是否恢复", "正在验证远程访问", "请稍等，不要重复输入命令", "#4cc9ff"],
-        ["完成", "completed", "", "SSH 已恢复", "本次远程访问恢复完成", "本次会话完成", "可以停止操作，等待下一次任务", "#5effad"],
-        ["建议转人工", "human_suggested", "", "建议转人工", "当前情况可能超出安全自动指导范围", "AI 只是建议", "是否转人工由你决定", "#ff6b9a"]
+      const lineSpec = [
+        [0, 0, 52, "#267c59"],
+        [0, 6.5, 60, "#24343a"],
+        [0, 13, 68, "#26383f"],
+        [0, 19.5, 76, "#26383f"],
+        [0, 26, 84, "#26383f"],
+        [0, 32.5, 93, "#267c59"],
+        [0, 39, 52, "#26383f"],
+        [0, 45.5, 60, "#26383f"],
+        [0, 52, 68, "#26383f"],
+        [0, 58.5, 76, "#267c59"],
+        [0, 65, 52, "#26383f"],
+        [0, 71.5, 60, "#26383f"],
+        [0, 78, 68, "#26383f"],
+        [0, 84.5, 76, "#267c59"]
       ];
 
-      const terminal = `root@server:~# systemctl status ssh\\n● ssh.service - OpenSSH server daemon\\n   Loaded: loaded (/lib/systemd/system/ssh.service)\\n   Active: inactive (dead)\\nroot@server:~#`;
+      const states = [
+        {
+          name: "相机就绪",
+          title: "对准服务器本地控制台",
+          subtitle: "中心点击拍照，AI 会识别画面并给出下一步安全指令",
+          status: "相机已就绪。请保持 25-35cm 距离，避免反光。",
+          tone: "#5effad",
+          activeAction: 1
+        },
+        {
+          name: "拍照上传",
+          title: "照片上传中",
+          subtitle: "请保持画面稳定，正在把图片交给 AI 识别",
+          status: "照片正在上传。请不要移动眼镜或重复点击。",
+          tone: "#5ec7ff",
+          activeAction: 1
+        },
+        {
+          name: "语音录入",
+          title: "正在录音",
+          subtitle: "请用一句短话说明你刚刚做了什么",
+          status: "正在记录现场语音。松开后开始转文字。",
+          tone: "#86a7ff",
+          activeAction: 2
+        },
+        {
+          name: "语音转写",
+          title: "语音转文字中",
+          subtitle: "自部署语音模型正在识别你的话",
+          status: "语音已提交。正在生成文字结果。",
+          tone: "#8bd1ff",
+          activeAction: 2
+        },
+        {
+          name: "AI 综合分析",
+          title: "AI 综合分析中",
+          subtitle: "图片和文字已交给主 AI，正在生成现场指导",
+          status: "请保持当前画面，等待下一步指令。",
+          tone: "#56e0c1",
+          activeAction: 1
+        },
+        {
+          name: "操作指令",
+          title: "请输入恢复命令",
+          subtitle: "sudo systemctl start ssh",
+          status: "AI 已返回下一步。输入完成后中心点击拍摄输出结果。",
+          tone: "#5effad",
+          activeAction: 1,
+          command: true
+        },
+        {
+          name: "拍错目标",
+          title: "拍错目标",
+          subtitle: "当前画面不是服务器本地控制台",
+          status: "请重新对准登录界面、黑底终端或命令输出。",
+          tone: "#ffd166",
+          activeAction: 3
+        },
+        {
+          name: "照片不清晰",
+          title: "照片不清晰",
+          subtitle: "AI 看不清屏幕文字，无法可靠判断",
+          status: "请靠近屏幕，避免反光，把文字放入绿色框。",
+          tone: "#ffd166",
+          activeAction: 3
+        },
+        {
+          name: "信息不足",
+          title: "信息不足",
+          subtitle: "当前画面缺少完整命令输出",
+          status: "请拍完整终端内容，让 AI 看到上下文。",
+          tone: "#ffd166",
+          activeAction: 3
+        },
+        {
+          name: "语音不清楚",
+          title: "语音不清楚",
+          subtitle: "AI 没听清你的补充说明",
+          status: "请重新长按中心，说短一点、慢一点。",
+          tone: "#ff9f6e",
+          activeAction: 2
+        },
+        {
+          name: "网络错误",
+          title: "网络连接失败",
+          subtitle: "暂时连接不到 AI 运维服务",
+          status: "请确认网络后中心点击重试。",
+          tone: "#ff5d73",
+          activeAction: 1
+        },
+        {
+          name: "远程复测",
+          title: "正在远程复测",
+          subtitle: "后台正在检测 SSH 是否恢复",
+          status: "请稍等，不要重复输入命令。",
+          tone: "#5ec7ff",
+          activeAction: 1
+        },
+        {
+          name: "完成",
+          title: "SSH 已恢复",
+          subtitle: "本次远程访问恢复完成",
+          status: "本次会话完成。可以停止操作，等待下一次任务。",
+          tone: "#5effad",
+          activeAction: 1
+        },
+        {
+          name: "建议转人工",
+          title: "建议转人工",
+          subtitle: "当前情况可能超出安全自动指导范围",
+          status: "AI 只是建议，是否转人工由你决定。",
+          tone: "#ff6b9a",
+          activeAction: 2
+        }
+      ];
+
+      const actions = [
+        ["1", "中心点击", "拍照 / 下一步"],
+        ["2", "长按中心", "语音确认 / 补充说明"],
+        ["3", "返回键", "重拍 / 返回上一步"]
+      ];
+
       const grid = document.getElementById("grid");
 
-      states.forEach((s, index) => {
-        const [name, resultType, feedbackCode, title, text, status, hint, tone, extra] = s;
-        const frame = document.createElement("section");
-        frame.className = `frame ${extra || ""}`;
-        frame.style.setProperty("--tone", tone);
-        frame.innerHTML = `
-          <div class="topbar">
-            <div class="brand">叮当X AI 运维眼镜</div>
-            <div class="task">服务器 SSH 恢复</div>
-          </div>
-          <div class="guide"></div>
-          <div class="terminal">${terminal}</div>
-          <div class="instruction">
-            <div class="title">${title}</div>
-            <div class="text">${text}</div>
-          </div>
-          <div class="tag">${String(index + 1).padStart(2, "0")} ${name} · ${resultType}${feedbackCode ? " / " + feedbackCode : ""}</div>
-          <div class="bottombar">
-            <div class="status">${status}</div>
-            <div class="hint">${hint}</div>
-          </div>
+      states.forEach((state, index) => {
+        const card = document.createElement("article");
+        card.className = "state-card";
+        const lines = lineSpec
+          .map(([x, y, w, c]) => `<span style="--x:${x}%;--y:${y}%;--w:${w}%;--c:${c}"></span>`)
+          .join("");
+        const actionHtml = actions
+          .map(([num, title, detail], actionIndex) => {
+            const active = state.activeAction === actionIndex + 1 ? " active" : "";
+            return `<div class="action${active}">
+              <div class="num">${num}</div>
+              <div>
+                <div class="action-title">${title}</div>
+                <div class="action-detail">${detail}</div>
+              </div>
+            </div>`;
+          })
+          .join("");
+
+        card.innerHTML = `
+          <section class="hud${state.command ? " command" : ""}" style="--tone:${state.tone}">
+            <div class="terminal-lines">${lines}</div>
+            <div class="topbar">
+              <div class="brand">叮当X AI 运维眼镜</div>
+              <div class="task">服务器 SSH 恢复</div>
+            </div>
+            <div class="guide"></div>
+            <div class="instruction">
+              <div class="title">${state.title}</div>
+              <div class="subtitle">${state.subtitle}</div>
+            </div>
+            <div class="crosshair"></div>
+            <div class="guide-note">把服务器控制台文字放入绿色框内</div>
+            <div class="status-row">
+              <div class="left">状态：${state.status}</div>
+              <div class="right">调试信息仅写入日志，不显示给现场人员</div>
+            </div>
+            <div class="operation-bar">${actionHtml}</div>
+          </section>
+          <div class="caption">${String(index + 1).padStart(2, "0")} ${state.name}</div>
         `;
-        grid.appendChild(frame);
+        grid.appendChild(card);
       });
     </script>
   </body>
