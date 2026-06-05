@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4020" height="8490" viewBox="0 0 4020 8490">
+  <defs>
+    <style>
+      .bg { fill: #07100e; }
+      .bar { fill: rgba(4, 12, 10, 0.82); stroke: #5effad; stroke-opacity: .42; stroke-width: 2; }
+      .frame { fill: none; stroke: var(--tone); stroke-width: 6; }
+      .cross { stroke: var(--tone); stroke-opacity: .78; stroke-width: 4; }
+      .brand { fill: #f1fff8; font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 32px; font-weight: 700; }
+      .task { fill: #7dffb0; font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 28px; }
+      .title { fill: var(--tone); font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 66px; font-weight: 800; text-anchor: middle; }
+      .text { fill: #eefcf5; font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 36px; text-anchor: middle; }
+      .mono { fill: #ffffff; font-family: Consolas, "Microsoft YaHei", monospace; font-size: 38px; text-anchor: middle; }
+      .terminal { fill: #93ffb9; fill-opacity: .32; font-family: Consolas, monospace; font-size: 22px; }
+      .status { fill: #e8f6ef; font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 26px; }
+      .hint { fill: #a9c8b8; font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; font-size: 24px; }
+      .tag { fill: #cfeee0; fill-opacity: .72; font-family: "Microsoft YaHei", Arial, sans-serif; font-size: 20px; text-anchor: end; }
+      .panel { fill: rgba(3, 8, 7, .74); stroke: rgba(255,255,255,.14); stroke-width: 2; }
+      .gridline { stroke: #5effad; stroke-opacity: .08; stroke-width: 2; }
+    </style>
+    <linearGradient id="preview" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#0d1417"/>
+      <stop offset=".52" stop-color="#111916"/>
+      <stop offset="1" stop-color="#090d10"/>
+    </linearGradient>
+    <pattern id="scan" width="1920" height="46" patternUnits="userSpaceOnUse">
+      <rect width="1920" height="2" fill="#2aff94" opacity=".08"/>
+    </pattern>
+    <symbol id="hud-base" viewBox="0 0 1920 1080">
+      <rect class="bg" width="1920" height="1080"/>
+      <rect width="1920" height="1080" fill="url(#preview)"/>
+      <rect width="1920" height="1080" fill="url(#scan)"/>
+      <line class="gridline" x1="135" y1="0" x2="135" y2="1080"/>
+      <line class="gridline" x1="0" y1="205" x2="1920" y2="205"/>
+      <rect class="bar" x="32" y="24" width="1856" height="84" rx="8"/>
+      <text class="brand" x="66" y="78">叮当X AI 运维眼镜</text>
+      <text class="task" x="1648" y="78" text-anchor="end">服务器 SSH 恢复</text>
+      <text class="terminal" x="345" y="352">root@server:~# systemctl status ssh</text>
+      <text class="terminal" x="345" y="398">● ssh.service - OpenSSH server daemon</text>
+      <text class="terminal" x="345" y="444">Loaded: loaded (/lib/systemd/system/ssh.service)</text>
+      <text class="terminal" x="345" y="490">Active: inactive (dead)</text>
+      <text class="terminal" x="345" y="536">root@server:~#</text>
+      <rect class="frame" x="269" y="292" width="1382" height="540"/>
+      <line class="cross" x1="960" y1="498" x2="960" y2="626"/>
+      <line class="cross" x1="842" y1="562" x2="1078" y2="562"/>
+      <rect class="panel" x="384" y="442" width="1152" height="176" rx="8"/>
+      <rect class="bar" x="32" y="914" width="1856" height="138" rx="8"/>
+    </symbol>
+  </defs>
+
+  <rect width="4020" height="8490" fill="#050807"/>
+  <text x="0" y="-28" fill="#eefcf5" font-family="Microsoft YaHei, Arial" font-size="1">Air3 V2 HUD states</text>
+
+  <g transform="translate(0 0)" style="--tone:#5effad">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">对准服务器控制台</text>
+    <text class="text" x="960" y="568">把登录界面、黑底终端或命令输出放进绿色框</text>
+    <text class="status" x="68" y="970">相机已就绪</text>
+    <text class="hint" x="820" y="970">单击中心拍照，长按说话</text>
+    <text class="tag" x="1848" y="882">01 相机就绪 · ready</text>
+  </g>
+
+  <g transform="translate(2100 0)" style="--tone:#4cc9ff">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">照片上传中</text>
+    <text class="text" x="960" y="568">请保持画面稳定</text>
+    <text class="status" x="68" y="970">正在把现场图片发送给 AI</text>
+    <text class="hint" x="820" y="970">请稍等，不要重复点击</text>
+    <text class="tag" x="1848" y="882">02 拍照上传 · uploading</text>
+  </g>
+
+  <g transform="translate(0 1230)" style="--tone:#7aa8ff">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">正在录音</text>
+    <text class="text" x="960" y="568">请用一句短话说明你刚刚做了什么</text>
+    <text class="status" x="68" y="970">正在记录现场语音</text>
+    <text class="hint" x="820" y="970">松开后开始转文字</text>
+    <text class="tag" x="1848" y="882">03 语音录入 · recording_voice</text>
+  </g>
+
+  <g transform="translate(2100 1230)" style="--tone:#8bd1ff">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">语音转文字中</text>
+    <text class="text" x="960" y="568">自部署语音模型正在识别你的话</text>
+    <text class="status" x="68" y="970">正在生成 transcript</text>
+    <text class="hint" x="820" y="970">请稍等</text>
+    <text class="tag" x="1848" y="882">04 语音转写 · transcribing_voice</text>
+  </g>
+
+  <g transform="translate(0 2460)" style="--tone:#56e0c1">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">AI 综合分析中</text>
+    <text class="text" x="960" y="568">主 AI 正在结合图片和文字生成指导</text>
+    <text class="status" x="68" y="970">图片和文字已交给主 AI</text>
+    <text class="hint" x="820" y="970">请不要移动画面</text>
+    <text class="tag" x="1848" y="882">05 AI 综合分析 · ai_analyzing</text>
+  </g>
+
+  <g transform="translate(2100 2460)" style="--tone:#5effad">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="510">请输入恢复命令</text>
+    <text class="mono" x="960" y="570">sudo systemctl start ssh</text>
+    <text class="status" x="68" y="970">AI 已返回下一步</text>
+    <text class="hint" x="820" y="970">输入完成后，单击中心拍摄输出结果</text>
+    <text class="tag" x="1848" y="882">06 操作指令 · instruction</text>
+  </g>
+
+  <g transform="translate(0 3690)" style="--tone:#ffd166">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">拍错目标</text>
+    <text class="text" x="960" y="568">当前画面不是服务器控制台</text>
+    <text class="status" x="68" y="970">AI 需要你重新拍摄目标</text>
+    <text class="hint" x="820" y="970">请只拍登录界面、黑底终端或命令输出</text>
+    <text class="tag" x="1848" y="882">07 拍错目标 · recognition_problem / wrong_target</text>
+  </g>
+
+  <g transform="translate(2100 3690)" style="--tone:#ffd166">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">照片不清晰</text>
+    <text class="text" x="960" y="568">AI 看不清屏幕文字</text>
+    <text class="status" x="68" y="970">请重新补充现场图片</text>
+    <text class="hint" x="820" y="970">靠近屏幕，避免反光，把文字放进绿色框</text>
+    <text class="tag" x="1848" y="882">08 照片不清晰 · recognition_problem / unclear_photo</text>
+  </g>
+
+  <g transform="translate(0 4920)" style="--tone:#ffd166">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">信息不足</text>
+    <text class="text" x="960" y="568">当前画面缺少完整命令输出</text>
+    <text class="status" x="68" y="970">AI 需要完整终端内容</text>
+    <text class="hint" x="820" y="970">请拍完整终端内容后重试</text>
+    <text class="tag" x="1848" y="882">09 信息不足 · recognition_problem / insufficient_info</text>
+  </g>
+
+  <g transform="translate(2100 4920)" style="--tone:#ff9f6e">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">语音不清楚</text>
+    <text class="text" x="960" y="568">AI 没听清你的补充说明</text>
+    <text class="status" x="68" y="970">语音需要重新录入</text>
+    <text class="hint" x="820" y="970">请重新长按，说短一点</text>
+    <text class="tag" x="1848" y="882">10 语音不清楚 · recognition_problem / voice_unclear</text>
+  </g>
+
+  <g transform="translate(0 6150)" style="--tone:#ff5d73">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">网络连接失败</text>
+    <text class="text" x="960" y="568">暂时连接不到 AI 运维服务</text>
+    <text class="status" x="68" y="970">服务暂时不可用</text>
+    <text class="hint" x="820" y="970">确认网络后，单击中心重试</text>
+    <text class="tag" x="1848" y="882">11 网络错误 · network_error / network_error</text>
+  </g>
+
+  <g transform="translate(2100 6150)" style="--tone:#4cc9ff">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">正在远程复测</text>
+    <text class="text" x="960" y="568">后台正在检测 SSH 是否恢复</text>
+    <text class="status" x="68" y="970">正在验证远程访问</text>
+    <text class="hint" x="820" y="970">请稍等，不要重复输入命令</text>
+    <text class="tag" x="1848" y="882">12 远程复测 · remote_probe</text>
+  </g>
+
+  <g transform="translate(0 7380)" style="--tone:#5effad">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">SSH 已恢复</text>
+    <text class="text" x="960" y="568">本次远程访问恢复完成</text>
+    <text class="status" x="68" y="970">本次会话完成</text>
+    <text class="hint" x="820" y="970">可以停止操作，等待下一次任务</text>
+    <text class="tag" x="1848" y="882">13 完成 · completed</text>
+  </g>
+
+  <g transform="translate(2100 7380)" style="--tone:#ff6b9a">
+    <use href="#hud-base"/>
+    <text class="title" x="960" y="514">建议转人工</text>
+    <text class="text" x="960" y="568">当前情况可能超出安全自动指导范围</text>
+    <text class="status" x="68" y="970">AI 只是建议</text>
+    <text class="hint" x="820" y="970">是否转人工由你决定</text>
+    <text class="tag" x="1848" y="882">14 建议转人工 · human_suggested</text>
+  </g>
+</svg>

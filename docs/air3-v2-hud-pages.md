@@ -159,4 +159,9 @@ Air3 V2 HUD 是眼镜内全屏横屏界面，不是普通手机 App 页面。
 
 ## 设计链接
 
-- 待 Task 2 用 Figma/即时设计对齐 14 个 HUD 画面后补充。
+- 即时设计文件：`https://js.design/f/La5DU2?mode=design&p=frJI41vsVG`
+- 本地 SVG 总览：`docs/air3-v2-hud-states.svg`
+- 本地 HTML 预览：`docs/air3-v2-hud-states-preview.html`
+- 设计说明：`docs/air3-v2-hud-design-reference.md`
+
+2026-06-05 已在即时设计中新建设计文件，并将 14 个 Air3 V2 HUD 状态总览粘贴到画布。每个状态按 `1920 x 1080` 横屏 HUD 规格设计，覆盖相机就绪、拍照上传、语音录入、语音转写、AI 综合分析、操作指令、拍错目标、照片不清晰、信息不足、语音不清楚、网络错误、远程复测、完成、建议转人工。

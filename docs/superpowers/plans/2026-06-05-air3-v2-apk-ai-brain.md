@@ -191,11 +191,11 @@ If the root is not a Git repo, initialize it first in Task 8 before committing.
 - Read: `docs/air3-hud-post-demo-fix-design.md`
 - Optional Figma file: existing `https://www.figma.com/design/zEyO259e18lqpicT6IfNjg`
 
-- [ ] **Step 1: Load Figma use skill before any Figma write**
+- [x] **Step 1: Load Figma use skill before any Figma write**
 
 Read the local `figma-use` skill before calling `use_figma`. If creating a new file, read `figma-create-new-file` first.
 
-- [ ] **Step 2: Create/update one 1920x1080 HUD frame per state**
+- [x] **Step 2: Create/update one 1920x1080 HUD frame per state**
 
 Frames to represent:
 
@@ -216,7 +216,7 @@ AI 综合分析
 建议转人工
 ```
 
-- [ ] **Step 3: Match V2 design constraints**
+- [x] **Step 3: Match V2 design constraints**
 
 Each frame must follow:
 
@@ -228,11 +228,11 @@ Each frame must follow:
 不显示 debug、HTTP、bytes、session、异常类名
 ```
 
-- [ ] **Step 4: Export design reference screenshot**
+- [x] **Step 4: Export design reference screenshot**
 
 Save a screenshot or Figma URL in `docs/air3-v2-hud-pages.md` under a section named `设计链接`.
 
-- [ ] **Step 5: Commit design checkpoint**
+- [x] **Step 5: Commit design checkpoint**
 
 ```powershell
 git add docs/air3-v2-hud-pages.md docs/air3-hud-post-demo-fix-design.md

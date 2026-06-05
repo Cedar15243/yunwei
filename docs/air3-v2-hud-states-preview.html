@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Air3 V2 HUD 状态预览</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial,
+          sans-serif;
+        background: #050807;
+        color: #eefcf5;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 32px;
+        background:
+          radial-gradient(circle at 20% 12%, rgba(36, 161, 100, 0.18), transparent 28%),
+          linear-gradient(135deg, #050807 0%, #0d1512 46%, #0a1118 100%);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      p {
+        margin: 0 0 24px;
+        color: #a9c8b8;
+        font-size: 15px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(480px, 1fr));
+        gap: 28px;
+      }
+
+      .frame {
+        position: relative;
+        aspect-ratio: 16 / 9;
+        overflow: hidden;
+        border: 1px solid rgba(94, 255, 173, 0.28);
+        border-radius: 8px;
+        background:
+          linear-gradient(0deg, rgba(2, 6, 5, 0.72), rgba(2, 6, 5, 0.18)),
+          repeating-linear-gradient(0deg, rgba(42, 255, 148, 0.08) 0 2px, transparent 2px 46px),
+          linear-gradient(120deg, #0d1417 0%, #111916 52%, #090d10 100%);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
+      }
+
+      .frame::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(90deg, transparent 0 7%, rgba(95, 255, 176, 0.08) 7.1% 7.25%, transparent 7.35% 100%),
+          linear-gradient(0deg, transparent 0 19%, rgba(95, 255, 176, 0.06) 19.1% 19.22%, transparent 19.32% 100%);
+        opacity: 0.72;
+      }
+
+      .topbar,
+      .bottombar {
+        position: absolute;
+        left: 32px;
+        right: 32px;
+        border: 1px solid rgba(94, 255, 173, 0.42);
+        background: rgba(4, 12, 10, 0.74);
+        backdrop-filter: blur(4px);
+      }
+
+      .topbar {
+        top: 24px;
+        height: 84px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 30px;
+      }
+
+      .brand {
+        color: #f1fff8;
+        font-size: clamp(16px, 2vw, 30px);
+        font-weight: 700;
+      }
+
+      .task {
+        color: #7dffb0;
+        font-size: clamp(14px, 1.7vw, 24px);
+      }
+
+      .guide {
+        position: absolute;
+        left: 14%;
+        top: 27%;
+        width: 72%;
+        height: 50%;
+        border: 3px solid var(--tone, #5effad);
+        box-shadow:
+          inset 0 0 28px color-mix(in srgb, var(--tone, #5effad) 32%, transparent),
+          0 0 22px color-mix(in srgb, var(--tone, #5effad) 28%, transparent);
+      }
+
+      .guide::before,
+      .guide::after {
+        content: "";
+        position: absolute;
+        background: color-mix(in srgb, var(--tone, #5effad) 76%, transparent);
+      }
+
+      .guide::before {
+        left: 50%;
+        top: 38%;
+        width: 2px;
+        height: 24%;
+      }
+
+      .guide::after {
+        left: 44%;
+        top: 50%;
+        width: 12%;
+        height: 2px;
+      }
+
+      .terminal {
+        position: absolute;
+        left: 18%;
+        top: 33%;
+        color: rgba(147, 255, 185, 0.32);
+        font-family: Consolas, monospace;
+        font-size: clamp(10px, 1vw, 15px);
+        line-height: 1.9;
+        white-space: pre;
+      }
+
+      .instruction {
+        position: absolute;
+        left: 20%;
+        right: 20%;
+        top: 41%;
+        min-height: 150px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 18px 30px;
+        text-align: center;
+        background: rgba(3, 8, 7, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+      }
+
+      .title {
+        margin-bottom: 12px;
+        color: var(--tone, #5effad);
+        font-size: clamp(24px, 4vw, 58px);
+        font-weight: 800;
+        line-height: 1.08;
+      }
+
+      .text {
+        color: #eefcf5;
+        font-size: clamp(15px, 2vw, 31px);
+        line-height: 1.25;
+        word-break: keep-all;
+      }
+
+      .command .text {
+        font-family: Consolas, "Microsoft YaHei", monospace;
+        color: #ffffff;
+      }
+
+      .bottombar {
+        bottom: 28px;
+        min-height: 126px;
+        display: grid;
+        grid-template-columns: 1fr 1.3fr;
+        gap: 18px;
+        align-items: center;
+        padding: 18px 28px;
+      }
+
+      .status {
+        color: #e8f6ef;
+        font-size: clamp(13px, 1.7vw, 23px);
+        line-height: 1.35;
+      }
+
+      .hint {
+        color: #a9c8b8;
+        font-size: clamp(12px, 1.45vw, 20px);
+        line-height: 1.35;
+      }
+
+      .tag {
+        position: absolute;
+        right: 44px;
+        bottom: 170px;
+        color: rgba(238, 252, 245, 0.7);
+        font-size: clamp(10px, 1vw, 15px);
+      }
+
+      @media (max-width: 1100px) {
+        body {
+          padding: 18px;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Air3 V2 HUD 状态预览</h1>
+    <p>14 个 1920×1080 横屏 HUD 状态，用于即时设计/Figma 对齐、Expo 原型和原生 APK 实现。</p>
+    <main class="grid" id="grid"></main>
+    <script>
+      const states = [
+        ["相机就绪", "ready", "", "对准服务器控制台", "把登录界面、黑底终端或命令输出放进绿色框", "相机已就绪", "单击中心拍照，长按说话", "#5effad"],
+        ["拍照上传", "uploading", "", "照片上传中", "请保持画面稳定", "正在把现场图片发送给 AI", "请稍等，不要重复点击", "#4cc9ff"],
+        ["语音录入", "recording_voice", "", "正在录音", "请用一句短话说明你刚刚做了什么", "正在记录现场语音", "松开后开始转文字", "#7aa8ff"],
+        ["语音转写", "transcribing_voice", "", "语音转文字中", "自部署语音模型正在识别你的话", "正在生成 transcript", "请稍等", "#8bd1ff"],
+        ["AI 综合分析", "ai_analyzing", "", "AI 综合分析中", "主 AI 正在结合图片和文字生成指导", "图片和文字已交给主 AI", "请不要移动画面", "#56e0c1"],
+        ["操作指令", "instruction", "", "请输入恢复命令", "sudo systemctl start ssh", "AI 已返回下一步", "输入完成后，单击中心拍摄输出结果", "#5effad", "command"],
+        ["拍错目标", "recognition_problem", "wrong_target", "拍错目标", "当前画面不是服务器控制台", "AI 需要你重新拍摄目标", "请只拍登录界面、黑底终端或命令输出", "#ffd166"],
+        ["照片不清晰", "recognition_problem", "unclear_photo", "照片不清晰", "AI 看不清屏幕文字", "请重新补充现场图片", "靠近屏幕，避免反光，把文字放进绿色框", "#ffd166"],
+        ["信息不足", "recognition_problem", "insufficient_info", "信息不足", "当前画面缺少完整命令输出", "AI 需要完整终端内容", "请拍完整终端内容后重试", "#ffd166"],
+        ["语音不清楚", "recognition_problem", "voice_unclear", "语音不清楚", "AI 没听清你的补充说明", "语音需要重新录入", "请重新长按，说短一点", "#ff9f6e"],
+        ["网络错误", "network_error", "network_error", "网络连接失败", "暂时连接不到 AI 运维服务", "服务暂时不可用", "确认网络后，单击中心重试", "#ff5d73"],
+        ["远程复测", "remote_probe", "", "正在远程复测", "后台正在检测 SSH 是否恢复", "正在验证远程访问", "请稍等，不要重复输入命令", "#4cc9ff"],
+        ["完成", "completed", "", "SSH 已恢复", "本次远程访问恢复完成", "本次会话完成", "可以停止操作，等待下一次任务", "#5effad"],
+        ["建议转人工", "human_suggested", "", "建议转人工", "当前情况可能超出安全自动指导范围", "AI 只是建议", "是否转人工由你决定", "#ff6b9a"]
+      ];
+
+      const terminal = `root@server:~# systemctl status ssh\\n● ssh.service - OpenSSH server daemon\\n   Loaded: loaded (/lib/systemd/system/ssh.service)\\n   Active: inactive (dead)\\nroot@server:~#`;
+      const grid = document.getElementById("grid");
+
+      states.forEach((s, index) => {
+        const [name, resultType, feedbackCode, title, text, status, hint, tone, extra] = s;
+        const frame = document.createElement("section");
+        frame.className = `frame ${extra || ""}`;
+        frame.style.setProperty("--tone", tone);
+        frame.innerHTML = `
+          <div class="topbar">
+            <div class="brand">叮当X AI 运维眼镜</div>
+            <div class="task">服务器 SSH 恢复</div>
+          </div>
+          <div class="guide"></div>
+          <div class="terminal">${terminal}</div>
+          <div class="instruction">
+            <div class="title">${title}</div>
+            <div class="text">${text}</div>
+          </div>
+          <div class="tag">${String(index + 1).padStart(2, "0")} ${name} · ${resultType}${feedbackCode ? " / " + feedbackCode : ""}</div>
+          <div class="bottombar">
+            <div class="status">${status}</div>
+            <div class="hint">${hint}</div>
+          </div>
+        `;
+        grid.appendChild(frame);
+      });
+    </script>
+  </body>
+</html>
