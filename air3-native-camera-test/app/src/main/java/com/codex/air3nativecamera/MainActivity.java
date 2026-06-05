@@ -486,17 +486,13 @@ public final class MainActivity extends Activity {
                     String responseText = readAll(input);
                     persistVoiceResponse(status, audioBytes.length, responseText, null);
                     JSONObject response = new JSONObject(responseText);
-                    String intent = response.optString("voiceIntent", "unknown");
-                    String transcript = response.optString("transcript", "");
-                    String text = response.optString("text", responseText);
-                    persistSession(response.optString("sessionId", sessionId), response.optString("step", currentStep));
-                    setResultText(voiceIntentLabel(intent));
-                    setStatus(transcript.length() == 0
-                            ? "语音已上传，但未识别出明确指令。请按屏幕提示继续。"
-                            : "语音已识别，请按屏幕提示继续操作。");
+                    HudResponse hud = new HudResponse(response, sessionId, currentStep);
+                    applyHudResponse(hud);
                     android.util.Log.i("Air3NativeCameraTest",
                             "Voice OK http=" + status + " bytes=" + audioBytes.length
-                                    + " transcript=" + transcript + " text=" + text);
+                                    + " resultType=" + hud.resultType
+                                    + " feedbackCode=" + hud.feedbackCode
+                                    + " step=" + hud.step);
                 } catch (Exception error) {
                     setResultText("语音同步失败");
                     setStatus("语音没有同步成功，请改用单击拍照继续。");
@@ -949,20 +945,13 @@ public final class MainActivity extends Activity {
                     : connection.getErrorStream();
             String responseText = readAll(input);
             JSONObject response = new JSONObject(responseText);
-            String text = response.optString("text", responseText);
-            int imageBytes = response.optInt("imageBytes", jpegBytes.length);
-            String nextSessionId = response.optString("sessionId", sessionId);
-            String nextStep = response.optString("step", currentStep);
-            persistSession(nextSessionId, nextStep);
-            persistLastResponse(responseText);
-
-            setResultText(firstInstructionLine(text));
-            setHintForStep(nextStep, text);
-            setStatus(statusForStep(nextStep));
+            HudResponse hud = new HudResponse(response, sessionId, currentStep);
+            int imageBytes = response.optInt("imageBytes", uploadImage.bytes.length);
+            applyHudResponse(hud);
             android.util.Log.i("Air3NativeCameraTest", String.format(Locale.US,
-                    "OK http=%d step=%s session=%s serverImageBytes=%d uploadBytes=%d rawBytes=%d text=%s",
-                    status, nextStep, shortSessionId(nextSessionId), imageBytes,
-                    uploadImage.bytes.length, jpegBytes.length, text));
+                    "OK http=%d step=%s session=%s resultType=%s feedbackCode=%s serverImageBytes=%d uploadBytes=%d rawBytes=%d",
+                    status, hud.step, shortSessionId(hud.sessionId), hud.resultType, hud.feedbackCode,
+                    imageBytes, uploadImage.bytes.length, jpegBytes.length));
         } catch (Exception error) {
             setResultText("上传失败");
             setStatus("暂时连接不到 AI 运维服务。请确认网络后单击重试。");
@@ -1057,6 +1046,31 @@ public final class MainActivity extends Activity {
             return 0;
         }
         return 0;
+    }
+
+    private static final class HudResponse {
+        final String rawResponse;
+        final String sessionId;
+        final String step;
+        final String resultType;
+        final String feedbackCode;
+        final String displayTitle;
+        final String displayText;
+        final String displayHint;
+        final boolean humanEscalationSuggestion;
+
+        HudResponse(JSONObject response, String fallbackSessionId, String fallbackStep) {
+            rawResponse = response.toString();
+            sessionId = response.optString("sessionId", fallbackSessionId);
+            step = response.optString("step", fallbackStep);
+            resultType = response.optString("resultType", "instruction");
+            feedbackCode = response.optString("feedbackCode", "");
+            String legacyText = response.optString("text", "");
+            displayTitle = response.optString("displayTitle", firstInstructionLine(legacyText));
+            displayText = response.optString("displayText", legacyText);
+            displayHint = response.optString("displayHint", "");
+            humanEscalationSuggestion = response.optBoolean("humanEscalationSuggestion", false);
+        }
     }
 
     private static byte[] encodeJpeg(Bitmap bitmap, int quality) {
@@ -1154,6 +1168,20 @@ public final class MainActivity extends Activity {
                 .apply();
     }
 
+    private void applyHudResponse(final HudResponse hud) {
+        persistSession(hud.sessionId, hud.step);
+        persistLastResponse(hud.rawResponse);
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                stepText.setText(stepLabel(hud.step));
+                resultText.setText(hud.displayTitle.length() == 0 ? firstInstructionLine(hud.displayText) : hud.displayTitle);
+                hintText.setText(hud.displayHint.length() == 0 ? fallbackHint(hud) : hud.displayHint);
+                statusText.setText(statusForHud(hud));
+            }
+        });
+    }
+
     private void persistLastResponse(String responseText) {
         getPreferences(MODE_PRIVATE)
                 .edit()
@@ -1168,7 +1196,7 @@ public final class MainActivity extends Activity {
 
     private static String firstInstructionLine(String text) {
         if (text == null || text.trim().length() == 0) {
-            return "No instruction";
+            return "等待 AI 指导";
         }
         String normalized = text.replace('\r', '\n').trim();
         int newline = normalized.indexOf('\n');
@@ -1196,6 +1224,41 @@ public final class MainActivity extends Activity {
             return "已完成";
         }
         return "步骤 1/4 定位";
+    }
+
+    private static String fallbackHint(HudResponse hud) {
+        if ("wrong_target".equals(hud.feedbackCode)) {
+            return "请只拍服务器登录界面、黑底终端或命令输出";
+        }
+        if ("unclear_photo".equals(hud.feedbackCode)) {
+            return "请靠近屏幕，避免反光，把文字放进绿色框后重拍";
+        }
+        if ("insufficient_info".equals(hud.feedbackCode)) {
+            return "请拍摄完整终端内容后重试";
+        }
+        if ("voice_unclear".equals(hud.feedbackCode)) {
+            return "请重新长按，说短一点";
+        }
+        if ("human_suggested".equals(hud.resultType) || hud.humanEscalationSuggestion) {
+            return "你可以长按中心选择转人工，也可以重新拍摄补充信息";
+        }
+        return hud.displayText.length() == 0 ? "请按提示继续" : hud.displayText;
+    }
+
+    private static String statusForHud(HudResponse hud) {
+        if ("recognition_problem".equals(hud.resultType)) {
+            return "AI 需要你重新补充现场信息。";
+        }
+        if ("human_suggested".equals(hud.resultType) || hud.humanEscalationSuggestion) {
+            return "AI 建议转人工，是否转人工由你决定。";
+        }
+        if ("completed".equals(hud.resultType)) {
+            return "远程访问已恢复，本次会话完成。";
+        }
+        if ("network_error".equals(hud.resultType)) {
+            return "暂时连接不到 AI 运维服务，请确认网络后重试。";
+        }
+        return "AI 已返回下一步，请按屏幕中央指令继续。";
     }
 
     private static String statusForStep(String step) {

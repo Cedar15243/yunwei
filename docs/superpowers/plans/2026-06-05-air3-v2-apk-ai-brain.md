@@ -737,7 +737,7 @@ git commit -m "feat: route Air3 context through AI brain"
 - Modify: `air3-native-camera-test/app/src/main/java/com/codex/air3nativecamera/MainActivity.java`
 - Build: `air3-native-camera-test/build-native-apk.ps1`
 
-- [ ] **Step 1: Add HUD response value object**
+- [x] **Step 1: Add HUD response value object**
 
 Inside `MainActivity`, add:
 
@@ -766,7 +766,7 @@ private static final class HudResponse {
 }
 ```
 
-- [ ] **Step 2: Render by structured fields**
+- [x] **Step 2: Render by structured fields**
 
 Add:
 
@@ -785,7 +785,7 @@ private void applyHudResponse(final HudResponse hud) {
 }
 ```
 
-- [ ] **Step 3: Add fallback hint and status helpers**
+- [x] **Step 3: Add fallback hint and status helpers**
 
 Add:
 
@@ -826,7 +826,7 @@ private static String statusForHud(HudResponse hud) {
 }
 ```
 
-- [ ] **Step 4: Use structured response in image upload**
+- [x] **Step 4: Use structured response in image upload**
 
 Replace:
 
@@ -847,7 +847,7 @@ HudResponse hud = new HudResponse(response, sessionId, currentStep);
 applyHudResponse(hud);
 ```
 
-- [ ] **Step 5: Use structured response in voice upload**
+- [x] **Step 5: Use structured response in voice upload**
 
 Replace voice upload UI updates with:
 
@@ -858,7 +858,7 @@ applyHudResponse(hud);
 
 Do not display `voiceIntent` as the primary result in V2.
 
-- [ ] **Step 6: Localize empty fallback**
+- [x] **Step 6: Localize empty fallback**
 
 Change `firstInstructionLine` empty return from:
 
@@ -872,7 +872,7 @@ To:
 return "等待 AI 指导";
 ```
 
-- [ ] **Step 7: Build APK**
+- [x] **Step 7: Build APK**
 
 Run:
 
@@ -884,7 +884,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "air3-native-camera-test\bui
 
 Expected: APK builds and signature verification passes.
 
-- [ ] **Step 8: Commit native checkpoint**
+- [x] **Step 8: Commit native checkpoint**
 
 ```powershell
 git add air3-native-camera-test/app/src/main/java/com/codex/air3nativecamera/MainActivity.java air3-native-camera-test/build-native-apk.ps1
