@@ -28,6 +28,8 @@ const requiredTables = [
   "ops_images",
   "ai_requests",
   "ai_observations",
+  "ai_context_bundles",
+  "ai_decisions",
   "voice_inputs",
   "remote_probes",
 ];
@@ -51,6 +53,22 @@ if (!automigrateCode.includes("ops-glasses-captures")) {
 
 if (!automigrateCode.includes("AUTO_MIGRATE")) {
   throw new Error("automigrate does not expose AUTO_MIGRATE");
+}
+
+const requiredSchemaMarkers = [
+  "public.ai_decision_result_type",
+  "public.ai_feedback_code",
+  "context_version text not null default 'air3-v2-ai-brain-v1'",
+  "full_text text not null default ''",
+  "display_pages jsonb not null default '[]'::jsonb",
+  "text_overflow_mode text not null default 'single'",
+  "page_count integer not null default 1",
+];
+
+for (const marker of requiredSchemaMarkers) {
+  if (!automigrateCode.includes(marker)) {
+    throw new Error(`automigrate missing schema marker: ${marker}`);
+  }
 }
 
 const requiredRoutes = [

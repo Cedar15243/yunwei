@@ -32,11 +32,58 @@ type VoiceIntent =
   | "describe_scene"
   | "unknown";
 
+type ResultType =
+  | "instruction"
+  | "recognition_problem"
+  | "network_error"
+  | "remote_probe"
+  | "completed"
+  | "human_suggested";
+
+type FeedbackCode =
+  | "wrong_target"
+  | "unclear_photo"
+  | "insufficient_info"
+  | "voice_unclear"
+  | "image_voice_conflict"
+  | "ai_unavailable"
+  | "network_error"
+  | null;
+
+type TextOverflowMode = "single" | "paged";
+
+type AiBrainDecision = {
+  resultType: ResultType;
+  feedbackCode: FeedbackCode;
+  step: OpsStep;
+  displayTitle: string;
+  displayText: string;
+  fullText?: string;
+  displayPages?: string[];
+  textOverflowMode?: TextOverflowMode;
+  displayHint: string;
+  safeCommandKey?: string | null;
+  humanEscalationSuggestion: boolean;
+  requiresPhoto: boolean;
+};
+
 type GlassesResponse = {
   ok: true;
   sessionId: string;
   step: OpsStep;
   text: string;
+  resultType?: ResultType;
+  feedbackCode?: FeedbackCode;
+  displayTitle?: string;
+  displayText?: string;
+  fullText?: string;
+  displayPages?: string[];
+  textOverflowMode?: TextOverflowMode;
+  currentPage?: number;
+  totalPages?: number;
+  displayHint?: string;
+  safeCommandKey?: string | null;
+  humanEscalationSuggestion?: boolean;
   requiresPhoto: boolean;
   canRetake: boolean;
   canEscalate: boolean;

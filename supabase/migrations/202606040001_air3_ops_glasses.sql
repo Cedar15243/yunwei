@@ -42,6 +42,25 @@ create type public.ai_request_status as enum (
   'skipped'
 );
 
+create type public.ai_decision_result_type as enum (
+  'instruction',
+  'recognition_problem',
+  'network_error',
+  'remote_probe',
+  'completed',
+  'human_suggested'
+);
+
+create type public.ai_feedback_code as enum (
+  'wrong_target',
+  'unclear_photo',
+  'insufficient_info',
+  'voice_unclear',
+  'image_voice_conflict',
+  'ai_unavailable',
+  'network_error'
+);
+
 create type public.remote_probe_result_type as enum (
   'recovered',
   'same_issue_unresolved',
@@ -170,6 +189,40 @@ alter table public.ops_events
   add constraint ops_events_voice_input_id_fkey
   foreign key (voice_input_id) references public.voice_inputs(id) on delete set null;
 
+create table public.ai_context_bundles (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.ops_sessions(id) on delete cascade,
+  image_id uuid references public.ops_images(id) on delete set null,
+  voice_input_id uuid references public.voice_inputs(id) on delete set null,
+  current_step public.ops_step not null,
+  task_goal text not null default '指导现场人员恢复服务器 SSH 远程访问',
+  transcript text not null default '',
+  context_json jsonb not null default '{}'::jsonb,
+  context_version text not null default 'air3-v2-ai-brain-v1',
+  created_at timestamptz not null default now()
+);
+
+create table public.ai_decisions (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.ops_sessions(id) on delete cascade,
+  context_bundle_id uuid references public.ai_context_bundles(id) on delete set null,
+  ai_request_id uuid references public.ai_requests(id) on delete set null,
+  result_type public.ai_decision_result_type not null,
+  feedback_code public.ai_feedback_code,
+  step public.ops_step not null,
+  safe_command_key text,
+  display_title text not null,
+  display_text text not null,
+  full_text text not null default '',
+  display_pages jsonb not null default '[]'::jsonb check (jsonb_typeof(display_pages) = 'array'),
+  text_overflow_mode text not null default 'single' check (text_overflow_mode in ('single', 'paged')),
+  page_count integer not null default 1 check (page_count >= 1),
+  display_hint text not null,
+  human_escalation_suggestion boolean not null default false,
+  raw_json jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
 create table public.remote_probes (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references public.ops_sessions(id) on delete cascade,
@@ -191,6 +244,8 @@ create index ops_events_session_id_created_at_idx on public.ops_events(session_i
 create index ops_images_session_id_idx on public.ops_images(session_id);
 create index ai_observations_session_id_idx on public.ai_observations(session_id, created_at desc);
 create index voice_inputs_session_id_idx on public.voice_inputs(session_id, created_at desc);
+create index ai_context_bundles_session_id_idx on public.ai_context_bundles(session_id, created_at desc);
+create index ai_decisions_session_id_idx on public.ai_decisions(session_id, created_at desc);
 create index remote_probes_session_id_idx on public.remote_probes(session_id, created_at desc);
 
 alter table public.ops_assets enable row level security;
@@ -201,6 +256,8 @@ alter table public.ops_images enable row level security;
 alter table public.ai_requests enable row level security;
 alter table public.ai_observations enable row level security;
 alter table public.voice_inputs enable row level security;
+alter table public.ai_context_bundles enable row level security;
+alter table public.ai_decisions enable row level security;
 alter table public.remote_probes enable row level security;
 
 create policy "service role can manage ops assets"
@@ -247,6 +304,18 @@ with check (true);
 
 create policy "service role can manage voice inputs"
 on public.voice_inputs for all
+to service_role
+using (true)
+with check (true);
+
+create policy "service role can manage ai context bundles"
+on public.ai_context_bundles for all
+to service_role
+using (true)
+with check (true);
+
+create policy "service role can manage ai decisions"
+on public.ai_decisions for all
 to service_role
 using (true)
 with check (true);

@@ -360,6 +360,34 @@ git commit -m "feat: prototype Air3 V2 HUD states"
 
 ---
 
+## Task 3.5: Long AI Text HUD Contract
+
+**Reason:** The user confirmed that AI guidance text may be long, and all operator-safe AI text must be visible on the glasses. The HUD must therefore page long AI text instead of overflowing, truncating, or hiding it.
+
+**Files:**
+- Modify: `docs/air3-v2-response-contract.md`
+- Modify: `docs/air3-v2-hud-pages.md`
+- Modify: `air3-ops-expo-app/app/index.tsx`
+- Modify: `air3-ops-expo-app/scripts/verify-hud-contract.mjs`
+
+- [x] **Step 1: Extend the response contract**
+
+Add `fullText`, `displayPages`, `textOverflowMode`, `currentPage`, and `totalPages`. Long text must set `textOverflowMode="paged"` and cover the complete operator-safe AI answer in `displayPages`.
+
+- [x] **Step 2: Define HUD pagination behavior**
+
+Center click turns to the next page before moving to the next action. Back returns to the previous page before retake/back-step behavior. Long press remains voice confirm/supplement.
+
+- [x] **Step 3: Add an Expo long-text sample**
+
+Add one `instruction` sample with `displayPages` and a page indicator while keeping the fixed glasses HUD layout.
+
+- [x] **Step 4: Lock verification**
+
+Update `npm run verify:hud` so removing the long-text contract or pagination sample fails.
+
+---
+
 ## Task 4: Supabase Schema For AI Brain Context
 
 **Files:**
@@ -367,7 +395,7 @@ git commit -m "feat: prototype Air3 V2 HUD states"
 - Modify: `supabase/migrations/202606040001_air3_ops_glasses.sql`
 - Modify: `supabase/functions/ops-glasses/index.ts`
 
-- [ ] **Step 1: Add new enum values**
+- [x] **Step 1: Add new enum values**
 
 In `automigrate.ts`, add:
 
@@ -390,7 +418,7 @@ In `automigrate.ts`, add:
 },
 ```
 
-- [ ] **Step 2: Add context bundle table**
+- [x] **Step 2: Add context bundle table**
 
 Add a table definition:
 
@@ -414,7 +442,7 @@ Add a table definition:
 },
 ```
 
-- [ ] **Step 3: Add AI decisions table**
+- [x] **Step 3: Add AI decisions table**
 
 Add a table definition:
 
@@ -442,11 +470,11 @@ Add a table definition:
 },
 ```
 
-- [ ] **Step 4: Mirror schema in SQL backup**
+- [x] **Step 4: Mirror schema in SQL backup**
 
 Add matching enum/table SQL to `supabase/migrations/202606040001_air3_ops_glasses.sql`.
 
-- [ ] **Step 5: Validate Supabase assets**
+- [x] **Step 5: Validate Supabase assets**
 
 Run:
 
@@ -462,7 +490,7 @@ Supabase assets validation passed.
 Text balance check passed.
 ```
 
-- [ ] **Step 6: Commit schema checkpoint**
+- [x] **Step 6: Commit schema checkpoint**
 
 ```powershell
 git add supabase/functions/ops-glasses/automigrate.ts supabase/migrations/202606040001_air3_ops_glasses.sql

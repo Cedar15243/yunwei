@@ -8,6 +8,10 @@ const requiredSnippets = [
   'type ResultType =',
   'type FeedbackCode =',
   'type HudState =',
+  'type TextOverflowMode =',
+  'fullText?: string;',
+  'displayPages?: string[];',
+  'textOverflowMode?: TextOverflowMode;',
   'resultType: "ready"',
   'resultType: "uploading"',
   'resultType: "recording_voice"',
@@ -16,6 +20,10 @@ const requiredSnippets = [
   'resultType: "instruction"',
   'safeCommandKey: "ssh_status"',
   'safeCommandKey: "ssh_start"',
+  'id: "instruction-long-guidance"',
+  'textOverflowMode: "paged"',
+  '中心点击先翻页，最后一页再拍照。',
+  '第 ${currentPageIndex + 1}/${displayPages.length} 页',
   'feedbackCode: "wrong_target"',
   'feedbackCode: "unclear_photo"',
   'feedbackCode: "insufficient_info"',
@@ -49,18 +57,26 @@ const forbiddenSnippets = [
 ];
 
 const stateCount = (source.match(/resultType: "/g) || []).length;
+const pageCount = (source.match(/displayPages:/g) || []).length;
 const uniqueResultTypes = new Set(
   [...source.matchAll(/resultType: "([^"]+)"/g)].map((match) => match[1]),
 );
 const missing = requiredSnippets.filter((snippet) => !source.includes(snippet));
 const forbidden = forbiddenSnippets.filter((snippet) => source.includes(snippet));
 
-if (stateCount < 15 || uniqueResultTypes.size !== 11 || missing.length || forbidden.length) {
+if (
+  stateCount < 16 ||
+  pageCount < 1 ||
+  uniqueResultTypes.size !== 11 ||
+  missing.length ||
+  forbidden.length
+) {
   console.error(
     JSON.stringify(
       {
         ok: false,
         stateCount,
+        pageCount,
         uniqueResultTypeCount: uniqueResultTypes.size,
         missing,
         forbidden,
@@ -74,11 +90,12 @@ if (stateCount < 15 || uniqueResultTypes.size !== 11 || missing.length || forbid
 
 console.log(
   JSON.stringify(
-    {
-      ok: true,
-      stateCount,
-      uniqueResultTypeCount: uniqueResultTypes.size,
-    },
+      {
+        ok: true,
+        stateCount,
+        pageCount,
+        uniqueResultTypeCount: uniqueResultTypes.size,
+      },
     null,
     2,
   ),

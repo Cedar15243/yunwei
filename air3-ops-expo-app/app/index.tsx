@@ -33,6 +33,7 @@ type FeedbackCode =
 
 type Tone = "blue" | "green" | "yellow" | "red";
 type ActionKey = "capture" | "voice" | "retake";
+type TextOverflowMode = "single" | "paged";
 
 type HudState = {
   id: string;
@@ -41,6 +42,9 @@ type HudState = {
   step: string;
   displayTitle: string;
   displayText: string;
+  fullText?: string;
+  displayPages?: string[];
+  textOverflowMode?: TextOverflowMode;
   displayHint: string;
   safeCommandKey?: string;
   humanEscalationSuggestion: boolean;
@@ -142,6 +146,29 @@ const hudStates: HudState[] = [
     tone: "green",
     activeAction: "capture",
     statusText: "AI 已返回下一步。输入完成后中心点击拍摄输出结果。",
+  },
+  {
+    id: "instruction-long-guidance",
+    resultType: "instruction",
+    feedbackCode: null,
+    step: "run_recovery_command",
+    displayTitle: "按顺序检查并恢复 SSH",
+    displayText: "先确认屏幕上是否仍显示 ssh 服务 inactive。",
+    fullText:
+      "先确认屏幕上是否仍显示 ssh 服务 inactive。如果是，请输入允许列表中的恢复命令 sudo systemctl start ssh。命令执行后不要关闭当前终端，等待新的输出稳定后再拍照。若出现权限提示，请长按中心说明你看到的提示文字。",
+    displayPages: [
+      "先确认屏幕上是否仍显示 ssh 服务 inactive。",
+      "如果是，请输入允许列表中的恢复命令：sudo systemctl start ssh",
+      "命令执行后不要关闭当前终端，等待新的输出稳定后再拍照。",
+      "若出现权限提示，请长按中心说明你看到的提示文字。",
+    ],
+    textOverflowMode: "paged",
+    displayHint: "中心点击先翻页，最后一页再拍照。",
+    safeCommandKey: "ssh_start",
+    humanEscalationSuggestion: false,
+    tone: "green",
+    activeAction: "capture",
+    statusText: "AI 返回了较长指导。请按页读完，最后一页再执行下一步。",
   },
   {
     id: "wrong-target",
@@ -284,9 +311,25 @@ const actionItems: Array<{
 
 export default function Air3OpsHud() {
   const [stateIndex, setStateIndex] = useState(0);
+  const [pageIndexByState, setPageIndexByState] = useState<
+    Record<string, number>
+  >({});
   const { width, height } = useWindowDimensions();
   const state = hudStates[stateIndex];
   const accent = palette[state.tone];
+  const displayPages =
+    state.textOverflowMode === "paged" && state.displayPages?.length
+      ? state.displayPages
+      : [state.displayText];
+  const currentPageIndex = Math.min(
+    pageIndexByState[state.id] ?? 0,
+    displayPages.length - 1,
+  );
+  const currentPageText = displayPages[currentPageIndex] ?? state.displayText;
+  const pageLabel =
+    displayPages.length > 1
+      ? `第 ${currentPageIndex + 1}/${displayPages.length} 页`
+      : null;
 
   const frameStyle = useMemo(() => {
     const availableWidth = Math.max(320, width - 32);
@@ -302,19 +345,52 @@ export default function Air3OpsHud() {
   }, [height, width]);
 
   function moveNext() {
-    setStateIndex((current) => (current + 1) % hudStates.length);
+    if (currentPageIndex < displayPages.length - 1) {
+      setPageIndexByState((current) => ({
+        ...current,
+        [state.id]: currentPageIndex + 1,
+      }));
+      return;
+    }
+    setStateIndex((current) => {
+      const next = (current + 1) % hudStates.length;
+      setPageIndexByState((pages) => ({
+        ...pages,
+        [hudStates[next].id]: 0,
+      }));
+      return next;
+    });
   }
 
   function moveToVoice() {
+    setPageIndexByState((pages) => ({
+      ...pages,
+      [hudStates[2].id]: 0,
+    }));
     setStateIndex(2);
   }
 
   function moveToRetake() {
     const current = hudStates[stateIndex];
+    if (currentPageIndex > 0) {
+      setPageIndexByState((pages) => ({
+        ...pages,
+        [current.id]: currentPageIndex - 1,
+      }));
+      return;
+    }
     if (current.feedbackCode === "voice_unclear") {
+      setPageIndexByState((pages) => ({
+        ...pages,
+        [hudStates[2].id]: 0,
+      }));
       setStateIndex(2);
       return;
     }
+    setPageIndexByState((pages) => ({
+      ...pages,
+      [hudStates[0].id]: 0,
+    }));
     setStateIndex(0);
   }
 
@@ -358,7 +434,12 @@ export default function Air3OpsHud() {
         <PreviewBackdrop />
         <TopTaskBar />
         <GuideFrame />
-        <InstructionPanel state={state} accent={accent} />
+        <InstructionPanel
+          state={state}
+          accent={accent}
+          pageText={currentPageText}
+          pageLabel={pageLabel}
+        />
         <Crosshair accent={accent} />
         <GuideNote />
         <StatusRow statusText={state.statusText} />
@@ -448,11 +529,16 @@ function GuideFrame() {
 function InstructionPanel({
   state,
   accent,
+  pageText,
+  pageLabel,
 }: {
   state: HudState;
   accent: string;
+  pageText: string;
+  pageLabel: string | null;
 }) {
-  const isCommand = state.resultType === "instruction";
+  const isCommand =
+    state.resultType === "instruction" && pageText.trim().startsWith("sudo ");
 
   return (
     <View
@@ -463,6 +549,7 @@ function InstructionPanel({
         top: "31.4%",
         width: "58%",
         minHeight: "17.4%",
+        maxHeight: "28%",
         alignItems: "center",
         justifyContent: "center",
         paddingHorizontal: "2.5%",
@@ -488,22 +575,40 @@ function InstructionPanel({
       >
         {state.displayTitle}
       </Text>
+      {pageLabel ? (
+        <Text
+          selectable
+          adjustsFontSizeToFit
+          numberOfLines={1}
+          minimumFontScale={0.72}
+          style={{
+            color: "rgba(215, 232, 226, 0.82)",
+            fontSize: 11,
+            fontWeight: "800",
+            lineHeight: 15,
+            marginTop: 5,
+            textAlign: "center",
+          }}
+        >
+          {pageLabel}
+        </Text>
+      ) : null}
       <Text
         selectable
         adjustsFontSizeToFit
-        numberOfLines={isCommand ? 1 : 2}
-        minimumFontScale={0.64}
+        numberOfLines={isCommand ? 1 : 4}
+        minimumFontScale={0.58}
         style={{
           color: "#DCEBE6",
           fontFamily: isCommand ? "monospace" : undefined,
           fontSize: isCommand ? 22 : 14,
           fontWeight: isCommand ? "800" : "600",
           lineHeight: isCommand ? 28 : 20,
-          marginTop: 10,
+          marginTop: pageLabel ? 6 : 10,
           textAlign: "center",
         }}
       >
-        {state.displayText}
+        {pageText}
       </Text>
     </View>
   );
