@@ -29,8 +29,9 @@ $aligned = Join-Path $build "Air3NativeCameraTest-aligned.apk"
 $signed = Join-Path $build "Air3NativeCameraTest.apk"
 $keystore = Join-Path $build "debug.keystore"
 $repoRoot = Split-Path -Parent $root
-$versionCode = if ($env:AIR3_APK_VERSION_CODE) { [int]$env:AIR3_APK_VERSION_CODE } else { 208 }
-$versionName = if ($env:AIR3_APK_VERSION_NAME) { $env:AIR3_APK_VERSION_NAME } else { "2.0.8" }
+$versionCode = if ($env:AIR3_APK_VERSION_CODE) { [int]$env:AIR3_APK_VERSION_CODE } else { 209 }
+$versionName = if ($env:AIR3_APK_VERSION_NAME) { $env:AIR3_APK_VERSION_NAME } else { "2.0.9" }
+$localOpsKeyPath = Join-Path $repoRoot "tmp\ops_glasses_api_key.local"
 $gitSha = "nogit"
 $gitOutput = & git -C $repoRoot rev-parse --short HEAD 2>$null
 if ($LASTEXITCODE -eq 0 -and $gitOutput) {
@@ -63,7 +64,19 @@ $generatedDir = Join-Path $generatedSrc "com\codex\air3nativecamera"
 $generatedConfig = Join-Path $generatedDir "GeneratedConfig.java"
 New-Item -ItemType Directory -Force -Path $generatedDir | Out-Null
 $opsEndpoint = if ($env:OPS_GLASSES_EVENTS_ENDPOINT) { $env:OPS_GLASSES_EVENTS_ENDPOINT } else { "https://zasgzaatthvfglhbxpgo.supabase.co/functions/v1/ops-glasses/sessions/events" }
-$opsKey = if ($env:OPS_GLASSES_API_KEY) { $env:OPS_GLASSES_API_KEY } else { "" }
+$opsKeySource = "missing"
+if ($env:OPS_GLASSES_API_KEY) {
+  $opsKey = $env:OPS_GLASSES_API_KEY.Trim()
+  $opsKeySource = "env"
+} elseif (Test-Path -LiteralPath $localOpsKeyPath) {
+  $opsKey = (Get-Content -LiteralPath $localOpsKeyPath -Raw).Trim()
+  $opsKeySource = "tmp/ops_glasses_api_key.local"
+} else {
+  $opsKey = ""
+}
+if ($opsKey.Length -eq 0) {
+  throw "OPS_GLASSES_API_KEY missing. Set env:OPS_GLASSES_API_KEY or create tmp/ops_glasses_api_key.local."
+}
 $escapedEndpoint = $opsEndpoint.Replace("\", "\\").Replace('"', '\"')
 $escapedKey = $opsKey.Replace("\", "\\").Replace('"', '\"')
 @"
@@ -136,5 +149,6 @@ if ($LASTEXITCODE -ne 0) { throw "apksigner verify failed" }
 
 Copy-Item -LiteralPath $signed -Destination $versionedSigned -Force
 Write-Output "VersionCode=$versionCode VersionName=$versionName Git=$gitSha"
+Write-Output "OpsKeySource=$opsKeySource"
 Write-Output $signed
 Write-Output $versionedSigned

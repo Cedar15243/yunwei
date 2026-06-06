@@ -1,28 +1,35 @@
 # Air3 V2 Version Log
 
-本文档用于记录第二版 APK 的版本区分规则和 GitHub 存储检查点。APK 构建产物不提交到 Git；代码、脚本、文档、标签和提交记录才是可追溯来源。
+This document records APK version separation rules and GitHub storage checkpoints. APK binaries are build artifacts and must not be committed; code, scripts, docs, commits, and tags are the traceable source of truth.
 
 ## Versioning Rules
 
-- `versionName` 使用人工可读版本号，例如 `2.0.8`。
-- `versionCode` 使用递增整数，例如 `208` 对应 `2.0.8`。
-- 正式检查点标签使用 `v<versionName>-task<taskNumber>-<purpose>`，例如 `v2.0.8-task8-versioned-build`。
-- APK 输出文件必须带版本号和 Git 短 SHA：`Air3NativeCameraTest-v<versionName>-<gitSha>.apk`。
-- 基础构建产物仍保留为 `Air3NativeCameraTest.apk`，仅供当前构建脚本和安装流程使用。
-- `air3-native-camera-test/build/` 和 `*.apk` 必须保持 ignored，不得提交 APK、签名中间产物、generated source 或本地密钥。
-- 如需临时覆盖版本号，使用环境变量 `AIR3_APK_VERSION_CODE` 和 `AIR3_APK_VERSION_NAME`，但正式检查点必须同步更新本文档和 Git tag。
+- `versionName` uses a human-readable version, for example `2.0.9`.
+- `versionCode` uses an increasing integer, for example `209` for `2.0.9`.
+- Formal checkpoint tags use `v<versionName>-<purpose>`, for example `v2.0.9-general-scene-feedback`.
+- APK output files must include version and Git short SHA: `Air3NativeCameraTest-v<versionName>-<gitSha>.apk`.
+- The base artifact remains `Air3NativeCameraTest.apk` for the current build/install flow.
+- `air3-native-camera-test/build/` and `*.apk` must stay ignored. Do not commit APKs, signing intermediates, generated source, or local secrets.
+- Temporary version overrides use `AIR3_APK_VERSION_CODE` and `AIR3_APK_VERSION_NAME`; formal checkpoints must update this file and the Git tag.
+
+## Build Secret Rules
+
+- `OPS_GLASSES_API_KEY` must be injected at build time. It is never committed.
+- Build priority: environment variable `OPS_GLASSES_API_KEY`, then ignored local file `tmp/ops_glasses_api_key.local`.
+- The build script trims the key value and fails immediately if no key is available, so an APK with a guaranteed upload failure is not produced.
+- Build output may print `OpsKeySource`, but must never print the key value.
 
 ## Current Checkpoint
 
 | Field | Value |
 | --- | --- |
-| Checkpoint | `v2.0.8-task8-versioned-build` |
+| Checkpoint | `v2.0.9-general-scene-feedback` |
 | Date | `2026-06-06` |
 | Branch | `air3-v2-task1-docs` |
-| APK versionCode | `208` |
-| APK versionName | `2.0.8` |
+| APK versionCode | `209` |
+| APK versionName | `2.0.9` |
 | APK naming rule | `Air3NativeCameraTest-v<versionName>-<gitSha>.apk` |
-| Purpose | Task 8 GitHub Storage / versioned APK build checkpoint |
+| Purpose | General scene feedback rule update: clear non-server photos must receive AI feedback |
 
 ## Included Local Commits
 
@@ -32,13 +39,16 @@
 - `36788c3 chore: protect Air3 build artifacts`
 - `0bcdbd3 docs: record GitHub storage checkpoint status`
 - `22e298b chore: version Air3 APK build artifacts`
+- `0540e0c test: verify Air3 V2 APK on device`
+- Current checkpoint commit message: `feat: generalize Air3 scene feedback`
 
 ## GitHub Storage Status
 
-本地 Git 检查点和 GitHub 远端存储均已建立。2026-06-06 已推送：
+Local Git checkpoints and GitHub remote storage are established.
 
 - Branch: `origin/air3-v2-task1-docs`
-- Tag: `v2.0.8-task8-versioned-build`
+- Existing tag: `v2.0.8-task8-versioned-build`
+- Next tag for this checkpoint after commit and push: `v2.0.9-general-scene-feedback`
 - PR entry: `https://github.com/Cedar15243/yunwei/pull/new/air3-v2-task1-docs`
 
-备注：`gh auth status` 仍显示 GitHub CLI 未登录，但 `git push` 已通过当前 Git HTTPS 凭据完成；后续如果要用 `gh` 创建 PR 或查 CI，仍需要执行 `gh auth login`。
+Note: `gh auth status` may still show GitHub CLI as logged out. Git HTTPS credentials have worked for prior pushes; use `gh auth login` later only if PR or Actions operations need GitHub CLI.

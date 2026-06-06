@@ -78,12 +78,12 @@
       <use href="#terminal-lines" x="148" y="104" width="998" height="520" opacity=".85"/>
       <rect class="topbar" x="30" y="0" width="1860" height="70" rx="4"/>
       <text class="brand" x="64" y="43">叮当X AI 运维眼镜</text>
-      <text class="task" x="1760" y="41">服务器 SSH 恢复</text>
+      <text class="task" x="1760" y="41">AI 运维现场指导</text>
       <rect class="guide" x="269" y="237" width="1382" height="564" rx="8"/>
       <rect class="panel" x="403" y="339" width="1114" height="188" rx="6"/>
       <line class="cross" x1="960" y1="520" x2="960" y2="578"/>
       <line class="cross-faint" x1="905" y1="520" x2="1015" y2="520"/>
-      <text class="guide-note" x="960" y="842">把服务器控制台文字放入绿色框内</text>
+      <text class="guide-note" x="960" y="842">把关键画面放入绿色框内</text>
       <text class="log-note" x="1830" y="884">调试信息仅写入日志，不显示给现场人员</text>
       <use href="#actions"/>
     </symbol>
@@ -93,8 +93,8 @@
 
   <g transform="translate(0 0)" style="--tone:#5effad">
     <use href="#hud-base"/>
-    <text class="title" x="960" y="408">对准服务器本地控制台</text>
-    <text class="subtitle" x="960" y="466">中心点击拍照，AI 会识别画面并给出下一步安全指令</text>
+    <text class="title" x="960" y="408">对准现场画面</text>
+    <text class="subtitle" x="960" y="466">中心点击拍照，AI 会先反馈看到的内容，再给下一步建议</text>
     <text class="status" x="62" y="884">状态：相机已就绪。请保持 25-35cm 距离，避免反光。</text>
     <text class="caption" x="0" y="1132">01 相机就绪</text>
   </g>
@@ -141,10 +141,10 @@
 
   <g transform="translate(0 3690)" style="--tone:#ffd166">
     <use href="#hud-base"/>
-    <text class="title" x="960" y="408">拍错目标</text>
-    <text class="subtitle" x="960" y="466">当前画面不是服务器本地控制台</text>
-    <text class="status" x="62" y="884">状态：请重新对准登录界面、黑底终端或命令输出。</text>
-    <text class="caption" x="0" y="1132">07 拍错目标</text>
+    <text class="title" x="960" y="408">场景不匹配</text>
+    <text class="subtitle" x="960" y="466">当前画面和你要判断的目标不一致</text>
+    <text class="status" x="62" y="884">状态：请长按说明目标，或重新拍摄关键现场。</text>
+    <text class="caption" x="0" y="1132">07 场景不匹配</text>
   </g>
 
   <g transform="translate(2100 3690)" style="--tone:#ffd166">

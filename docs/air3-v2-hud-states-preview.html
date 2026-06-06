@@ -322,8 +322,8 @@
       const states = [
         {
           name: "相机就绪",
-          title: "对准服务器本地控制台",
-          subtitle: "中心点击拍照，AI 会识别画面并给出下一步安全指令",
+          title: "对准现场画面",
+          subtitle: "中心点击拍照，AI 会先反馈看到的内容，再给下一步建议",
           status: "相机已就绪。请保持 25-35cm 距离，避免反光。",
           tone: "#5effad",
           activeAction: 1
@@ -370,10 +370,10 @@
           command: true
         },
         {
-          name: "拍错目标",
-          title: "拍错目标",
-          subtitle: "当前画面不是服务器本地控制台",
-          status: "请重新对准登录界面、黑底终端或命令输出。",
+          name: "场景不匹配",
+          title: "场景不匹配",
+          subtitle: "当前画面和你要判断的目标不一致",
+          status: "请长按说明目标，或重新拍摄关键现场。",
           tone: "#ffd166",
           activeAction: 3
         },
@@ -467,7 +467,7 @@
             <div class="terminal-lines">${lines}</div>
             <div class="topbar">
               <div class="brand">叮当X AI 运维眼镜</div>
-              <div class="task">服务器 SSH 恢复</div>
+              <div class="task">AI 运维现场指导</div>
             </div>
             <div class="guide"></div>
             <div class="instruction">
@@ -475,7 +475,7 @@
               <div class="subtitle">${state.subtitle}</div>
             </div>
             <div class="crosshair"></div>
-            <div class="guide-note">把服务器控制台文字放入绿色框内</div>
+            <div class="guide-note">把关键画面放入绿色框内</div>
             <div class="status-row">
               <div class="left">状态：${state.status}</div>
               <div class="right">调试信息仅写入日志，不显示给现场人员</div>

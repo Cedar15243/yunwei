@@ -2,7 +2,7 @@
 
 ## 契约目标
 
-本契约定义 Supabase 后端返回给 Air3 HUD、Expo 原型和后续测试工具的统一结构。V2 中主 AI 是大脑，返回结果必须能直接指导现场小白，或明确说明照片、语音、信息、网络等问题。
+本契约定义 Supabase 后端返回给 Air3 HUD、Expo 原型和后续测试工具的统一结构。V2 中主 AI 是大脑，返回结果必须能直接指导现场小白，或明确说明照片、语音、信息、网络等问题。清晰照片必须得到 AI 对现场画面的真实反馈；服务器 SSH 恢复只是默认运维模板之一，不是唯一合法拍摄目标。
 
 后端可以校验格式、记录过程、校验基础安全边界，但不替主 AI 做运维判断。
 
@@ -34,7 +34,7 @@
 
 ## resultType 枚举
 
-- `instruction`：主 AI 返回操作指令。
+- `instruction`：主 AI 返回现场反馈或操作指令。
 - `recognition_problem`：图片、文字或上下文不满足识别流程。
 - `network_error`：后端、STT、主 AI 或网络暂时不可用。
 - `remote_probe`：正在远程复测 SSH 访问。
@@ -53,9 +53,9 @@ Expo 原型可额外使用本地 UI 中间态：
 
 ## feedbackCode 枚举
 
-- `wrong_target`：拍错目标，画面不是服务器控制台、登录界面、黑底终端或命令输出。
-- `unclear_photo`：照片不清晰，AI 看不清屏幕文字。
-- `insufficient_info`：信息不足，缺少完整命令输出或关键上下文。
+- `wrong_target`：当前画面与用户明确要求判断的目标冲突，且无法安全给出下一步；不能仅因为画面不是服务器控制台就使用此代码。
+- `unclear_photo`：照片不清晰，AI 看不清关键画面或屏幕文字。
+- `insufficient_info`：信息不足，缺少用户要判断的问题、完整命令输出或关键上下文。
 - `voice_unclear`：语音不清楚，transcript 为空、噪声过大或语义无法判断。
 - `image_voice_conflict`：图片和语音描述冲突，需要小白重新补充。
 - `ai_unavailable`：主 AI 暂时不可用。
@@ -99,7 +99,7 @@ AI 返回的中文指导可能较长，但眼镜 HUD 不允许把长文直接塞
 }
 ```
 
-## 标准识别问题响应
+## 标准场景不匹配响应
 
 ```json
 {
@@ -108,9 +108,9 @@ AI 返回的中文指导可能较长，但眼镜 HUD 不允许把长文直接塞
   "step": "needs_better_photo",
   "resultType": "recognition_problem",
   "feedbackCode": "wrong_target",
-  "displayTitle": "拍错目标",
-  "displayText": "当前画面不是服务器控制台。",
-  "displayHint": "请只拍登录界面、黑底终端或命令输出。",
+  "displayTitle": "场景不匹配",
+  "displayText": "当前画面和你要判断的目标不一致。",
+  "displayHint": "请长按说明目标，或重新拍摄关键现场。",
   "humanEscalationSuggestion": false,
   "canRetake": true,
   "canUseVoice": true,
@@ -208,6 +208,7 @@ AI 返回的中文指导可能较长，但眼镜 HUD 不允许把长文直接塞
 - 有语音时，后端必须先调用自部署 STT，得到 `transcript` 后再与最新图片一起交给主 AI。
 - 主 AI 输入必须包含 `currentStep` 和 `taskGoal`。
 - 语音只作为补充上下文，不替代图片识别流程。
+- 清晰图片必须先获得主 AI 对现场画面的真实反馈；如果不是服务器控制台，主 AI 应说明看到的画面并追问小白要判断什么，而不是直接返回 `wrong_target`。
 - 如果图片和 transcript 冲突，优先让主 AI 返回 `feedbackCode=image_voice_conflict` 或要求小白补充信息。
 
 ## HUD 展示规则

@@ -47,6 +47,9 @@ for (const marker of [
   "HudResponse hud = new HudResponse(response, sessionId, currentStep)",
   "applyHudResponse(hud)",
   "return \"等待 AI 指导\";",
+  "AI 运维现场指导",
+  "请对准需要判断的现场画面",
+  "正在上传给 AI 分析现场画面",
 ]) {
   mustInclude(marker);
 }
@@ -54,5 +57,8 @@ for (const marker of [
 mustNotInclude("setResultText(voiceIntentLabel(intent))", "voiceIntent must not drive the V2 primary HUD result");
 mustNotInclude("setHintForStep(nextStep, text)", "image responses must render structured HUD fields");
 mustNotInclude("setStatus(statusForStep(nextStep))", "image responses must render status by resultType/feedbackCode");
+mustNotInclude("服务器 SSH 恢复", "native HUD must not present the app as server-only");
+mustNotInclude("请对准服务器本地控制台或终端窗口", "home HUD must accept any field scene");
+mustNotInclude("正在上传给 AI 识别服务器控制台", "upload HUD must describe general scene analysis");
 
 console.log("Native HUD flow validation passed.");

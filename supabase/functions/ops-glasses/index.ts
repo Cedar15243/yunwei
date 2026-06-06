@@ -123,8 +123,8 @@ const corsHeaders = {
 };
 
 const storageBucket = "ops-glasses-captures";
-const aiBrainPromptVersion = "air3-v2-ai-brain-v1";
-const taskGoal = "指导现场人员恢复服务器 SSH 远程访问";
+const aiBrainPromptVersion = "air3-v2-ai-brain-v2-scene-feedback";
+const taskGoal = "基于眼镜照片和现场语音给现场人员提供真实 AI 反馈与运维指导；服务器 SSH 恢复只是默认运维模板之一";
 const operatorProfile = "现场小白，不懂 Linux 运维，需要一步一步指导";
 
 Deno.serve(async (request) => {
@@ -716,13 +716,16 @@ async function callChatCompletionsAiBrain(
 
 function aiBrainPrompt(context: Record<string, unknown>, commands: Record<string, string>): string {
   return [
-    "你是 Air3 AI 运维眼镜的主 AI 大脑，直接指导现场小白恢复服务器 SSH 远程访问。",
-    "你会同时获得服务器控制台图片、现场人员语音转写文字、当前步骤和任务目标。",
+    "你是 Air3 AI 运维眼镜的主 AI 大脑，直接指导现场小白理解现场画面并完成安全操作。",
+    "你会同时获得现场图片、现场人员语音转写文字、当前步骤和任务目标。",
+    "服务器 SSH 恢复只是默认运维模板之一，不是唯一可识别场景。",
+    "只要照片清楚，就必须基于画面给出真实反馈：先说明你看到的关键内容，再结合语音说明回答或给下一步建议。",
+    "不要因为画面不是服务器控制台就返回 wrong_target；如果画面清楚但不属于 SSH 恢复任务，请说明画面内容，并提示小白长按说明要你判断什么。",
     "现场人员不是运维专家，请用短句、明确、可执行的中文指导。",
+    "如果画面确实是服务器控制台、终端、登录界面或命令输出，再按 SSH 恢复模板继续给运维指导。",
     "如果需要展示命令，只能使用 allowedCommands 中的命令文本，不要自由生成新命令。",
-    "如果画面不是服务器控制台，返回 resultType=recognition_problem, feedbackCode=wrong_target。",
-    "如果画面是控制台但文字不清，返回 feedbackCode=unclear_photo。",
-    "如果缺少关键命令输出，返回 feedbackCode=insufficient_info。",
+    "只有照片模糊、过暗、反光、主体被遮挡或完全看不清时，才返回 feedbackCode=unclear_photo。",
+    "如果图片清楚但缺少用户要判断的问题或关键上下文，返回 resultType=instruction, feedbackCode=null，并追问小白要你判断什么。",
     "如果语音转写不清楚，返回 feedbackCode=voice_unclear。",
     "如果图片和语音转写冲突，返回 feedbackCode=image_voice_conflict。",
     "如果建议人工介入，返回 resultType=human_suggested；最终是否人工介入由小白决定。",
@@ -1101,8 +1104,8 @@ function unavailableDecision(): AiBrainDecision {
 function noPhotoDecision(): AiBrainDecision {
   return decisionFromText({
     step: "locate_server",
-    text: "请先到服务器本地控制台前，把登录界面、黑底终端或命令输出放进绿色框内拍照。AI 需要先看到现场画面，才能给下一步操作指导。",
-    title: "请先拍摄控制台",
+    text: "请先把需要判断的现场画面放进绿色框内拍照。AI 需要先看到图片，才能结合语音给你真实反馈或下一步指导。",
+    title: "请先拍摄现场画面",
     resultType: "recognition_problem",
     feedbackCode: "insufficient_info",
     requiresPhoto: true,
@@ -1258,7 +1261,7 @@ function defaultTitleFor(resultType: ResultType, feedbackCode: FeedbackCode): st
   if (resultType === "completed") return "SSH 已恢复";
   if (resultType === "human_suggested") return "建议转人工";
   if (resultType === "network_error") return "服务暂时不可用";
-  if (feedbackCode === "wrong_target") return "拍错目标";
+  if (feedbackCode === "wrong_target") return "场景不匹配";
   if (feedbackCode === "unclear_photo") return "照片不清楚";
   if (feedbackCode === "voice_unclear") return "语音不清楚";
   if (feedbackCode === "insufficient_info") return "信息不足";
@@ -1269,11 +1272,11 @@ function defaultHintFor(resultType: ResultType, feedbackCode: FeedbackCode): str
   if (resultType === "completed") return "本次会话完成。";
   if (resultType === "human_suggested") return "AI 只是建议，是否转人工由你决定。";
   if (resultType === "network_error") return "请检查网络后重试，或由你决定是否转人工。";
-  if (feedbackCode === "wrong_target") return "请只拍服务器登录界面、黑底终端或命令输出。";
+  if (feedbackCode === "wrong_target") return "请补充你要 AI 判断的目标或重新拍摄关键现场。";
   if (feedbackCode === "unclear_photo") return "请靠近屏幕，避免反光，把文字放进绿色框后重拍。";
   if (feedbackCode === "voice_unclear") return "请重新长按，说短一点。";
-  if (feedbackCode === "insufficient_info") return "请补拍完整控制台画面。";
-  return "输入完成后，单击中心拍摄输出结果。";
+  if (feedbackCode === "insufficient_info") return "请补拍完整现场，或长按说明你要 AI 判断什么。";
+  return "单击中心可继续拍照，长按中心可补充语音。";
 }
 
 function classifyVoiceIntent(text: string): VoiceIntent {

@@ -144,7 +144,7 @@ public final class MainActivity extends Activity {
             startCameraFlow();
         } else {
             setResultText("没有相机权限");
-            setStatus("相机权限未授权，无法采集服务器控制台画面。");
+            setStatus("相机权限未授权，无法采集现场画面。");
         }
     }
 
@@ -169,7 +169,7 @@ public final class MainActivity extends Activity {
         }
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             setResultText("准备重拍");
-            hintText.setText("请重新对准服务器控制台\n把文字放进绿色取景框");
+            hintText.setText("请重新对准需要判断的现场画面\n把关键内容放进绿色取景框");
             setStatus("已进入重拍准备。对准后单击继续采集。");
             return true;
         }
@@ -215,7 +215,7 @@ public final class MainActivity extends Activity {
         titleText.setTextColor(Color.rgb(232, 255, 244));
         titleText.setTextSize(24);
         titleText.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        titleText.setText("AI 运维眼镜  |  服务器 SSH 恢复");
+        titleText.setText("AI 运维眼镜  |  AI 运维现场指导");
         topPanel.addView(titleText, new LinearLayout.LayoutParams(
                 0,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -320,7 +320,7 @@ public final class MainActivity extends Activity {
             public void run() {
                 stepText.setText(stepLabel(currentStep));
                 resultText.setText("任务待开始");
-                hintText.setText("请对准服务器本地控制台或终端窗口\n中心点击开始采集，长按语音确认");
+                hintText.setText("请对准需要判断的现场画面\n中心点击开始采集，长按语音提问");
                 statusText.setText("1 中心点击：拍照/下一步    2 长按中心：语音确认    3 返回键：重拍/上一步");
             }
         });
@@ -368,7 +368,7 @@ public final class MainActivity extends Activity {
             float centerY = frame.centerY();
             canvas.drawLine(centerX - 42f, centerY, centerX + 42f, centerY, framePaint);
             canvas.drawLine(centerX, centerY - 42f, centerX, centerY + 42f, framePaint);
-            canvas.drawText("让控制台窗口填满绿色框，文字清楚后再拍", centerX, frame.bottom + 42f, textPaint);
+            canvas.drawText("让关键画面填满绿色框，内容清楚后再拍", centerX, frame.bottom + 42f, textPaint);
         }
     }
 
@@ -812,7 +812,7 @@ public final class MainActivity extends Activity {
                                         null,
                                         cameraHandler);
                                 showHomeHud();
-                                setStatus("相机已就绪。请把服务器控制台放入绿色框内，单击开始 AI 运维会话。");
+                                setStatus("相机已就绪。请把现场关键画面放入绿色框内，单击开始 AI 反馈。");
                             } catch (CameraAccessException error) {
                                 setResultText("预览失败");
                                 setStatus("相机预览启动失败，请重新进入应用。");
@@ -849,7 +849,7 @@ public final class MainActivity extends Activity {
             request.set(CaptureRequest.JPEG_ORIENTATION, 0);
             setResultText("正在采集");
             hintText.setText("保持画面稳定\n请等待 AI 分析结果");
-            setStatus("正在采集服务器本地控制台画面，请保持稳定。");
+            setStatus("正在采集现场画面，请保持稳定。");
             android.util.Log.i("Air3NativeCameraTest", "Capturing JPEG source=" + source);
             captureSession.capture(request.build(), new CameraCaptureSession.CaptureCallback() {
                 @Override
@@ -881,7 +881,7 @@ public final class MainActivity extends Activity {
             buffer.get(bytes);
             persistRawCapture(bytes);
             setResultText("AI 分析中");
-            hintText.setText("照片已上传\n正在生成下一步维修指令");
+            hintText.setText("照片已上传\n正在生成现场反馈");
             setStatus("正在处理取景框内画面，并上传给 AI 分析。");
             android.util.Log.i("Air3NativeCameraTest", "JPEG image bytes=" + bytes.length);
             new Thread(new Runnable() {
@@ -905,10 +905,10 @@ public final class MainActivity extends Activity {
             String imageBase64 = Base64.encodeToString(uploadImage.bytes, Base64.NO_WRAP);
             JSONObject payload = new JSONObject();
             payload.put("sessionId", sessionId);
-            payload.put("taskType", "ssh_console_recovery");
+            payload.put("taskType", "general_scene_feedback");
             payload.put("step", currentStep);
             payload.put("action", actionForCurrentStep());
-            payload.put("imageKind", "console");
+            payload.put("imageKind", "field_scene");
             payload.put("imageBase64", "data:image/jpeg;base64," + imageBase64);
             payload.put("width", uploadImage.width);
             payload.put("height", uploadImage.height);
@@ -922,7 +922,7 @@ public final class MainActivity extends Activity {
                 throw new IllegalStateException("OPS_GLASSES_API_KEY missing in APK build.");
             }
             persistDebugUpload(uploadImage.bytes);
-            setStatus("真实照片已采集，正在上传给 AI 识别服务器控制台。");
+            setStatus("真实照片已采集，正在上传给 AI 分析现场画面。");
             android.util.Log.i("Air3NativeCameraTest",
                     "Uploading focused JPEG bytes=" + uploadImage.bytes.length
                             + " size=" + uploadImage.width + "x" + uploadImage.height
@@ -1228,13 +1228,13 @@ public final class MainActivity extends Activity {
 
     private static String fallbackHint(HudResponse hud) {
         if ("wrong_target".equals(hud.feedbackCode)) {
-            return "请只拍服务器登录界面、黑底终端或命令输出";
+            return "请补充你要 AI 判断的目标，或重新拍摄关键现场";
         }
         if ("unclear_photo".equals(hud.feedbackCode)) {
             return "请靠近屏幕，避免反光，把文字放进绿色框后重拍";
         }
         if ("insufficient_info".equals(hud.feedbackCode)) {
-            return "请拍摄完整终端内容后重试";
+            return "请拍摄完整现场，或长按说明你要 AI 判断什么";
         }
         if ("voice_unclear".equals(hud.feedbackCode)) {
             return "请重新长按，说短一点";
@@ -1272,7 +1272,7 @@ public final class MainActivity extends Activity {
             return "恢复命令已确认，后台正在复测远程访问。";
         }
         if ("needs_better_photo".equals(step)) {
-            return "照片不够清晰。请靠近屏幕，把文字放进绿色框后重拍。";
+            return "照片不够清晰。请靠近目标，把关键内容放进绿色框后重拍。";
         }
         if ("needs_human_expert".equals(step)) {
             return "当前情况需要人工专家接管，请停止继续输入命令。";
@@ -1308,14 +1308,14 @@ public final class MainActivity extends Activity {
         } else if ("verify_remote_access".equals(step)) {
             hint = "后台正在复测远程访问\n请等待复测结果";
         } else if ("needs_better_photo".equals(step)) {
-            hint = "请把控制台文字放入绿色框\n靠近屏幕并避免反光后单击重拍";
+            hint = "请把关键画面放入绿色框\n靠近目标并避免反光后单击重拍";
         } else if ("needs_human_expert".equals(step)) {
             hint = "请停止现场操作\n等待运维专家接管";
         } else if ("completed".equals(step)) {
             hint = "远程访问已恢复\n本次运维会话完成";
         } else {
             hint = text == null || text.length() == 0
-                    ? "请对准服务器本地控制台\n单击采集现场画面"
+                    ? "请对准需要判断的现场画面\n单击采集现场照片"
                     : "请按提示继续\n单击采集下一张现场照片";
         }
         runOnUiThread(new Runnable() {

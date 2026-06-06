@@ -11,6 +11,12 @@ function mustInclude(marker, message = marker) {
   }
 }
 
+function mustNotInclude(marker, message = marker) {
+  if (code.includes(marker)) {
+    throw new Error(`AI brain flow keeps forbidden marker: ${message}`);
+  }
+}
+
 function functionBody(name) {
   const start = code.indexOf(`async function ${name}`);
   if (start < 0) {
@@ -39,6 +45,9 @@ for (const marker of [
   "function aiBrainPrompt(",
   "Air3 AI 运维眼镜的主 AI 大脑",
   "现场小白，不懂 Linux 运维，需要一步一步指导",
+  "只要照片清楚，就必须基于画面给出真实反馈",
+  "不要因为画面不是服务器控制台就返回 wrong_target",
+  "服务器 SSH 恢复只是默认运维模板之一",
   "allowedCommands",
   "function aiBrainJsonSchema(",
   "function validateAiBrainDecision(",
@@ -89,6 +98,11 @@ for (const oldMarker of [
     throw new Error(`V2 backend must not keep old observer/state-machine marker: ${oldMarker}`);
   }
 }
+
+mustNotInclude(
+  "如果画面不是服务器控制台，返回 resultType=recognition_problem, feedbackCode=wrong_target",
+  "clear non-server photos must still receive AI scene feedback",
+);
 
 const voiceBody = functionBody("handleVoice");
 for (const marker of [
