@@ -31,6 +31,7 @@
 - `54133b1 test: verify Air3 V2 backend contract`
 - `36788c3 chore: protect Air3 build artifacts`
 - `0bcdbd3 docs: record GitHub storage checkpoint status`
+- `22e298b chore: version Air3 APK build artifacts`
 
 ## GitHub Storage Status
 
