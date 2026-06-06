@@ -1094,11 +1094,11 @@ If there is no remote, ask the user for the GitHub repository or create one only
 - ADB: `tmp/tools/platform-tools/adb.exe`
 - Evidence: `tmp/air3-v2-*.png`, `tmp/air3-v2-logcat.txt`
 
-- [ ] **Step 1: Load Test Android Apps skill**
+- [x] **Step 1: Load Test Android Apps skill**
 
 Before device testing, read `test-android-apps:android-emulator-qa` skill and follow its adb evidence workflow, adapted for real Air3 device `YM00FCF3NW0031`.
 
-- [ ] **Step 2: Confirm device online**
+- [x] **Step 2: Confirm device online**
 
 Run:
 
@@ -1108,7 +1108,7 @@ Run:
 
 Expected: `YM00FCF3NW0031 device`.
 
-- [ ] **Step 3: Install V2 APK**
+- [x] **Step 3: Install V2 APK**
 
 Run:
 
@@ -1116,7 +1116,7 @@ Run:
 & "C:\Users\59979\Documents\New project\tmp\tools\platform-tools\adb.exe" -s YM00FCF3NW0031 install -r "C:\Users\59979\Documents\New project\air3-native-camera-test\build\Air3NativeCameraTest.apk"
 ```
 
-- [ ] **Step 4: Grant permissions**
+- [x] **Step 4: Grant permissions**
 
 Run:
 
@@ -1125,7 +1125,7 @@ Run:
 & "C:\Users\59979\Documents\New project\tmp\tools\platform-tools\adb.exe" -s YM00FCF3NW0031 shell pm grant com.codex.air3nativecamera android.permission.RECORD_AUDIO
 ```
 
-- [ ] **Step 5: Launch app**
+- [x] **Step 5: Launch app**
 
 Run:
 
@@ -1133,7 +1133,7 @@ Run:
 & "C:\Users\59979\Documents\New project\tmp\tools\platform-tools\adb.exe" -s YM00FCF3NW0031 shell am start -n com.codex.air3nativecamera/.MainActivity
 ```
 
-- [ ] **Step 6: Capture initial HUD screenshot**
+- [x] **Step 6: Capture initial HUD screenshot**
 
 Run:
 
@@ -1142,7 +1142,7 @@ Run:
 & "C:\Users\59979\Documents\New project\tmp\tools\platform-tools\adb.exe" -s YM00FCF3NW0031 pull /sdcard/air3-v2-home.png "C:\Users\59979\Documents\New project\tmp\air3-v2-home.png"
 ```
 
-- [ ] **Step 7: Trigger photo capture**
+- [x] **Step 7: Trigger photo capture**
 
 Use either the touch coordinate that hits the center HUD or Air3 center click. Then capture:
 
@@ -1151,7 +1151,7 @@ Use either the touch coordinate that hits the center HUD or Air3 center click. T
 & "C:\Users\59979\Documents\New project\tmp\tools\platform-tools\adb.exe" -s YM00FCF3NW0031 pull /sdcard/air3-v2-after-photo.png "C:\Users\59979\Documents\New project\tmp\air3-v2-after-photo.png"
 ```
 
-- [ ] **Step 8: Trigger voice capture**
+- [x] **Step 8: Trigger voice capture**
 
 Long press the HUD or use the Air3 center hold. Speak one short phrase:
 
@@ -1166,7 +1166,7 @@ Capture:
 & "C:\Users\59979\Documents\New project\tmp\tools\platform-tools\adb.exe" -s YM00FCF3NW0031 pull /sdcard/air3-v2-after-voice.png "C:\Users\59979\Documents\New project\tmp\air3-v2-after-voice.png"
 ```
 
-- [ ] **Step 9: Pull local diagnostics**
+- [x] **Step 9: Pull local diagnostics**
 
 Run:
 
@@ -1175,7 +1175,7 @@ Run:
 & "C:\Users\59979\Documents\New project\tmp\tools\platform-tools\adb.exe" -s YM00FCF3NW0031 exec-out run-as com.codex.air3nativecamera cat files/last_voice_response.json > "C:\Users\59979\Documents\New project\tmp\air3-v2-last-voice-response.json"
 ```
 
-- [ ] **Step 10: Capture logcat**
+- [x] **Step 10: Capture logcat**
 
 Run:
 
@@ -1183,7 +1183,7 @@ Run:
 & "C:\Users\59979\Documents\New project\tmp\tools\platform-tools\adb.exe" -s YM00FCF3NW0031 logcat -d -s Air3NativeCameraTest > "C:\Users\59979\Documents\New project\tmp\air3-v2-logcat.txt"
 ```
 
-- [ ] **Step 11: Visual acceptance**
+- [x] **Step 11: Visual acceptance**
 
 Screenshots must show:
 
@@ -1196,7 +1196,7 @@ Green guide frame visible
 AI result/problem states clearly distinguishable
 ```
 
-- [ ] **Step 12: Update memory and commit**
+- [x] **Step 12: Update memory and commit**
 
 Update `agent_memory/progress.md` and `agent_memory/bugs.md` with test outcome.
 
@@ -1204,6 +1204,8 @@ Update `agent_memory/progress.md` and `agent_memory/bugs.md` with test outcome.
 git add agent_memory/progress.md agent_memory/bugs.md
 git commit -m "test: verify Air3 V2 APK on device"
 ```
+
+Completed on 2026-06-06. Evidence and caveats are recorded in `docs/air3-v2-task9-test-report.md`.
 
 ---
 
