@@ -50,7 +50,7 @@
   Parses V2 structured response fields and renders HUD states by `resultType` / `feedbackCode`, not just `step`.
 
 - Modify: `air3-native-camera-test/build-native-apk.ps1`  
-  Keeps generated config ephemeral and adds a post-build cleanup/check step if missing.
+  Keeps generated config ephemeral, adds versioned APK output, and supports version overrides for release checkpoints.
 
 - Modify/Create: `.gitignore`  
   Protects local keys, generated build outputs, node modules, screenshots/log dumps, and temporary captures.
@@ -997,6 +997,9 @@ git commit -m "test: verify Air3 V2 backend contract"
 
 **Files:**
 - Modify/Create: `.gitignore`
+- Modify: `air3-native-camera-test/build-native-apk.ps1`
+- Create: `docs/air3-v2-version-log.md`
+- Create: `scripts/validate-native-build-versioning.mjs`
 - Use: Git / GitHub CLI
 
 - [x] **Step 1: Confirm git repo**
@@ -1049,6 +1052,24 @@ gh auth status
 ```
 
 If not logged in, record GitHub push as blocked and ask the user to log in.
+
+- [x] **Step 4.5: Add APK version differentiation**
+
+Add version metadata and output naming so every local APK checkpoint can be distinguished:
+
+```text
+versionCode=208
+versionName=2.0.8
+tag=v2.0.8-task8-versioned-build
+output=Air3NativeCameraTest-v<versionName>-<gitSha>.apk
+```
+
+Verify with:
+
+```powershell
+npm run validate:native-build
+powershell -NoProfile -ExecutionPolicy Bypass -File "air3-native-camera-test\build-native-apk.ps1"
+```
 
 - [ ] **Step 5: Push branch after auth**
 
@@ -1195,7 +1216,7 @@ git commit -m "test: verify Air3 V2 APK on device"
 - Supabase Edge Function returns structured V2 fields: `resultType`, `feedbackCode`, `displayTitle`, `displayText`, `displayHint`, `humanEscalationSuggestion`, `canUseVoice`, `canHumanEscalate`.
 - Voice flow sends transcript plus latest image context to the main AI brain instead of relying on voice-only intent mapping.
 - Native APK renders V2 structured HUD responses and falls back gracefully for old `text` responses.
-- APK builds successfully and does not leave generated key source folders after build.
+- APK builds successfully, includes versioned output `Air3NativeCameraTest-v<versionName>-<gitSha>.apk`, and does not leave generated key source folders after build.
 - Git has local commits; GitHub push is completed or explicitly blocked by missing auth/remote.
 - Test Android Apps / adb evidence confirms the V2 APK launches, captures, uploads, handles voice, and shows no operator-facing debug text.
 

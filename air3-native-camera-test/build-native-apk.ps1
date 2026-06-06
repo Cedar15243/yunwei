@@ -28,6 +28,15 @@ $unaligned = Join-Path $build "Air3NativeCameraTest-unaligned.apk"
 $aligned = Join-Path $build "Air3NativeCameraTest-aligned.apk"
 $signed = Join-Path $build "Air3NativeCameraTest.apk"
 $keystore = Join-Path $build "debug.keystore"
+$repoRoot = Split-Path -Parent $root
+$versionCode = if ($env:AIR3_APK_VERSION_CODE) { [int]$env:AIR3_APK_VERSION_CODE } else { 208 }
+$versionName = if ($env:AIR3_APK_VERSION_NAME) { $env:AIR3_APK_VERSION_NAME } else { "2.0.8" }
+$gitSha = "nogit"
+$gitOutput = & git -C $repoRoot rev-parse --short HEAD 2>$null
+if ($LASTEXITCODE -eq 0 -and $gitOutput) {
+  $gitSha = ($gitOutput | Select-Object -First 1).Trim()
+}
+$versionedSigned = Join-Path $build "Air3NativeCameraTest-v$versionName-$gitSha.apk"
 
 $env:JAVA_HOME = $jdk
 $env:PATH = (Join-Path $jdk "bin") + ";" + $env:PATH
@@ -44,8 +53,8 @@ $flatFiles = Get-ChildItem -LiteralPath $compiledRes -Filter "*.flat" | ForEach-
   --manifest $manifest `
   --min-sdk-version 34 `
   --target-sdk-version 34 `
-  --version-code 1 `
-  --version-name "1.01" `
+  --version-code $versionCode `
+  --version-name $versionName `
   -o $unsigned `
   $flatFiles
 if ($LASTEXITCODE -ne 0) { throw "aapt2 link failed" }
@@ -125,4 +134,7 @@ if ($LASTEXITCODE -ne 0) { throw "apksigner failed" }
 & $apksigner verify --verbose $signed
 if ($LASTEXITCODE -ne 0) { throw "apksigner verify failed" }
 
+Copy-Item -LiteralPath $signed -Destination $versionedSigned -Force
+Write-Output "VersionCode=$versionCode VersionName=$versionName Git=$gitSha"
 Write-Output $signed
+Write-Output $versionedSigned

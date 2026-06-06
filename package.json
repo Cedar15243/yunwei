@@ -7,7 +7,8 @@
     "start": "node src/server.js",
     "validate:supabase": "node scripts/validate-supabase-assets.mjs && node scripts/validate-ai-brain-flow.mjs && node scripts/check-text-balance.mjs",
     "validate:ai-brain": "node scripts/validate-ai-brain-flow.mjs",
-    "validate:native-hud": "node scripts/validate-native-hud-flow.mjs"
+    "validate:native-hud": "node scripts/validate-native-hud-flow.mjs",
+    "validate:native-build": "node scripts/validate-native-build-versioning.mjs"
   },
   "engines": {
     "node": ">=20"
