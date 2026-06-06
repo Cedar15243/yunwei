@@ -27,6 +27,7 @@ air3-native-camera-test/build/*-unsigned.apk
 air3-native-camera-test/build/*-unaligned.apk
 air3-native-camera-test/build/*-aligned.apk
 air3-native-camera-test/build/*.idsig
+*.apk
 
 # Captures and transient outputs
 tmp/
