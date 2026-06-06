@@ -1071,9 +1071,9 @@ npm run validate:native-build
 powershell -NoProfile -ExecutionPolicy Bypass -File "air3-native-camera-test\build-native-apk.ps1"
 ```
 
-- [ ] **Step 5: Push branch after auth**
+- [x] **Step 5: Push branch after auth**
 
-Blocked on 2026-06-06: `gh auth status` reported no logged-in GitHub host, and `git ls-remote origin air3-v2-task1-docs` timed out. Local commits are complete; pushing requires GitHub authentication.
+Completed on 2026-06-06: `git push -u origin air3-v2-task1-docs` pushed the branch, and `git push origin v2.0.8-task8-versioned-build` pushed the version tag.
 
 If auth works:
 

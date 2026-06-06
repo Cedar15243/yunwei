@@ -34,4 +34,10 @@
 
 ## GitHub Storage Status
 
-本地 Git 检查点已建立。远端推送依赖 GitHub CLI 或 HTTPS 认证；如果 `gh auth status` 仍显示未登录，则浏览器登录不等于 CLI 已登录，需要先完成 `gh auth login` 或提供可用的远端认证方式。
+本地 Git 检查点和 GitHub 远端存储均已建立。2026-06-06 已推送：
+
+- Branch: `origin/air3-v2-task1-docs`
+- Tag: `v2.0.8-task8-versioned-build`
+- PR entry: `https://github.com/Cedar15243/yunwei/pull/new/air3-v2-task1-docs`
+
+备注：`gh auth status` 仍显示 GitHub CLI 未登录，但 `git push` 已通过当前 Git HTTPS 凭据完成；后续如果要用 `gh` 创建 PR 或查 CI，仍需要执行 `gh auth login`。
