@@ -999,7 +999,7 @@ git commit -m "test: verify Air3 V2 backend contract"
 - Modify/Create: `.gitignore`
 - Use: Git / GitHub CLI
 
-- [ ] **Step 1: Confirm git repo**
+- [x] **Step 1: Confirm git repo**
 
 Run:
 
@@ -1014,7 +1014,7 @@ If it fails, run:
 git init
 ```
 
-- [ ] **Step 2: Add `.gitignore` protections**
+- [x] **Step 2: Add `.gitignore` protections**
 
 Ensure `.gitignore` contains:
 
@@ -1034,7 +1034,7 @@ air3-native-camera-test/build/*.idsig
 *.apk
 ```
 
-- [ ] **Step 3: Commit current plan and code**
+- [x] **Step 3: Commit current plan and code**
 
 ```powershell
 git status --short
@@ -1042,7 +1042,7 @@ git add .
 git commit -m "chore: prepare Air3 V2 APK plan"
 ```
 
-- [ ] **Step 4: Check GitHub auth**
+- [x] **Step 4: Check GitHub auth**
 
 ```powershell
 gh auth status
@@ -1051,6 +1051,8 @@ gh auth status
 If not logged in, record GitHub push as blocked and ask the user to log in.
 
 - [ ] **Step 5: Push branch after auth**
+
+Blocked on 2026-06-06: `gh auth status` reported no logged-in GitHub host, and `git ls-remote origin air3-v2-task1-docs` timed out. Local commits are complete; pushing requires GitHub authentication.
 
 If auth works:
 
