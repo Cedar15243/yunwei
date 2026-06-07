@@ -35,6 +35,7 @@ for (const field of [
   "displayHint: string",
   "humanEscalationSuggestion: boolean",
   "canUseVoice: boolean",
+  "transcriptError?: string",
 ]) {
   if (!responseType.includes(field)) {
     throw new Error(`GlassesResponse must expose required field: ${field}`);
@@ -47,10 +48,19 @@ for (const marker of [
   "现场小白，不懂 Linux 运维，需要一步一步指导",
   "只要照片清楚，就必须基于画面给出真实反馈",
   "不要因为画面不是服务器控制台就返回 wrong_target",
+  "不要把清晰非服务器画面的 displayTitle 写成“不是服务器控制台”",
+  "非服务器清晰画面的 displayHint 必须追问小白要判断什么",
+  "不要仅凭 taskGoal 或 step 名称进入 SSH 恢复语义",
   "服务器 SSH 恢复只是默认运维模板之一",
   "allowedCommands",
   "function aiBrainJsonSchema(",
   "function validateAiBrainDecision(",
+  "function removeServerOnlyBiasFromGeneralScene(",
+  "serverOnlyBiasPattern",
+  "serverOnlyPageBiasPattern",
+  "replaceBiasedGeneralScenePages(",
+  "请说明你要 AI 判断的问题，例如是否正常、哪里有异常、下一步要做什么。",
+  "请长按说明你要 AI 判断什么，或重新拍摄关键位置。",
   "function paginateFullText(",
   "async function createContextBundle(",
   "ai_context_bundles",
@@ -117,6 +127,21 @@ for (const marker of [
   if (!voiceBody.includes(marker)) {
     throw new Error(`/sessions/:id/voice flow must call ${marker}`);
   }
+}
+
+for (const marker of [
+  "form.append(\"language\", \"zh\")",
+  "form.append(\"prompt\", sttPrompt(promptHint))",
+  "function sttPrompt(",
+  "OPENAI_TRANSCRIBE_API_KEY",
+  "OPENAI_TRANSCRIBE_BASE_URL",
+  "openAiTranscribeUrl(env, \"/audio/transcriptions\")",
+  "isOfficialOpenAiTranscribe(env)",
+  "AbortSignal.timeout",
+  "whisper-1",
+  "transcript_empty",
+]) {
+  mustInclude(marker, `STT must include Chinese prompt/language and empty transcript fallback: ${marker}`);
 }
 
 console.log("AI brain flow validation passed.");

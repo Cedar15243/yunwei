@@ -33,6 +33,7 @@ import android.util.Base64;
 import android.util.Size;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
@@ -43,10 +44,12 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -69,6 +72,17 @@ public final class MainActivity extends Activity {
     private static final float GUIDE_FRAME_TOP_OFFSET_RATIO = 0.27f;
     private static final boolean UPLOAD_FULL_CAMERA_JPEG = true;
     private static final int JPEG_QUALITY = 94;
+    private static final long VOICE_RECORDING_MS = 10000L;
+    private static final long VOICE_MIN_RECORDING_MS = 900L;
+    private static final long VOICE_SILENCE_AFTER_SPEECH_MS = 1100L;
+    private static final long VOICE_NO_SPEECH_TIMEOUT_MS = 3200L;
+    private static final int VOICE_UPLOAD_READ_TIMEOUT_MS = 150000;
+    private static final long VOICE_AMPLITUDE_POLL_MS = 180L;
+    private static final int VOICE_SPEECH_AMPLITUDE_THRESHOLD = 500;
+    private static final float VOICE_RELATIVE_SILENCE_RATIO = 0.42f;
+    private static final int HUD_PAGE_CHAR_LIMIT = 54;
+    private static final String VOICE_STT_PROMPT =
+            "中文普通话现场问题。常见短句：这个是什么、这是什么、有什么问题、下一步怎么做、帮我看屏幕报错。";
 
     private TextureView previewView;
     private TextView titleText;
@@ -76,6 +90,10 @@ public final class MainActivity extends Activity {
     private TextView hintText;
     private TextView resultText;
     private TextView statusText;
+    private TextView actionCaptureButton;
+    private TextView actionVoiceButton;
+    private TextView actionBackButton;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private HandlerThread cameraThread;
     private Handler cameraHandler;
     private CameraDevice cameraDevice;
@@ -91,6 +109,18 @@ public final class MainActivity extends Activity {
     private MediaRecorder voiceRecorder;
     private File voiceFile;
     private boolean recordingVoice;
+    private long voiceRecordingStartedAt;
+    private long voiceLastSpeechAt;
+    private boolean voiceSpeechDetected;
+    private int voicePeakAmplitude;
+    private Runnable voiceStopRunnable;
+    private Runnable voiceAmplitudeMonitor;
+    private int activeVoiceGeneration;
+    private int captureGeneration;
+    private int interactionGeneration;
+    private boolean centerKeyLongPressed;
+    private HudResponse activeHud;
+    private int activeHudPageIndex;
     private int cameraOpenRetryCount;
 
     @Override
@@ -113,7 +143,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        stopVoiceRecording(false);
+        stopVoiceRecording(false, "destroy");
         closeCamera();
         stopCameraThread();
         super.onDestroy();
@@ -125,6 +155,7 @@ public final class MainActivity extends Activity {
         if (previewView != null &&
                 checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCameraFlow();
+            restoreLastHudResponse();
         }
     }
 
@@ -158,9 +189,43 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (actionVoiceButton != null && isTouchInside(actionVoiceButton, event)) {
+            android.util.Log.i("Air3NativeCameraTest", "Voice button dispatch touch action=" + event.getAction()
+                    + " recording=" + recordingVoice);
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                showActionFeedback(actionVoiceButton, recordingVoice ? "结束录音" : "语音中");
+                return true;
+            }
+            if (event.getAction() == MotionEvent.ACTION_UP) {
+                handleVoiceButtonPress();
+                return true;
+            }
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    private boolean isTouchInside(View view, MotionEvent event) {
+        int[] location = new int[2];
+        view.getLocationOnScreen(location);
+        float rawX = event.getRawX();
+        float rawY = event.getRawY();
+        return rawX >= location[0]
+                && rawX <= location[0] + view.getWidth()
+                && rawY >= location[1]
+                && rawY <= location[1] + view.getHeight();
+    }
+
+    @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
-            captureStillImage("key-center");
+            if (recordingVoice) {
+                stopVoiceRecording(true, "manual_finish");
+                return true;
+            }
+            centerKeyLongPressed = false;
+            event.startTracking();
+            setStatus("中心键已按下：短按拍照，长按语音。");
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_CAMERA) {
@@ -168,12 +233,32 @@ public final class MainActivity extends Activity {
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_BACK) {
-            setResultText("准备重拍");
-            hintText.setText("请重新对准需要判断的现场画面\n把关键内容放进绿色取景框");
-            setStatus("已进入重拍准备。对准后单击继续采集。");
+            backHudPageOrRetake();
             return true;
         }
         return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyLongPress(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
+            centerKeyLongPressed = true;
+            startCloudVoiceCapture();
+            return true;
+        }
+        return super.onKeyLongPress(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
+            if (!recordingVoice && !centerKeyLongPressed) {
+                advanceHudPageOrCapture("key-center");
+            }
+            centerKeyLongPressed = false;
+            return true;
+        }
+        return super.onKeyUp(keyCode, event);
     }
 
     private void buildUi() {
@@ -275,35 +360,179 @@ public final class MainActivity extends Activity {
         statusParams.bottomMargin = 24;
         root.addView(statusText, statusParams);
 
-        attachCaptureGestures(root, previewView, scrim, guideOverlay, topPanel, titleText, stepText,
-                centerPanel, resultText, hintText, statusText);
+        LinearLayout actionBar = new LinearLayout(this);
+        actionBar.setOrientation(LinearLayout.HORIZONTAL);
+        actionBar.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams actionParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM);
+        actionParams.leftMargin = 28;
+        actionParams.rightMargin = 28;
+        actionParams.bottomMargin = 120;
+        root.addView(actionBar, actionParams);
+
+        actionCaptureButton = createActionButton("1", "中心点击", "拍照 / 下一步");
+        actionVoiceButton = createActionButton("2", "长按中心", "语音确认 / 补充说明");
+        actionBackButton = createActionButton("3", "返回键", "重拍 / 返回上一步");
+        actionBar.addView(actionCaptureButton, actionButtonLayoutParams(0));
+        actionBar.addView(actionVoiceButton, actionButtonLayoutParams(1));
+        actionBar.addView(actionBackButton, actionButtonLayoutParams(2));
+
+        attachActionButtonHandlers();
         setContentView(root);
         showHomeHud();
+        restoreLastHudResponse();
     }
 
-    private void attachCaptureGestures(View... views) {
-        View.OnClickListener clickListener = new View.OnClickListener() {
+    private TextView createActionButton(String number, String title, String subtitle) {
+        TextView button = new TextView(this);
+        button.setText(number + "  " + title + "\n" + subtitle);
+        button.setTextColor(Color.rgb(218, 234, 245));
+        button.setTextSize(18);
+        button.setGravity(Gravity.CENTER_VERTICAL);
+        button.setPadding(28, 12, 28, 12);
+        button.setBackground(panelBackground(Color.argb(172, 5, 16, 20), Color.argb(190, 87, 255, 176), 2));
+        button.setClickable(true);
+        button.setLongClickable(true);
+        return button;
+    }
+
+    private LinearLayout.LayoutParams actionButtonLayoutParams(int index) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f);
+        if (index > 0) {
+            params.leftMargin = 16;
+        }
+        return params;
+    }
+
+    private void attachActionButtonHandlers() {
+        actionCaptureButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                captureStillImage("tap");
+                showActionFeedback(actionCaptureButton, hasNextHudPage() ? "下一页" : "拍照中");
+                advanceHudPageOrCapture("button-center");
             }
-        };
-        View.OnLongClickListener longClickListener = new View.OnLongClickListener() {
+        });
+        actionCaptureButton.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
+                showActionFeedback(actionCaptureButton, "语音中");
                 startCloudVoiceCapture();
                 return true;
             }
-        };
-        for (View view : views) {
-            if (view == null) {
-                continue;
+        });
+        actionVoiceButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
             }
-            view.setClickable(true);
-            view.setLongClickable(true);
-            view.setOnClickListener(clickListener);
-            view.setOnLongClickListener(longClickListener);
+        });
+        actionVoiceButton.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+                return true;
+            }
+        });
+        actionVoiceButton.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View view, MotionEvent event) {
+                android.util.Log.i("Air3NativeCameraTest", "Voice button touch action=" + event.getAction()
+                        + " recording=" + recordingVoice);
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    showActionFeedback(actionVoiceButton, recordingVoice ? "结束录音" : "语音中");
+                    return true;
+                }
+                if (event.getAction() == MotionEvent.ACTION_UP) {
+                    handleVoiceButtonPress();
+                    return true;
+                }
+                return true;
+            }
+        });
+        actionBackButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                showActionFeedback(actionBackButton, hasPreviousHudPage() ? "上一页" : "已重拍");
+                backHudPageOrRetake();
+            }
+        });
+        actionBackButton.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+                showActionFeedback(actionBackButton, hasPreviousHudPage() ? "上一页" : "已重拍");
+                backHudPageOrRetake();
+                return true;
+            }
+        });
+    }
+
+    private void handleVoiceButtonPress() {
+        if (recordingVoice) {
+            android.util.Log.i("Air3NativeCameraTest", "Voice button manual finish");
+            showActionFeedback(actionVoiceButton, "结束录音");
+            stopVoiceRecording(true, "manual_finish");
+            return;
         }
+        showActionFeedback(actionVoiceButton, "语音中");
+        startCloudVoiceCapture();
+    }
+
+    private void showActionFeedback(final TextView button, final String label) {
+        if (button == null) {
+            return;
+        }
+        button.setSelected(true);
+        button.setBackground(panelBackground(Color.argb(220, 8, 42, 35), Color.rgb(87, 255, 176), 3));
+        setStatus(label);
+        mainHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (button != null) {
+                    button.setSelected(false);
+                    button.setBackground(panelBackground(Color.argb(172, 5, 16, 20), Color.argb(190, 87, 255, 176), 2));
+                }
+            }
+        }, 520L);
+    }
+
+    private void prepareRetake() {
+        beginInteraction();
+        activeHud = null;
+        activeHudPageIndex = 0;
+        stopVoiceRecording(false, "retake");
+        captureInFlight = false;
+        setResultText("准备重拍");
+        hintText.setText("请重新对准需要判断的现场画面\n把关键内容放进绿色取景框");
+        setStatus("已进入重拍准备。对准后单击继续采集。");
+    }
+
+    private void advanceHudPageOrCapture(String source) {
+        if (hasNextHudPage()) {
+            activeHudPageIndex += 1;
+            renderHudPage();
+            return;
+        }
+        captureStillImage(source);
+    }
+
+    private void backHudPageOrRetake() {
+        if (hasPreviousHudPage()) {
+            activeHudPageIndex -= 1;
+            renderHudPage();
+            return;
+        }
+        prepareRetake();
+    }
+
+    private boolean hasNextHudPage() {
+        return activeHud != null && activeHud.totalPages > 1 && activeHudPageIndex < activeHud.totalPages - 1;
+    }
+
+    private boolean hasPreviousHudPage() {
+        return activeHud != null && activeHud.totalPages > 1 && activeHudPageIndex > 0;
     }
 
     private static GradientDrawable panelBackground(int fillColor, int strokeColor, int strokeWidth) {
@@ -368,7 +597,7 @@ public final class MainActivity extends Activity {
             float centerY = frame.centerY();
             canvas.drawLine(centerX - 42f, centerY, centerX + 42f, centerY, framePaint);
             canvas.drawLine(centerX, centerY - 42f, centerX, centerY + 42f, framePaint);
-            canvas.drawText("让关键画面填满绿色框，内容清楚后再拍", centerX, frame.bottom + 42f, textPaint);
+            canvas.drawText("让关键画面填满绿色框，内容清楚后再拍", centerX, frame.bottom - 30f, textPaint);
         }
     }
 
@@ -380,7 +609,7 @@ public final class MainActivity extends Activity {
             return;
         }
         if (recordingVoice) {
-            setStatus("正在录音，请说完后稍等，系统会自动上传。");
+            stopVoiceRecording(true, "manual_finish");
             return;
         }
         if (sessionId.length() == 0) {
@@ -390,9 +619,10 @@ public final class MainActivity extends Activity {
         }
 
         try {
+            final int generation = beginInteraction();
             voiceFile = new File(getCacheDir(), "ops_voice_" + System.currentTimeMillis() + ".m4a");
             voiceRecorder = new MediaRecorder();
-            voiceRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            voiceRecorder.setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION);
             voiceRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             voiceRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
             voiceRecorder.setAudioSamplingRate(16000);
@@ -401,14 +631,21 @@ public final class MainActivity extends Activity {
             voiceRecorder.prepare();
             voiceRecorder.start();
             recordingVoice = true;
+            activeVoiceGeneration = generation;
+            voiceRecordingStartedAt = System.currentTimeMillis();
+            voiceLastSpeechAt = voiceRecordingStartedAt;
+            voiceSpeechDetected = false;
+            voicePeakAmplitude = 0;
             setResultText("正在录音");
-            setStatus("请说出现场确认内容，例如：好了，已经完成。录音约 5 秒后自动上传。");
-            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+            setStatus("请说短句问题。说完后会自动上传，也可以再按中心键立即结束。");
+            voiceStopRunnable = new Runnable() {
                 @Override
                 public void run() {
-                    stopVoiceRecording(true);
+                    stopVoiceRecording(true, "max_duration");
                 }
-            }, 5200L);
+            };
+            mainHandler.postDelayed(voiceStopRunnable, VOICE_RECORDING_MS);
+            startVoiceAmplitudeMonitor(generation);
         } catch (Exception error) {
             recordingVoice = false;
             releaseVoiceRecorder();
@@ -418,11 +655,70 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void stopVoiceRecording(boolean upload) {
+    private void startVoiceAmplitudeMonitor(final int generation) {
+        voiceAmplitudeMonitor = new Runnable() {
+            @Override
+            public void run() {
+                if (!recordingVoice || generation != activeVoiceGeneration || voiceRecorder == null) {
+                    return;
+                }
+                long now = System.currentTimeMillis();
+                try {
+                    int amplitude = voiceRecorder.getMaxAmplitude();
+                    voicePeakAmplitude = Math.max(voicePeakAmplitude, amplitude);
+                    if (amplitude >= VOICE_SPEECH_AMPLITUDE_THRESHOLD) {
+                        voiceSpeechDetected = true;
+                        if (amplitude >= voiceDynamicSilenceThreshold()) {
+                            voiceLastSpeechAt = now;
+                        }
+                        android.util.Log.i("Air3NativeCameraTest", "voice amplitude=" + amplitude + " speech=true");
+                    } else if (amplitude > 0) {
+                        android.util.Log.i("Air3NativeCameraTest", "voice amplitude=" + amplitude + " speech=false");
+                    }
+                } catch (Exception error) {
+                    android.util.Log.w("Air3NativeCameraTest", "Voice amplitude poll failed", error);
+                }
+                long elapsed = now - voiceRecordingStartedAt;
+                long silentMs = now - voiceLastSpeechAt;
+                if (voiceSpeechDetected &&
+                        elapsed >= VOICE_MIN_RECORDING_MS &&
+                        silentMs >= VOICE_SILENCE_AFTER_SPEECH_MS) {
+                    stopVoiceRecording(true, "silence_detected");
+                    return;
+                }
+                if (!voiceSpeechDetected && elapsed >= VOICE_NO_SPEECH_TIMEOUT_MS) {
+                    stopVoiceRecording(false, "no_speech_timeout");
+                    return;
+                }
+                mainHandler.postDelayed(this, VOICE_AMPLITUDE_POLL_MS);
+            }
+        };
+        mainHandler.postDelayed(voiceAmplitudeMonitor, VOICE_AMPLITUDE_POLL_MS);
+    }
+
+    private int voiceDynamicSilenceThreshold() {
+        return Math.max(VOICE_SPEECH_AMPLITUDE_THRESHOLD, Math.round(voicePeakAmplitude * VOICE_RELATIVE_SILENCE_RATIO));
+    }
+
+    private void cancelVoiceTimers() {
+        if (voiceStopRunnable != null) {
+            mainHandler.removeCallbacks(voiceStopRunnable);
+            voiceStopRunnable = null;
+        }
+        if (voiceAmplitudeMonitor != null) {
+            mainHandler.removeCallbacks(voiceAmplitudeMonitor);
+            voiceAmplitudeMonitor = null;
+        }
+    }
+
+    private void stopVoiceRecording(boolean upload, String stopReason) {
         if (!recordingVoice && voiceRecorder == null) {
             return;
         }
+        cancelVoiceTimers();
         File finishedFile = voiceFile;
+        long durationMs = voiceRecordingStartedAt > 0 ? System.currentTimeMillis() - voiceRecordingStartedAt : 0L;
+        int generation = activeVoiceGeneration;
         try {
             if (voiceRecorder != null) {
                 voiceRecorder.stop();
@@ -434,9 +730,23 @@ public final class MainActivity extends Activity {
             releaseVoiceRecorder();
         }
         if (upload && finishedFile != null && finishedFile.exists() && finishedFile.length() > 0) {
+            if (durationMs < VOICE_MIN_RECORDING_MS) {
+                stopReason = "too_short";
+                persistVoiceDiagnostics(finishedFile.length(), durationMs, "VOICE_RECOGNITION", stopReason);
+                setResultText("录音太短");
+                setHintText("请至少说满一句完整问题\n说完后停顿一下，系统会自动结束");
+                setStatus("没有录到完整问题。请按语音按钮后说完一句话，再停顿一下。");
+                return;
+            }
+            persistVoiceDiagnostics(finishedFile.length(), durationMs, "VOICE_RECOGNITION", stopReason);
             setResultText("语音上传中");
             setStatus("语音已录制，正在上传给 AI 转文字。");
-            uploadVoiceAudio(finishedFile);
+            uploadVoiceAudio(finishedFile, durationMs, stopReason, generation);
+        } else if ("no_speech_timeout".equals(stopReason)) {
+            persistVoiceDiagnostics(finishedFile == null ? 0 : finishedFile.length(), durationMs, "VOICE_RECOGNITION", stopReason);
+            setResultText("没有听到声音");
+            setHintText("没有检测到有效语音\n请靠近眼镜麦克风后再问一次");
+            setStatus("没有听到有效语音。请靠近眼镜麦克风，说完一句话后停顿。");
         }
     }
 
@@ -451,7 +761,7 @@ public final class MainActivity extends Activity {
         voiceRecorder = null;
     }
 
-    private void uploadVoiceAudio(File audioFile) {
+    private void uploadVoiceAudio(File audioFile, long recordingMs, String stopReason, int generation) {
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -461,6 +771,10 @@ public final class MainActivity extends Activity {
                     JSONObject payload = new JSONObject();
                     payload.put("audioBase64", "data:audio/mp4;base64," + Base64.encodeToString(audioBytes, Base64.NO_WRAP));
                     payload.put("audioFormat", "audio/mp4");
+                    payload.put("expectedLanguage", "zh");
+                    payload.put("sttPrompt", VOICE_STT_PROMPT);
+                    payload.put("recordingMs", recordingMs);
+                    payload.put("stopReason", stopReason);
                     payload.put("timestamp", System.currentTimeMillis());
                     payload.put("source", "air3-media-recorder");
                     byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
@@ -470,7 +784,7 @@ public final class MainActivity extends Activity {
                     }
                     connection = (HttpURLConnection) new URL(voiceEndpoint()).openConnection();
                     connection.setConnectTimeout(8000);
-                    connection.setReadTimeout(60000);
+                    connection.setReadTimeout(VOICE_UPLOAD_READ_TIMEOUT_MS);
                     connection.setRequestMethod("POST");
                     connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                     connection.setRequestProperty("x-ops-glasses-key", OPS_GLASSES_API_KEY);
@@ -484,10 +798,14 @@ public final class MainActivity extends Activity {
                             ? connection.getInputStream()
                             : connection.getErrorStream();
                     String responseText = readAll(input);
+                    persistVoiceDiagnostics(audioBytes.length, recordingMs, "VOICE_RECOGNITION", stopReason);
                     persistVoiceResponse(status, audioBytes.length, responseText, null);
+                    if (status < 200 || status >= 300) {
+                        throw new IOException("voice_upload_http_" + status + ": " + responseText);
+                    }
                     JSONObject response = new JSONObject(responseText);
                     HudResponse hud = new HudResponse(response, sessionId, currentStep);
-                    applyHudResponse(hud);
+                    applyHudResponseIfCurrent(hud, generation);
                     android.util.Log.i("Air3NativeCameraTest",
                             "Voice OK http=" + status + " bytes=" + audioBytes.length
                                     + " resultType=" + hud.resultType
@@ -495,7 +813,9 @@ public final class MainActivity extends Activity {
                                     + " step=" + hud.step);
                 } catch (Exception error) {
                     setResultText("语音同步失败");
+                    setHintText("语音没有同步到 AI\n请确认网络后重试，或单击重新拍照");
                     setStatus("语音没有同步成功，请改用单击拍照继续。");
+                    persistVoiceDiagnostics(audioFile.length(), recordingMs, "VOICE_RECOGNITION", stopReason);
                     persistVoiceResponse(-1, audioFile.length(), "", error);
                     android.util.Log.w("Air3NativeCameraTest", "Voice upload failed", error);
                 } finally {
@@ -811,8 +1131,10 @@ public final class MainActivity extends Activity {
                                         previewRequest.build(),
                                         null,
                                         cameraHandler);
-                                showHomeHud();
-                                setStatus("相机已就绪。请把现场关键画面放入绿色框内，单击开始 AI 反馈。");
+                                if (!restoreLastHudResponse()) {
+                                    showHomeHud();
+                                    setStatus("相机已就绪。请把现场关键画面放入绿色框内，单击开始 AI 反馈。");
+                                }
                             } catch (CameraAccessException error) {
                                 setResultText("预览失败");
                                 setStatus("相机预览启动失败，请重新进入应用。");
@@ -840,6 +1162,8 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        captureGeneration = beginInteraction();
+        final int generation = captureGeneration;
         captureInFlight = true;
         try {
             CaptureRequest.Builder request =
@@ -857,6 +1181,11 @@ public final class MainActivity extends Activity {
                         CameraCaptureSession session,
                         CaptureRequest request,
                         TotalCaptureResult result) {
+                    if (!isCurrentInteraction(generation)) {
+                        android.util.Log.i("Air3NativeCameraTest",
+                                "Skip stale capture completion generation=" + generation);
+                        return;
+                    }
                     setStatus("照片已采集，正在读取画面。");
                 }
             }, cameraHandler);
@@ -880,6 +1209,11 @@ public final class MainActivity extends Activity {
             byte[] bytes = new byte[buffer.remaining()];
             buffer.get(bytes);
             persistRawCapture(bytes);
+            final int generation = captureGeneration;
+            if (!isCurrentInteraction(generation)) {
+                android.util.Log.i("Air3NativeCameraTest", "Skip stale captured image before UI generation=" + generation);
+                return;
+            }
             setResultText("AI 分析中");
             hintText.setText("照片已上传\n正在生成现场反馈");
             setStatus("正在处理取景框内画面，并上传给 AI 分析。");
@@ -887,7 +1221,7 @@ public final class MainActivity extends Activity {
             new Thread(new Runnable() {
                 @Override
                 public void run() {
-                    uploadImage(bytes);
+                    uploadImage(bytes, generation);
                 }
             }, "Air3NativeUpload").start();
         } catch (Exception error) {
@@ -898,10 +1232,19 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void uploadImage(byte[] jpegBytes) {
+    private void uploadImage(byte[] jpegBytes, int generation) {
         HttpURLConnection connection = null;
         try {
+            if (!isCurrentInteraction(generation)) {
+                android.util.Log.i("Air3NativeCameraTest", "Skip stale image upload before network generation=" + generation);
+                return;
+            }
             UploadImage uploadImage = prepareUploadJpeg(jpegBytes);
+            if (!isCurrentInteraction(generation)) {
+                android.util.Log.i("Air3NativeCameraTest",
+                        "Skip stale image upload after prepare generation=" + generation);
+                return;
+            }
             String imageBase64 = Base64.encodeToString(uploadImage.bytes, Base64.NO_WRAP);
             JSONObject payload = new JSONObject();
             payload.put("sessionId", sessionId);
@@ -944,17 +1287,23 @@ public final class MainActivity extends Activity {
                     ? connection.getInputStream()
                     : connection.getErrorStream();
             String responseText = readAll(input);
+            if (status < 200 || status >= 300) {
+                throw new IOException("image_upload_http_" + status + ": " + responseText);
+            }
             JSONObject response = new JSONObject(responseText);
             HudResponse hud = new HudResponse(response, sessionId, currentStep);
             int imageBytes = response.optInt("imageBytes", uploadImage.bytes.length);
-            applyHudResponse(hud);
+            applyHudResponseIfCurrent(hud, generation);
             android.util.Log.i("Air3NativeCameraTest", String.format(Locale.US,
                     "OK http=%d step=%s session=%s resultType=%s feedbackCode=%s serverImageBytes=%d uploadBytes=%d rawBytes=%d",
                     status, hud.step, shortSessionId(hud.sessionId), hud.resultType, hud.feedbackCode,
                     imageBytes, uploadImage.bytes.length, jpegBytes.length));
         } catch (Exception error) {
-            setResultText("上传失败");
-            setStatus("暂时连接不到 AI 运维服务。请确认网络后单击重试。");
+            if (isCurrentInteraction(generation)) {
+                setResultText("网络连接失败");
+                setHintText("暂时连接不到 AI 运维服务\n请确认网络后单击中心重试");
+                setStatus("暂时连接不到 AI 运维服务。请确认网络后单击重试。");
+            }
             android.util.Log.w("Air3NativeCameraTest", "Upload failed", error);
         } finally {
             if (connection != null) {
@@ -1057,6 +1406,8 @@ public final class MainActivity extends Activity {
         final String displayTitle;
         final String displayText;
         final String displayHint;
+        final String[] displayPages;
+        final int totalPages;
         final boolean humanEscalationSuggestion;
 
         HudResponse(JSONObject response, String fallbackSessionId, String fallbackStep) {
@@ -1069,6 +1420,9 @@ public final class MainActivity extends Activity {
             displayTitle = response.optString("displayTitle", firstInstructionLine(legacyText));
             displayText = response.optString("displayText", legacyText);
             displayHint = response.optString("displayHint", "");
+            String fullText = response.optString("fullText", displayText);
+            displayPages = parseDisplayPages(response, fullText);
+            totalPages = displayPages.length;
             humanEscalationSuggestion = response.optBoolean("humanEscalationSuggestion", false);
         }
     }
@@ -1132,6 +1486,24 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void persistVoiceDiagnostics(long audioBytes, long recordingMs, String audioSource, String stopReason) {
+        try {
+            JSONObject diagnostic = new JSONObject();
+            diagnostic.put("audioBytes", audioBytes);
+            diagnostic.put("recordingMs", recordingMs);
+            diagnostic.put("audioSource", audioSource);
+            diagnostic.put("stopReason", stopReason);
+            diagnostic.put("peakAmplitude", voicePeakAmplitude);
+            diagnostic.put("expectedLanguage", "zh");
+            diagnostic.put("sttPrompt", VOICE_STT_PROMPT);
+            diagnostic.put("timestamp", System.currentTimeMillis());
+            try (OutputStream output = openFileOutput("last_voice_diagnostics.json", MODE_PRIVATE)) {
+                output.write(diagnostic.toString().getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     private String actionForCurrentStep() {
         if ("run_diagnostic_command".equals(currentStep) || "confirm_diagnostic_output".equals(currentStep)) {
             return "diagnostic_output_uploaded";
@@ -1168,15 +1540,57 @@ public final class MainActivity extends Activity {
                 .apply();
     }
 
+    private int beginInteraction() {
+        interactionGeneration += 1;
+        android.util.Log.i("Air3NativeCameraTest", "begin interaction generation=" + interactionGeneration);
+        return interactionGeneration;
+    }
+
+    private boolean isCurrentInteraction(int generation) {
+        return generation == interactionGeneration;
+    }
+
+    private void applyHudResponseIfCurrent(final HudResponse hud, int generation) {
+        if (!isCurrentInteraction(generation)) {
+            android.util.Log.i("Air3NativeCameraTest", "Skip stale HUD response generation=" + generation
+                    + " current=" + interactionGeneration);
+            return;
+        }
+        applyHudResponse(hud);
+    }
+
     private void applyHudResponse(final HudResponse hud) {
         persistSession(hud.sessionId, hud.step);
         persistLastResponse(hud.rawResponse);
+        activeHud = hud;
+        activeHudPageIndex = 0;
+        renderHudPage();
+    }
+
+    private void renderHudPage() {
+        final HudResponse hud = activeHud;
+        if (hud == null) {
+            return;
+        }
+        if (activeHudPageIndex < 0) {
+            activeHudPageIndex = 0;
+        }
+        if (activeHudPageIndex >= hud.totalPages) {
+            activeHudPageIndex = Math.max(0, hud.totalPages - 1);
+        }
+        final int pageIndex = activeHudPageIndex;
+        final int totalPages = hud.totalPages;
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 stepText.setText(stepLabel(hud.step));
                 resultText.setText(hud.displayTitle.length() == 0 ? firstInstructionLine(hud.displayText) : hud.displayTitle);
-                hintText.setText(hud.displayHint.length() == 0 ? fallbackHint(hud) : hud.displayHint);
+                String pageText = pageTextForHud(hud, pageIndex);
+                String pageLabel = totalPages > 1
+                        ? "\n第 " + (pageIndex + 1) + "/" + totalPages + " 页"
+                        : "";
+                String hint = hud.displayHint.length() == 0 ? fallbackHint(hud) : hud.displayHint;
+                hintText.setText(pageText + pageLabel + "\n" + hint);
                 statusText.setText(statusForHud(hud));
             }
         });
@@ -1194,6 +1608,22 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private boolean restoreLastHudResponse() {
+        final String lastResponse = getPreferences(MODE_PRIVATE).getString(PREF_LAST_RESPONSE, "");
+        if (lastResponse == null || lastResponse.trim().length() == 0) {
+            return false;
+        }
+        try {
+            HudResponse hud = new HudResponse(new JSONObject(lastResponse), sessionId, currentStep);
+            applyHudResponse(hud);
+            android.util.Log.i("Air3NativeCameraTest", "Restored last HUD response.");
+            return true;
+        } catch (Exception error) {
+            android.util.Log.w("Air3NativeCameraTest", "Restore last HUD response failed", error);
+            return false;
+        }
+    }
+
     private static String firstInstructionLine(String text) {
         if (text == null || text.trim().length() == 0) {
             return "等待 AI 指导";
@@ -1202,6 +1632,56 @@ public final class MainActivity extends Activity {
         int newline = normalized.indexOf('\n');
         String first = newline >= 0 ? normalized.substring(0, newline).trim() : normalized;
         return first.length() > 32 ? first.substring(0, 32) : first;
+    }
+
+    private static String[] parseDisplayPages(JSONObject response, String fallbackText) {
+        JSONArray pages = response.optJSONArray("displayPages");
+        if (pages == null || pages.length() == 0) {
+            String text = fallbackText == null || fallbackText.trim().length() == 0 ? "请按提示继续。" : fallbackText.trim();
+            return paginateLocalHudText(text);
+        }
+        String[] result = new String[pages.length()];
+        int count = 0;
+        for (int i = 0; i < pages.length(); i++) {
+            String page = pages.optString(i, "").trim();
+            if (page.length() == 0) {
+                continue;
+            }
+            result[count] = page;
+            count += 1;
+        }
+        if (count == 0) {
+            String text = fallbackText == null || fallbackText.trim().length() == 0 ? "请按提示继续。" : fallbackText.trim();
+            return paginateLocalHudText(text);
+        }
+        return Arrays.copyOf(result, count);
+    }
+
+    private static String[] paginateLocalHudText(String text) {
+        String normalized = text == null ? "" : text.trim();
+        if (normalized.length() == 0) {
+            return new String[]{"请按提示继续。"};
+        }
+        if (normalized.length() <= HUD_PAGE_CHAR_LIMIT) {
+            return new String[]{normalized};
+        }
+        int pageCount = (normalized.length() + HUD_PAGE_CHAR_LIMIT - 1) / HUD_PAGE_CHAR_LIMIT;
+        String[] pages = new String[pageCount];
+        int count = 0;
+        for (int index = 0; index < normalized.length(); index += HUD_PAGE_CHAR_LIMIT) {
+            int end = Math.min(normalized.length(), index + HUD_PAGE_CHAR_LIMIT);
+            pages[count] = normalized.substring(index, end).trim();
+            count += 1;
+        }
+        return Arrays.copyOf(pages, count);
+    }
+
+    private static String pageTextForHud(HudResponse hud, int pageIndex) {
+        if (hud.displayPages.length == 0) {
+            return hud.displayText;
+        }
+        int safeIndex = Math.max(0, Math.min(pageIndex, hud.displayPages.length - 1));
+        return hud.displayPages[safeIndex];
     }
 
     private static String stepLabel(String step) {
@@ -1385,6 +1865,15 @@ public final class MainActivity extends Activity {
             }
         });
         android.util.Log.i("Air3NativeCameraTest", "RESULT " + value);
+    }
+
+    private void setHintText(String value) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                hintText.setText(value);
+            }
+        });
     }
 
     private void setStatus(String value) {

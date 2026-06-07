@@ -4,9 +4,9 @@ This document records APK version separation rules and GitHub storage checkpoint
 
 ## Versioning Rules
 
-- `versionName` uses a human-readable version, for example `2.0.9`.
-- `versionCode` uses an increasing integer, for example `209` for `2.0.9`.
-- Formal checkpoint tags use `v<versionName>-<purpose>`, for example `v2.0.9-general-scene-feedback`.
+- `versionName` uses a human-readable version, for example `2.0.10`.
+- `versionCode` uses an increasing integer, for example `210` for `2.0.10`.
+- Formal checkpoint tags use `v<versionName>-<purpose>`, for example `v2.0.10-hud-paging-voice-controls`.
 - APK output files must include version and Git short SHA: `Air3NativeCameraTest-v<versionName>-<gitSha>.apk`.
 - The base artifact remains `Air3NativeCameraTest.apk` for the current build/install flow.
 - `air3-native-camera-test/build/` and `*.apk` must stay ignored. Do not commit APKs, signing intermediates, generated source, or local secrets.
@@ -23,13 +23,13 @@ This document records APK version separation rules and GitHub storage checkpoint
 
 | Field | Value |
 | --- | --- |
-| Checkpoint | `v2.0.9-general-scene-feedback` |
-| Date | `2026-06-06` |
+| Checkpoint | `v2.0.10-hud-paging-voice-controls` |
+| Date | `2026-06-07` |
 | Branch | `air3-v2-task1-docs` |
-| APK versionCode | `209` |
-| APK versionName | `2.0.9` |
+| APK versionCode | `210` |
+| APK versionName | `2.0.10` |
 | APK naming rule | `Air3NativeCameraTest-v<versionName>-<gitSha>.apk` |
-| Purpose | General scene feedback rule update: clear non-server photos must receive AI feedback |
+| Purpose | HUD long-text paging, button feedback, voice VAD/manual finish, and stale-response isolation |
 
 ## Included Local Commits
 
@@ -40,7 +40,8 @@ This document records APK version separation rules and GitHub storage checkpoint
 - `0bcdbd3 docs: record GitHub storage checkpoint status`
 - `22e298b chore: version Air3 APK build artifacts`
 - `0540e0c test: verify Air3 V2 APK on device`
-- Current checkpoint commit message: `feat: generalize Air3 scene feedback`
+- `eacf351 feat: generalize Air3 scene feedback`
+- Current checkpoint commit message: `fix: stabilize Air3 HUD paging and voice controls`
 
 ## GitHub Storage Status
 
@@ -48,7 +49,8 @@ Local Git checkpoints and GitHub remote storage are established.
 
 - Branch: `origin/air3-v2-task1-docs`
 - Existing tag: `v2.0.8-task8-versioned-build`
-- Next tag for this checkpoint after commit and push: `v2.0.9-general-scene-feedback`
+- Existing tag: `v2.0.9-general-scene-feedback`
+- Next tag for this checkpoint after commit and push: `v2.0.10-hud-paging-voice-controls`
 - PR entry: `https://github.com/Cedar15243/yunwei/pull/new/air3-v2-task1-docs`
 
 Note: `gh auth status` may still show GitHub CLI as logged out. Git HTTPS credentials have worked for prior pushes; use `gh auth login` later only if PR or Actions operations need GitHub CLI.

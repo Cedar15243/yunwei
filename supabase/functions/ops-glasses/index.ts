@@ -92,6 +92,7 @@ type GlassesResponse = {
   imageBytes?: number;
   voiceIntent?: VoiceIntent;
   transcript?: string;
+  transcriptError?: string;
   retestResult?: Record<string, unknown>;
   timestamp: string;
 };
@@ -101,6 +102,8 @@ type Env = {
   SUPABASE_SERVICE_ROLE_KEY: string;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL: string;
+  OPENAI_TRANSCRIBE_API_KEY?: string;
+  OPENAI_TRANSCRIBE_BASE_URL: string;
   OPENAI_VISION_MODEL: string;
   OPENAI_TRANSCRIBE_MODEL: string;
   DEMO_ASSET_TAG: string;
@@ -126,6 +129,8 @@ const storageBucket = "ops-glasses-captures";
 const aiBrainPromptVersion = "air3-v2-ai-brain-v2-scene-feedback";
 const taskGoal = "基于眼镜照片和现场语音给现场人员提供真实 AI 反馈与运维指导；服务器 SSH 恢复只是默认运维模板之一";
 const operatorProfile = "现场小白，不懂 Linux 运维，需要一步一步指导";
+const sttRequestTimeoutMs = 115_000;
+const aiBrainRequestTimeoutMs = 25_000;
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
@@ -271,7 +276,7 @@ async function handleVoice(
 
     if (env.OPENAI_API_KEY) {
       try {
-        transcript = await transcribeAudio(env, audio.bytes, audio.contentType);
+        transcript = await transcribeAudio(env, audio.bytes, audio.contentType, stringOrEmpty(payload.sttPrompt));
       } catch (error) {
         transcriptError = error instanceof Error ? error.message : String(error);
       }
@@ -343,6 +348,7 @@ async function handleVoice(
 
   return responseFromDecision(sessionId, next, {
     transcript,
+    transcriptError,
     voiceIntent,
     canRetake: true,
     canEscalate: true,
@@ -654,6 +660,7 @@ async function callResponsesAiBrain(
       Authorization: `Bearer ${env.OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(aiBrainRequestTimeoutMs),
     body: JSON.stringify({
       model,
       input: [
@@ -692,6 +699,7 @@ async function callChatCompletionsAiBrain(
       Authorization: `Bearer ${env.OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(aiBrainRequestTimeoutMs),
     body: JSON.stringify({
       model,
       messages: [
@@ -721,6 +729,9 @@ function aiBrainPrompt(context: Record<string, unknown>, commands: Record<string
     "服务器 SSH 恢复只是默认运维模板之一，不是唯一可识别场景。",
     "只要照片清楚，就必须基于画面给出真实反馈：先说明你看到的关键内容，再结合语音说明回答或给下一步建议。",
     "不要因为画面不是服务器控制台就返回 wrong_target；如果画面清楚但不属于 SSH 恢复任务，请说明画面内容，并提示小白长按说明要你判断什么。",
+    "不要把清晰非服务器画面的 displayTitle 写成“不是服务器控制台”；标题应概括你看到的真实对象或场景。",
+    "非服务器清晰画面的 displayHint 必须追问小白要判断什么，不能默认要求重新对准服务器、终端、登录界面或机柜。",
+    "不要仅凭 taskGoal 或 step 名称进入 SSH 恢复语义；只有图像或 transcript 明确指向服务器/终端/SSH 时才使用 SSH 模板。",
     "现场人员不是运维专家，请用短句、明确、可执行的中文指导。",
     "如果画面确实是服务器控制台、终端、登录界面或命令输出，再按 SSH 恢复模板继续给运维指导。",
     "如果需要展示命令，只能使用 allowedCommands 中的命令文本，不要自由生成新命令。",
@@ -825,15 +836,34 @@ function extractJsonObject(value: string): string {
   return match[0];
 }
 
-async function transcribeAudio(env: Env, bytes: Uint8Array, contentType: string): Promise<string> {
+async function transcribeAudio(env: Env, bytes: Uint8Array, contentType: string, promptHint = ""): Promise<string> {
+  const primary = await transcribeAudioWithModel(env, env.OPENAI_TRANSCRIBE_MODEL, bytes, contentType, promptHint);
+  if (primary) return primary;
+  if (isOfficialOpenAiTranscribe(env) && env.OPENAI_TRANSCRIBE_MODEL !== "whisper-1") {
+    const fallback = await transcribeAudioWithModel(env, "whisper-1", bytes, contentType, promptHint);
+    if (fallback) return fallback;
+  }
+  throw new Error("transcript_empty");
+}
+
+async function transcribeAudioWithModel(
+  env: Env,
+  model: string,
+  bytes: Uint8Array,
+  contentType: string,
+  promptHint: string,
+): Promise<string> {
   const form = new FormData();
-  form.append("model", env.OPENAI_TRANSCRIBE_MODEL);
+  form.append("model", model);
+  form.append("language", "zh");
+  form.append("prompt", sttPrompt(promptHint));
   const audioBuffer = bytes.slice().buffer as ArrayBuffer;
   form.append("file", new Blob([audioBuffer], { type: contentType }), `voice.${extensionForAudio(contentType)}`);
-  const response = await fetch(openAiUrl(env, "/audio/transcriptions"), {
+  const response = await fetch(openAiTranscribeUrl(env, "/audio/transcriptions"), {
     method: "POST",
-    headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}` },
+    headers: { Authorization: `Bearer ${env.OPENAI_TRANSCRIBE_API_KEY || env.OPENAI_API_KEY}` },
     body: form,
+    signal: AbortSignal.timeout(sttRequestTimeoutMs),
   });
   const body = await safeJson(response);
   if (!response.ok) {
@@ -844,6 +874,15 @@ async function transcribeAudio(env: Env, bytes: Uint8Array, contentType: string)
   const rawText = stringOr(body.text, "");
   const jsonText = stringOr(body.text, "") || stringOr(body.output_text, "");
   return jsonText || rawText;
+}
+
+function sttPrompt(promptHint = ""): string {
+  const base = [
+    "中文普通话现场问题，通常很短。",
+    "常见说法包括：这个是什么、这是什么、有什么问题、下一步怎么做、帮我看屏幕报错、帮我判断这个页面。",
+    "请尽量按中文原话转写，不要翻译，不要解释。",
+  ].join(" ");
+  return promptHint ? `${base} ${promptHint}` : base;
 }
 
 async function probeTarget(env: Env, target: { host: string; sshPort: number; appPort?: number }) {
@@ -1020,7 +1059,7 @@ function validateAiBrainDecision(value: Record<string, unknown>, commands: Recor
   const displayPages = pages.length ? pages : paginateFullText(displayText || displayTitle);
   const textOverflowMode: TextOverflowMode = displayPages.length > 1 ? "paged" : "single";
 
-  return {
+  return removeServerOnlyBiasFromGeneralScene({
     resultType,
     feedbackCode,
     step: normalizeStep(value.step),
@@ -1033,7 +1072,7 @@ function validateAiBrainDecision(value: Record<string, unknown>, commands: Recor
     safeCommandKey,
     humanEscalationSuggestion: Boolean(value.humanEscalationSuggestion) || resultType === "human_suggested",
     requiresPhoto: Boolean(value.requiresPhoto),
-  };
+  });
 }
 
 function aiDecisionFromLegacy(
@@ -1132,6 +1171,7 @@ function responseFromDecision(
   extras: {
     imageBytes?: number;
     transcript?: string;
+    transcriptError?: string;
     voiceIntent?: VoiceIntent;
     retestResult?: Record<string, unknown>;
     canRetake?: boolean;
@@ -1165,9 +1205,63 @@ function responseFromDecision(
     imageBytes: extras.imageBytes,
     voiceIntent: extras.voiceIntent,
     transcript: extras.transcript,
+    transcriptError: extras.transcriptError,
     retestResult: extras.retestResult,
     timestamp: new Date().toISOString(),
   };
+}
+
+const serverOnlyBiasPattern = /不是服务器控制台|不是运维终端|请把镜头对准服务器|请对准服务器|服务器屏幕|终端窗口|登录界面|机柜设备/i;
+const serverOnlyPageBiasPattern = /没有看到服务器|没有看到.*终端|没有看到.*机柜|不是服务器|不是运维终端|请把镜头对准服务器|请对准服务器|服务器屏幕|终端窗口|登录界面|机柜设备/i;
+
+function removeServerOnlyBiasFromGeneralScene(decision: AiBrainDecision): AiBrainDecision {
+  if (
+    decision.resultType !== "instruction" ||
+    decision.feedbackCode !== null ||
+    decision.safeCommandKey ||
+    decision.step !== "new_issue_triage"
+  ) {
+    return decision;
+  }
+  const biasedTitle = serverOnlyBiasPattern.test(decision.displayTitle);
+  const biasedHint = serverOnlyBiasPattern.test(decision.displayHint);
+  if (!biasedTitle && !biasedHint) {
+    const displayPages = replaceBiasedGeneralScenePages(decision.displayPages);
+    if (displayPages === decision.displayPages) {
+      return decision;
+    }
+    return {
+      ...decision,
+      displayText: displayPages[0] || decision.displayText,
+      fullText: displayPages.join(""),
+      displayPages,
+      textOverflowMode: displayPages.length > 1 ? "paged" : "single",
+    };
+  }
+  const displayPages = replaceBiasedGeneralScenePages(decision.displayPages);
+  return {
+    ...decision,
+    displayTitle: biasedTitle ? "已识别当前画面" : decision.displayTitle,
+    displayText: displayPages[0] || decision.displayText,
+    fullText: displayPages.join(""),
+    displayPages,
+    textOverflowMode: displayPages.length > 1 ? "paged" : "single",
+    displayHint: biasedHint ? "请长按说明你要 AI 判断什么，或重新拍摄关键位置。" : decision.displayHint,
+  };
+}
+
+function replaceBiasedGeneralScenePages(displayPages: string[]): string[] {
+  const replacement = "请说明你要 AI 判断的问题，例如是否正常、哪里有异常、下一步要做什么。";
+  const cleaned = displayPages
+    .map((page) => page.trim())
+    .filter((page) => page && !serverOnlyPageBiasPattern.test(page));
+  if (cleaned.length === displayPages.length) {
+    return displayPages;
+  }
+  if (!cleaned.some((page) => page.includes("要 AI 判断") || page.includes("想让我判断"))) {
+    cleaned.push(replacement);
+  }
+  return cleaned.length ? cleaned : [replacement];
 }
 
 function statusFromDecision(decision: AiBrainDecision): "running" | "completed" | "escalated" {
@@ -1354,6 +1448,10 @@ function readEnv(): Env {
     SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
     OPENAI_API_KEY: Deno.env.get("OPENAI_API_KEY") ?? "",
     OPENAI_BASE_URL: normalizeOpenAiBaseUrl(Deno.env.get("OPENAI_BASE_URL") ?? "https://api.openai.com/v1"),
+    OPENAI_TRANSCRIBE_API_KEY: Deno.env.get("OPENAI_TRANSCRIBE_API_KEY") ?? "",
+    OPENAI_TRANSCRIBE_BASE_URL: normalizeOpenAiBaseUrl(
+      Deno.env.get("OPENAI_TRANSCRIBE_BASE_URL") ?? "https://api.openai.com/v1",
+    ),
     OPENAI_VISION_MODEL: Deno.env.get("OPENAI_VISION_MODEL") ?? "gpt-4.1-mini",
     OPENAI_TRANSCRIBE_MODEL: Deno.env.get("OPENAI_TRANSCRIBE_MODEL") ?? "gpt-4o-mini-transcribe",
     DEMO_ASSET_TAG: Deno.env.get("DEMO_ASSET_TAG") ?? "ASSET-CONSOLE-001",
@@ -1379,6 +1477,14 @@ function normalizeOpenAiBaseUrl(value: string): string {
 
 function openAiUrl(env: Env, path: string): string {
   return `${env.OPENAI_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function openAiTranscribeUrl(env: Env, path: string): string {
+  return `${env.OPENAI_TRANSCRIBE_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function isOfficialOpenAiTranscribe(env: Env): boolean {
+  return env.OPENAI_TRANSCRIBE_BASE_URL.includes("api.openai.com");
 }
 
 function isAuthorized(request: Request, env: Env): boolean {

@@ -21,8 +21,8 @@ function mustNotInclude(source, marker, message = marker) {
 }
 
 for (const marker of [
-  "$versionCode = if ($env:AIR3_APK_VERSION_CODE) { [int]$env:AIR3_APK_VERSION_CODE } else { 209 }",
-  '$versionName = if ($env:AIR3_APK_VERSION_NAME) { $env:AIR3_APK_VERSION_NAME } else { "2.0.9" }',
+  "$versionCode = if ($env:AIR3_APK_VERSION_CODE) { [int]$env:AIR3_APK_VERSION_CODE } else { 210 }",
+  '$versionName = if ($env:AIR3_APK_VERSION_NAME) { $env:AIR3_APK_VERSION_NAME } else { "2.0.10" }',
   "$gitOutput = & git -C $repoRoot rev-parse --short HEAD",
   '$localOpsKeyPath = Join-Path $repoRoot "tmp\\ops_glasses_api_key.local"',
   '$opsKey = $env:OPS_GLASSES_API_KEY.Trim()',
@@ -42,9 +42,9 @@ mustNotInclude(buildScript, '--version-code 1', "old versionCode 1 must not rema
 mustNotInclude(buildScript, '--version-name "1.01"', "old versionName 1.01 must not remain");
 
 for (const marker of [
-  "v2.0.9-general-scene-feedback",
-  "`209`",
-  "`2.0.9`",
+  "v2.0.10-hud-paging-voice-controls",
+  "`210`",
+  "`2.0.10`",
   "Air3NativeCameraTest-v<versionName>-<gitSha>.apk",
   "AIR3_APK_VERSION_CODE",
   "AIR3_APK_VERSION_NAME",
