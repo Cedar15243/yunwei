@@ -1860,6 +1860,9 @@ public final class MainActivity extends Activity {
         if ("transcript_empty".equals(hud.diagnosticCode)) {
             return "\n诊断：语音没有转出文字。";
         }
+        if ("suspicious_transcript".equals(hud.diagnosticCode)) {
+            return "\n诊断：语音识别结果不可信，请靠近麦克风重新说短句。";
+        }
         return "\n诊断：语音转文字失败。";
     }
 

@@ -127,6 +127,8 @@ for (const marker of [
   "custom_stt_timeout",
   "official_stt_invalid_key",
   "main_provider_stt_unsupported",
+  "suspicious_transcript",
+  "语音识别结果不可信",
   "网络连接失败",
   "暂时连接不到 AI 运维服务",
   "Skip stale captured image before UI generation=",

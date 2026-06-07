@@ -23,13 +23,13 @@ This document records APK version separation rules and GitHub storage checkpoint
 
 | Field | Value |
 | --- | --- |
-| Checkpoint | `v2.0.14-wav-stt-voice` |
+| Checkpoint | `v2.0.15-suspicious-stt-guard` |
 | Date | `2026-06-07` |
 | Branch | `air3-v2-task1-docs` |
-| APK versionCode | `214` |
-| APK versionName | `2.0.14` |
+| APK versionCode | `215` |
+| APK versionName | `2.0.15` |
 | APK naming rule | `Air3NativeCameraTest-v<versionName>-<gitSha>.apk` |
-| Purpose | Record Air3 voice as 16 kHz mono PCM WAV so the configured self-hosted STT can return a non-empty transcript |
+| Purpose | Guard against suspicious STT transcripts so hallucinated text cannot mislead the main AI brain |
 
 ## Included Local Commits
 
@@ -45,7 +45,8 @@ This document records APK version separation rules and GitHub storage checkpoint
 - `95eddc0 fix: tune Air3 voice VAD for room noise`
 - `f5c5c32 fix: surface voice transcription timeouts`
 - `9a0be9e feat: add Air3 voice diagnostic codes`
-- Current checkpoint commit message: `fix: record Air3 voice as wav for STT`
+- `04a97d5 fix: record Air3 voice as wav for STT`
+- Current checkpoint commit message: `fix: guard suspicious Air3 STT transcripts`
 
 ## GitHub Storage Status
 
@@ -59,7 +60,8 @@ Local Git checkpoints and GitHub remote storage are established.
 - Existing tag: `v2.0.11-voice-timeout-feedback`
 - Existing tag: `v2.0.12-voice-stt-timeout-ux`
 - Existing tag: `v2.0.13-voice-diagnostic-hud`
-- Next tag for this checkpoint after commit and push: `v2.0.14-wav-stt-voice`
+- Existing tag: `v2.0.14-wav-stt-voice`
+- Next tag for this checkpoint after commit and push: `v2.0.15-suspicious-stt-guard`
 - PR entry: `https://github.com/Cedar15243/yunwei/pull/new/air3-v2-task1-docs`
 
 Note: `gh auth status` may still show GitHub CLI as logged out. Git HTTPS credentials have worked for prior pushes; use `gh auth login` later only if PR or Actions operations need GitHub CLI.
@@ -77,6 +79,20 @@ Validation basis:
 - Direct STT checks showed a standard WAV request returns `这个是什么?`, while the previous Air3 m4a/AAC request returned an empty transcript.
 - The native APK now records 16 kHz mono PCM WAV via `AudioRecord`, uploads `audio/wav`, and preserves VAD auto-stop.
 - The backend now calls STT when `OPENAI_TRANSCRIBE_API_KEY` is configured, even if the main AI key is separate.
+
+## APK 2.0.15 Suspicious STT Guard Checkpoint
+
+| Field | Value |
+| --- | --- |
+| Version | `2.0.15` / `215` |
+| Scope | Supabase STT quality gate and Air3 HUD diagnostic text |
+| Purpose | Treat obvious STT hallucinations such as `Thanks for watching!` or short non-Chinese transcripts in the Chinese voice flow as `voice_unclear` instead of passing them to the main AI brain |
+
+Validation basis:
+
+- `scripts/validate-ai-brain-flow.mjs` now requires `suspiciousTranscriptReason(...)` before the main AI call.
+- Supabase returns `diagnosticCode=suspicious_transcript` for suspicious transcript cases, including the observed non-Chinese short transcript `ПОДПИСКИВАЮСЬ КОНЕЦ`.
+- APK HUD renders the diagnostic as “语音识别结果不可信，请靠近麦克风重新说短句。”
 
 ## Backend Diagnostic Checkpoint
 

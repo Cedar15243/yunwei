@@ -55,6 +55,7 @@ type DiagnosticCode =
   | "main_provider_stt_unsupported"
   | "official_stt_invalid_key"
   | "transcript_empty"
+  | "suspicious_transcript"
   | "stt_failed"
   | null;
 
@@ -273,6 +274,7 @@ async function handleVoice(
 ): Promise<GlassesResponse> {
   const session = await mustGetSession(supabase, sessionId);
   const audioBase64 = stringOrEmpty(payload.audioBase64);
+  const expectedLanguage = stringOr(payload.expectedLanguage, "zh");
   let transcript = stringOrEmpty(payload.transcript);
   let transcriptError = "";
   let audioBytes = estimateBase64Bytes(audioBase64);
@@ -287,6 +289,11 @@ async function handleVoice(
     if (hasTranscribeCredentials(env)) {
       try {
         transcript = await transcribeAudio(env, audio.bytes, audio.contentType, stringOrEmpty(payload.sttPrompt));
+        const suspiciousReason = suspiciousTranscriptReason(transcript, expectedLanguage);
+        if (suspiciousReason) {
+          transcript = "";
+          transcriptError = `suspicious_transcript:${suspiciousReason}`;
+        }
       } catch (error) {
         transcriptError = error instanceof Error ? error.message : String(error);
       }
@@ -981,6 +988,37 @@ function sttPrompt(promptHint = ""): string {
   return promptHint ? `${base} ${promptHint}` : base;
 }
 
+function suspiciousTranscriptReason(transcript: string, expectedLanguage: string): string {
+  const normalized = transcript.trim().toLowerCase().replace(/[。！？!?.,，、\s]+$/g, "");
+  if (!normalized) return "empty";
+  const knownHallucinations = [
+    "thanks for watching",
+    "thank you for watching",
+    "thanks for listening",
+    "thank you",
+    "подпискиваюсь конец",
+  ];
+  if (knownHallucinations.includes(normalized)) {
+    return "known_stt_hallucination";
+  }
+  if (expectedLanguage.toLowerCase().startsWith("zh") && !hasCjkText(normalized) && normalized.length <= 80) {
+    return "non_cjk_transcript_in_chinese_voice_flow";
+  }
+  if (!hasCjkText(normalized) && englishWordCount(normalized) >= 3 && normalized.length <= 80) {
+    return "english_transcript_in_chinese_voice_flow";
+  }
+  return "";
+}
+
+function hasCjkText(value: string): boolean {
+  return /[\u3400-\u9fff]/.test(value);
+}
+
+function englishWordCount(value: string): number {
+  const matches = value.match(/[a-z]+/gi);
+  return matches ? matches.length : 0;
+}
+
 async function probeTarget(env: Env, target: { host: string; sshPort: number; appPort?: number }) {
   if (env.REMOTE_PROBE_MODE === "http" && env.REMOTE_PROBE_URL) {
     const response = await fetch(env.REMOTE_PROBE_URL, {
@@ -1255,6 +1293,9 @@ function voiceDiagnosticCode(transcriptError: string): DiagnosticCode {
   const normalized = transcriptError.toLowerCase();
   if (!normalized.trim() || normalized.includes("transcript_empty")) {
     return "transcript_empty";
+  }
+  if (normalized.includes("suspicious_transcript")) {
+    return "suspicious_transcript";
   }
   if (/primary-stt:.*(timeout|timed out|signal)/i.test(transcriptError)) {
     return "custom_stt_timeout";

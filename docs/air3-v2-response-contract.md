@@ -154,7 +154,7 @@ AI 返回的中文指导可能较长，但眼镜 HUD 不允许把长文直接塞
 
 ## 语音不清楚响应
 
-当自部署 STT 超时、返回空文本或 transcript 为空时，后端必须返回 `voice_unclear`，不能继续用空 transcript 调用主 AI 生成普通图片回答。HUD 要明确告诉小白“语音没有被 AI 听到/识别到”，并允许重新长按语音或重新拍照。
+当自部署 STT 超时、返回空文本、transcript 为空，或返回明显不可信的短句幻觉时，后端必须返回 `voice_unclear`，不能继续用空 transcript 或可疑 transcript 调用主 AI 生成普通图片回答。HUD 要明确告诉小白“语音没有被 AI 听到/识别到”，并允许重新长按语音或重新拍照。
 
 ```json
 {
@@ -181,7 +181,8 @@ AI 返回的中文指导可能较长，但眼镜 HUD 不允许把长文直接塞
 `custom_stt_timeout` 表示自部署 STT 带音频文件推理超时；`main_provider_stt_unsupported`
 表示主 AI provider 不支持 `/audio/transcriptions`；`official_stt_invalid_key`
 表示官方 OpenAI 转写 fallback key 无效；`transcript_empty` 表示所有转写路径没有产出文本；
-`stt_failed` 表示其它 STT 失败。
+`suspicious_transcript` 表示 STT 返回了看似成功但明显不可信的短句幻觉，例如中文语音场景下返回
+`Thanks for watching!` 或完全非中文的短句；`stt_failed` 表示其它 STT 失败。
 
 APK 2.0.13 起会把 `diagnosticCode` 转成一行短诊断提示显示在 HUD 上。例如
 `custom_stt_timeout` 会显示“语音转文字服务超时，按钮和录音已正常”，用于避免现场误判为按钮或录音没有触发。

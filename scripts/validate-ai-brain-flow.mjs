@@ -147,6 +147,12 @@ if (!voiceBody.includes("voiceTranscriptUnavailableDecision(transcriptError)") |
     !voiceBody.includes("const next = transcriptUnavailable ??")) {
   throw new Error("/sessions/:id/voice must return voice_unclear when STT produces no transcript");
 }
+if (!voiceBody.includes("const expectedLanguage = stringOr(payload.expectedLanguage, \"zh\")") ||
+    !voiceBody.includes("const suspiciousReason = suspiciousTranscriptReason(transcript, expectedLanguage)") ||
+    !voiceBody.includes("transcript = \"\"") ||
+    !voiceBody.includes("transcriptError = `suspicious_transcript:${suspiciousReason}`")) {
+  throw new Error("/sessions/:id/voice must reject suspicious STT transcripts before calling the main AI brain");
+}
 
 for (const marker of [
   "form.append(\"language\", \"zh\")",
@@ -162,10 +168,17 @@ for (const marker of [
   "officialOpenAiTranscribeEnv(env)",
   "official-stt:",
   "function sttPrompt(",
+  "function suspiciousTranscriptReason(transcript: string, expectedLanguage: string): string",
+  "function hasCjkText(",
+  "function englishWordCount(",
+  "thanks for watching",
+  "подпискиваюсь конец",
+  "non_cjk_transcript_in_chinese_voice_flow",
   "custom_stt_timeout",
   "main_provider_stt_unsupported",
   "official_stt_invalid_key",
   "transcript_empty",
+  "suspicious_transcript",
   "stt_failed",
   "OPENAI_TRANSCRIBE_API_KEY",
   "OPENAI_TRANSCRIBE_BASE_URL",
