@@ -1403,6 +1403,7 @@ public final class MainActivity extends Activity {
         final String step;
         final String resultType;
         final String feedbackCode;
+        final String diagnosticCode;
         final String displayTitle;
         final String displayText;
         final String displayHint;
@@ -1416,6 +1417,7 @@ public final class MainActivity extends Activity {
             step = response.optString("step", fallbackStep);
             resultType = response.optString("resultType", "instruction");
             feedbackCode = response.optString("feedbackCode", "");
+            diagnosticCode = response.optString("diagnosticCode", "");
             String legacyText = response.optString("text", "");
             displayTitle = response.optString("displayTitle", firstInstructionLine(legacyText));
             displayText = response.optString("displayText", legacyText);
@@ -1590,7 +1592,8 @@ public final class MainActivity extends Activity {
                         ? "\n第 " + (pageIndex + 1) + "/" + totalPages + " 页"
                         : "";
                 String hint = hud.displayHint.length() == 0 ? fallbackHint(hud) : hud.displayHint;
-                hintText.setText(pageText + pageLabel + "\n" + hint);
+                String diagnostic = diagnosticHint(hud);
+                hintText.setText(pageText + pageLabel + "\n" + hint + diagnostic);
                 statusText.setText(statusForHud(hud));
             }
         });
@@ -1723,6 +1726,25 @@ public final class MainActivity extends Activity {
             return "你可以长按中心选择转人工，也可以重新拍摄补充信息";
         }
         return hud.displayText.length() == 0 ? "请按提示继续" : hud.displayText;
+    }
+
+    private static String diagnosticHint(HudResponse hud) {
+        if (!"voice_unclear".equals(hud.feedbackCode) || hud.diagnosticCode.length() == 0) {
+            return "";
+        }
+        if ("custom_stt_timeout".equals(hud.diagnosticCode)) {
+            return "\n诊断：语音转文字服务超时，按钮和录音已正常。";
+        }
+        if ("official_stt_invalid_key".equals(hud.diagnosticCode)) {
+            return "\n诊断：官方语音转写 key 无效。";
+        }
+        if ("main_provider_stt_unsupported".equals(hud.diagnosticCode)) {
+            return "\n诊断：当前主 AI 服务不支持语音转写接口。";
+        }
+        if ("transcript_empty".equals(hud.diagnosticCode)) {
+            return "\n诊断：语音没有转出文字。";
+        }
+        return "\n诊断：语音转文字失败。";
     }
 
     private static String statusForHud(HudResponse hud) {

@@ -23,13 +23,13 @@ This document records APK version separation rules and GitHub storage checkpoint
 
 | Field | Value |
 | --- | --- |
-| Checkpoint | `v2.0.12-voice-stt-timeout-ux` |
+| Checkpoint | `v2.0.13-voice-diagnostic-hud` |
 | Date | `2026-06-07` |
 | Branch | `air3-v2-task1-docs` |
-| APK versionCode | `212` |
-| APK versionName | `2.0.12` |
+| APK versionCode | `213` |
+| APK versionName | `2.0.13` |
 | APK naming rule | `Air3NativeCameraTest-v<versionName>-<gitSha>.apk` |
-| Purpose | Shorten voice STT failure feedback path so the glasses do not stay on "语音上传中" while the external STT service is slow |
+| Purpose | Show stable voice diagnostic reasons on the Air3 HUD and support a dedicated official STT fallback key |
 
 ## Included Local Commits
 
@@ -44,7 +44,8 @@ This document records APK version separation rules and GitHub storage checkpoint
 - `7acec71 fix: stabilize Air3 HUD paging and scene feedback`
 - `95eddc0 fix: tune Air3 voice VAD for room noise`
 - `f5c5c32 fix: surface voice transcription timeouts`
-- Current checkpoint commit message: `fix: shorten voice STT timeout feedback`
+- `9a0be9e feat: add Air3 voice diagnostic codes`
+- Current checkpoint commit message: `feat: show voice diagnostic cause on HUD`
 
 ## GitHub Storage Status
 
@@ -56,7 +57,8 @@ Local Git checkpoints and GitHub remote storage are established.
 - Existing tag: `v2.0.10-hud-paging-voice-controls`
 - Existing tag: `v2.0.11-voice-vad-tuning`
 - Existing tag: `v2.0.11-voice-timeout-feedback`
-- Next tag for this checkpoint after commit and push: `v2.0.12-voice-stt-timeout-ux`
+- Existing tag: `v2.0.12-voice-stt-timeout-ux`
+- Next tag for this checkpoint after commit and push: `v2.0.13-voice-diagnostic-hud`
 - PR entry: `https://github.com/Cedar15243/yunwei/pull/new/air3-v2-task1-docs`
 
 Note: `gh auth status` may still show GitHub CLI as logged out. Git HTTPS credentials have worked for prior pushes; use `gh auth login` later only if PR or Actions operations need GitHub CLI.
@@ -80,3 +82,20 @@ Validation evidence:
 - `deno check --config supabase/functions/ops-glasses/deno.json supabase/functions/ops-glasses/index.ts`
 - Live Edge Function smoke test returned HTTP `200`, `feedbackCode=voice_unclear`, `diagnosticCode=custom_stt_timeout`.
 - Air3 device `YM00FCF3NW0031` VAD stopped at `recordingMs=2351`, `stopReason=silence_detected`, and the APK persisted `diagnosticCode=custom_stt_timeout`.
+
+## APK 2.0.13 HUD Diagnostic Checkpoint
+
+| Field | Value |
+| --- | --- |
+| Date | `2026-06-07` |
+| Version | `2.0.13` / `213` |
+| Purpose | Show voice diagnostic cause directly on the HUD and allow a dedicated official STT fallback key via `OPENAI_OFFICIAL_TRANSCRIBE_API_KEY` |
+| Installed device | `YM00FCF3NW0031` |
+
+Validation evidence:
+
+- APK build signed with v3 signature and installed successfully.
+- Device package reports `versionCode=213`, `versionName=2.0.13`.
+- Air3 voice VAD stopped at `recordingMs=2189`, `stopReason=silence_detected`.
+- HUD displayed `诊断：语音转文字服务超时，按钮和录音已正常。`
+- Device response contained `feedbackCode=voice_unclear`, `diagnosticCode=custom_stt_timeout`, `transcript=""`.

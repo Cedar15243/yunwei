@@ -112,6 +112,7 @@ type Env = {
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL: string;
   OPENAI_TRANSCRIBE_API_KEY?: string;
+  OPENAI_OFFICIAL_TRANSCRIBE_API_KEY?: string;
   OPENAI_TRANSCRIBE_BASE_URL: string;
   OPENAI_VISION_MODEL: string;
   OPENAI_TRANSCRIBE_MODEL: string;
@@ -935,7 +936,11 @@ function shouldSendOpenAiTranscribeFields(env: Env): boolean {
 }
 
 function canFallbackToOfficialTranscribe(env: Env): boolean {
-  return !isOfficialOpenAiTranscribe(env) && Boolean(env.OPENAI_API_KEY);
+  return !isOfficialOpenAiTranscribe(env) && Boolean(officialTranscribeApiKey(env));
+}
+
+function officialTranscribeApiKey(env: Env): string {
+  return env.OPENAI_OFFICIAL_TRANSCRIBE_API_KEY || env.OPENAI_API_KEY || "";
 }
 
 function canFallbackToMainProviderTranscribe(env: Env): boolean {
@@ -954,7 +959,7 @@ function mainProviderTranscribeEnv(env: Env): Env {
 function officialOpenAiTranscribeEnv(env: Env): Env {
   return {
     ...env,
-    OPENAI_TRANSCRIBE_API_KEY: env.OPENAI_API_KEY,
+    OPENAI_TRANSCRIBE_API_KEY: officialTranscribeApiKey(env),
     OPENAI_TRANSCRIBE_BASE_URL: "https://api.openai.com/v1",
     OPENAI_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe",
   };
@@ -1567,6 +1572,7 @@ function readEnv(): Env {
     OPENAI_API_KEY: Deno.env.get("OPENAI_API_KEY") ?? "",
     OPENAI_BASE_URL: normalizeOpenAiBaseUrl(Deno.env.get("OPENAI_BASE_URL") ?? "https://api.openai.com/v1"),
     OPENAI_TRANSCRIBE_API_KEY: Deno.env.get("OPENAI_TRANSCRIBE_API_KEY") ?? "",
+    OPENAI_OFFICIAL_TRANSCRIBE_API_KEY: Deno.env.get("OPENAI_OFFICIAL_TRANSCRIBE_API_KEY") ?? "",
     OPENAI_TRANSCRIBE_BASE_URL: normalizeOpenAiBaseUrl(
       Deno.env.get("OPENAI_TRANSCRIBE_BASE_URL") ?? "https://api.openai.com/v1",
     ),

@@ -183,6 +183,9 @@ AI 返回的中文指导可能较长，但眼镜 HUD 不允许把长文直接塞
 表示官方 OpenAI 转写 fallback key 无效；`transcript_empty` 表示所有转写路径没有产出文本；
 `stt_failed` 表示其它 STT 失败。
 
+APK 2.0.13 起会把 `diagnosticCode` 转成一行短诊断提示显示在 HUD 上。例如
+`custom_stt_timeout` 会显示“语音转文字服务超时，按钮和录音已正常”，用于避免现场误判为按钮或录音没有触发。
+
 ## 建议转人工响应
 
 ```json
