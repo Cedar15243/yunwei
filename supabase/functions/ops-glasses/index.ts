@@ -306,7 +306,11 @@ async function handleVoice(
   });
   const commands = await loadSafeCommands(supabase);
   const imageBase64 = latestImage ? await downloadImageBase64(supabase, latestImage.file_path) : "";
-  const aiResult = imageBase64
+  const transcriptUnavailable = audioBase64 && !transcript
+    ? voiceTranscriptUnavailableDecision(transcriptError)
+    : null;
+  const shouldAskAiBrain = !audioBase64 || transcript.length > 0;
+  const aiResult = shouldAskAiBrain && imageBase64
     ? await requestAiBrainDecision({
       supabase,
       env,
@@ -318,12 +322,12 @@ async function handleVoice(
       commands,
     })
     : null;
-  const next = aiResult?.decision ?? (latestImage
+  const next = transcriptUnavailable ?? aiResult?.decision ?? (latestImage
     ? unavailableDecision()
     : aiDecisionFromLegacy(
       {
-        step: "needs_better_photo" as OpsStep,
-        text: "我还没有看到可用于判断的服务器控制台照片。请先把控制台或终端文字放进绿色框内拍照，再长按补充语音。",
+        step: "needs_better_photo",
+        text: "我还没有看到可用于判断的现场照片。请先把需要判断的画面放进绿色框内拍照，再长按补充语音。",
         requiresPhoto: true,
       },
       "insufficient_info",
@@ -1137,6 +1141,21 @@ function unavailableDecision(): AiBrainDecision {
     requiresPhoto: true,
     hint: "请检查网络后重试，或由你决定是否转人工。",
     humanEscalationSuggestion: true,
+  });
+}
+
+function voiceTranscriptUnavailableDecision(transcriptError: string): AiBrainDecision {
+  const timedOut = /timeout|timed out|signal/i.test(transcriptError);
+  return decisionFromText({
+    step: "new_issue_triage",
+    text: timedOut
+      ? "语音识别超时，AI 没拿到你刚才说的话。请重新长按，说一句短问题，例如：这个是什么。"
+      : "AI 没听清你的补充说明。请重新长按，说一句短问题，例如：这个是什么。",
+    title: timedOut ? "语音识别超时" : "语音不清楚",
+    resultType: "recognition_problem",
+    feedbackCode: "voice_unclear",
+    requiresPhoto: false,
+    hint: "请重新长按，说一句短问题；也可以单击重新拍照。",
   });
 }
 

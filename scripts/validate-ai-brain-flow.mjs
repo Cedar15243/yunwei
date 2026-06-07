@@ -79,6 +79,10 @@ for (const marker of [
   "text_overflow_mode:",
   "page_count:",
   "function responseFromDecision(",
+  "function voiceTranscriptUnavailableDecision(",
+  "feedbackCode: \"voice_unclear\"",
+  "语音识别超时",
+  "请重新长按，说一句短问题",
 ]) {
   mustInclude(marker);
 }
@@ -119,6 +123,10 @@ for (const marker of [
   "transcribeAudio(",
   "latestImageForSession(",
   "downloadImageBase64(",
+  "voiceTranscriptUnavailableDecision(",
+  "const transcriptUnavailable = audioBase64 && !transcript",
+  "const shouldAskAiBrain = !audioBase64 || transcript.length > 0",
+  "shouldAskAiBrain && imageBase64",
   "createContextBundle(",
   "requestAiBrainDecision(",
   "storeAiDecision(",
@@ -127,6 +135,10 @@ for (const marker of [
   if (!voiceBody.includes(marker)) {
     throw new Error(`/sessions/:id/voice flow must call ${marker}`);
   }
+}
+if (!voiceBody.includes("voiceTranscriptUnavailableDecision(transcriptError)") ||
+    !voiceBody.includes("const next = transcriptUnavailable ??")) {
+  throw new Error("/sessions/:id/voice must return voice_unclear when STT produces no transcript");
 }
 
 for (const marker of [
