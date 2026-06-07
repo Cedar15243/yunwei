@@ -145,6 +145,8 @@ for (const marker of [
   "form.append(\"language\", \"zh\")",
   "form.append(\"prompt\", sttPrompt(promptHint))",
   "const sttRequestTimeoutMs = 25_000;",
+  "function shouldSendOpenAiTranscribeFields(",
+  "if (shouldSendOpenAiTranscribeFields(env))",
   "function sttPrompt(",
   "OPENAI_TRANSCRIBE_API_KEY",
   "OPENAI_TRANSCRIBE_BASE_URL",

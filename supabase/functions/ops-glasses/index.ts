@@ -858,9 +858,11 @@ async function transcribeAudioWithModel(
   promptHint: string,
 ): Promise<string> {
   const form = new FormData();
-  form.append("model", model);
-  form.append("language", "zh");
-  form.append("prompt", sttPrompt(promptHint));
+  if (shouldSendOpenAiTranscribeFields(env)) {
+    form.append("model", model);
+    form.append("language", "zh");
+    form.append("prompt", sttPrompt(promptHint));
+  }
   const audioBuffer = bytes.slice().buffer as ArrayBuffer;
   form.append("file", new Blob([audioBuffer], { type: contentType }), `voice.${extensionForAudio(contentType)}`);
   const response = await fetch(openAiTranscribeUrl(env, "/audio/transcriptions"), {
@@ -878,6 +880,10 @@ async function transcribeAudioWithModel(
   const rawText = stringOr(body.text, "");
   const jsonText = stringOr(body.text, "") || stringOr(body.output_text, "");
   return jsonText || rawText;
+}
+
+function shouldSendOpenAiTranscribeFields(env: Env): boolean {
+  return isOfficialOpenAiTranscribe(env);
 }
 
 function sttPrompt(promptHint = ""): string {
