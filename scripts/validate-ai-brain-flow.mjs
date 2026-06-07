@@ -144,6 +144,7 @@ if (!voiceBody.includes("voiceTranscriptUnavailableDecision(transcriptError)") |
 for (const marker of [
   "form.append(\"language\", \"zh\")",
   "form.append(\"prompt\", sttPrompt(promptHint))",
+  "const sttRequestTimeoutMs = 25_000;",
   "function sttPrompt(",
   "OPENAI_TRANSCRIBE_API_KEY",
   "OPENAI_TRANSCRIBE_BASE_URL",
@@ -155,5 +156,7 @@ for (const marker of [
 ]) {
   mustInclude(marker, `STT must include Chinese prompt/language and empty transcript fallback: ${marker}`);
 }
+
+mustNotInclude("const sttRequestTimeoutMs = 115_000;", "STT must not block the glasses HUD for nearly two minutes");
 
 console.log("AI brain flow validation passed.");

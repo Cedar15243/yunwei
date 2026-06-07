@@ -181,6 +181,11 @@ if (vadReplay.stopReason !== "silence_detected" || vadReplay.elapsedMs > 4500) {
   );
 }
 
+const voiceUploadReadTimeoutMs = readJavaNumberConstant("VOICE_UPLOAD_READ_TIMEOUT_MS");
+if (voiceUploadReadTimeoutMs !== 65000) {
+  throw new Error(`voice upload read timeout should be 65000ms, got ${voiceUploadReadTimeoutMs}ms`);
+}
+
 mustNotInclude("attachCaptureGestures(root, previewView, scrim, guideOverlay, topPanel, titleText, stepText,\n                centerPanel, resultText, hintText, statusText)", "full-screen taps must not trigger capture when HUD paging exists");
 mustNotInclude("setResultText(voiceIntentLabel(intent))", "voiceIntent must not drive the V2 primary HUD result");
 mustNotInclude("setHintForStep(nextStep, text)", "image responses must render structured HUD fields");

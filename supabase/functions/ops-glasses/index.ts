@@ -129,7 +129,7 @@ const storageBucket = "ops-glasses-captures";
 const aiBrainPromptVersion = "air3-v2-ai-brain-v2-scene-feedback";
 const taskGoal = "基于眼镜照片和现场语音给现场人员提供真实 AI 反馈与运维指导；服务器 SSH 恢复只是默认运维模板之一";
 const operatorProfile = "现场小白，不懂 Linux 运维，需要一步一步指导";
-const sttRequestTimeoutMs = 115_000;
+const sttRequestTimeoutMs = 25_000;
 const aiBrainRequestTimeoutMs = 25_000;
 
 Deno.serve(async (request) => {

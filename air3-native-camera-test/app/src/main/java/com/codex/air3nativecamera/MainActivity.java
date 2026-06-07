@@ -76,7 +76,7 @@ public final class MainActivity extends Activity {
     private static final long VOICE_MIN_RECORDING_MS = 900L;
     private static final long VOICE_SILENCE_AFTER_SPEECH_MS = 1100L;
     private static final long VOICE_NO_SPEECH_TIMEOUT_MS = 3200L;
-    private static final int VOICE_UPLOAD_READ_TIMEOUT_MS = 150000;
+    private static final int VOICE_UPLOAD_READ_TIMEOUT_MS = 65000;
     private static final long VOICE_AMPLITUDE_POLL_MS = 180L;
     private static final int VOICE_SPEECH_AMPLITUDE_THRESHOLD = 900;
     private static final float VOICE_RELATIVE_SILENCE_RATIO = 0.70f;
