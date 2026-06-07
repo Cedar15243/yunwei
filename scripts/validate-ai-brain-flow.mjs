@@ -171,6 +171,7 @@ for (const marker of [
   "OPENAI_OFFICIAL_TRANSCRIBE_API_KEY",
   "openAiTranscribeUrl(env, \"/audio/transcriptions\")",
   "isOfficialOpenAiTranscribe(env)",
+  "isOfficialOpenAiMainProvider(env)",
   "AbortSignal.timeout",
   "whisper-1",
   "transcript_empty",
@@ -179,5 +180,6 @@ for (const marker of [
 }
 
 mustNotInclude("const sttRequestTimeoutMs = 115_000;", "STT must not block the glasses HUD for nearly two minutes");
+mustNotInclude("return env.OPENAI_OFFICIAL_TRANSCRIBE_API_KEY || env.OPENAI_API_KEY || \"\";", "official STT fallback must not reuse a non-official main AI key");
 
 console.log("AI brain flow validation passed.");

@@ -99,3 +99,18 @@ Validation evidence:
 - Air3 voice VAD stopped at `recordingMs=2189`, `stopReason=silence_detected`.
 - HUD displayed `诊断：语音转文字服务超时，按钮和录音已正常。`
 - Device response contained `feedbackCode=voice_unclear`, `diagnosticCode=custom_stt_timeout`, `transcript=""`.
+
+## Official STT Key Guard
+
+| Field | Value |
+| --- | --- |
+| Date | `2026-06-07` |
+| Scope | Supabase Edge Function STT fallback |
+| Purpose | Prevent official OpenAI transcription fallback from reusing a non-official main AI provider key |
+| APK reinstall required | No |
+
+Validation evidence:
+
+- `supabase secrets list` showed no `OPENAI_OFFICIAL_TRANSCRIBE_API_KEY` configured.
+- Live voice request returned `diagnosticCode=custom_stt_timeout`.
+- `transcriptError` contained `primary-stt:Signal timed out.` and `main-provider-stt:404 page not found`, and no longer contained `official-stt:invalid_api_key`.

@@ -940,7 +940,10 @@ function canFallbackToOfficialTranscribe(env: Env): boolean {
 }
 
 function officialTranscribeApiKey(env: Env): string {
-  return env.OPENAI_OFFICIAL_TRANSCRIBE_API_KEY || env.OPENAI_API_KEY || "";
+  if (env.OPENAI_OFFICIAL_TRANSCRIBE_API_KEY) {
+    return env.OPENAI_OFFICIAL_TRANSCRIBE_API_KEY;
+  }
+  return isOfficialOpenAiMainProvider(env) ? env.OPENAI_API_KEY || "" : "";
 }
 
 function canFallbackToMainProviderTranscribe(env: Env): boolean {
@@ -1609,6 +1612,10 @@ function openAiTranscribeUrl(env: Env, path: string): string {
 
 function isOfficialOpenAiTranscribe(env: Env): boolean {
   return env.OPENAI_TRANSCRIBE_BASE_URL.includes("api.openai.com");
+}
+
+function isOfficialOpenAiMainProvider(env: Env): boolean {
+  return env.OPENAI_BASE_URL.includes("api.openai.com");
 }
 
 function isAuthorized(request: Request, env: Env): boolean {

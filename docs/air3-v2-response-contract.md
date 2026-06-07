@@ -186,6 +186,11 @@ AI 返回的中文指导可能较长，但眼镜 HUD 不允许把长文直接塞
 APK 2.0.13 起会把 `diagnosticCode` 转成一行短诊断提示显示在 HUD 上。例如
 `custom_stt_timeout` 会显示“语音转文字服务超时，按钮和录音已正常”，用于避免现场误判为按钮或录音没有触发。
 
+官方 STT fallback 只允许使用 `OPENAI_OFFICIAL_TRANSCRIBE_API_KEY`，或在主 AI provider
+本身就是官方 OpenAI 时复用 `OPENAI_API_KEY`。如果主 AI 使用非官方 OpenAI-compatible
+provider，不能拿它的 key 去调用官方 `/audio/transcriptions`，否则会稳定产生无意义的
+`invalid_api_key` 诊断噪声。
+
 ## 建议转人工响应
 
 ```json
