@@ -4,9 +4,9 @@ This document records APK version separation rules and GitHub storage checkpoint
 
 ## Versioning Rules
 
-- `versionName` uses a human-readable version, for example `2.0.10`.
-- `versionCode` uses an increasing integer, for example `210` for `2.0.10`.
-- Formal checkpoint tags use `v<versionName>-<purpose>`, for example `v2.0.10-hud-paging-voice-controls`.
+- `versionName` uses a human-readable version, for example `2.0.11`.
+- `versionCode` uses an increasing integer, for example `211` for `2.0.11`.
+- Formal checkpoint tags use `v<versionName>-<purpose>`, for example `v2.0.11-voice-vad-tuning`.
 - APK output files must include version and Git short SHA: `Air3NativeCameraTest-v<versionName>-<gitSha>.apk`.
 - The base artifact remains `Air3NativeCameraTest.apk` for the current build/install flow.
 - `air3-native-camera-test/build/` and `*.apk` must stay ignored. Do not commit APKs, signing intermediates, generated source, or local secrets.
@@ -23,13 +23,13 @@ This document records APK version separation rules and GitHub storage checkpoint
 
 | Field | Value |
 | --- | --- |
-| Checkpoint | `v2.0.10-hud-paging-voice-controls` |
+| Checkpoint | `v2.0.11-voice-vad-tuning` |
 | Date | `2026-06-07` |
 | Branch | `air3-v2-task1-docs` |
-| APK versionCode | `210` |
-| APK versionName | `2.0.10` |
+| APK versionCode | `211` |
+| APK versionName | `2.0.11` |
 | APK naming rule | `Air3NativeCameraTest-v<versionName>-<gitSha>.apk` |
-| Purpose | HUD long-text paging, button feedback, voice VAD/manual finish, and stale-response isolation |
+| Purpose | Voice VAD tuning for Air3 room-noise recordings, while preserving HUD paging, button feedback, manual finish, and stale-response isolation |
 
 ## Included Local Commits
 
@@ -41,7 +41,8 @@ This document records APK version separation rules and GitHub storage checkpoint
 - `22e298b chore: version Air3 APK build artifacts`
 - `0540e0c test: verify Air3 V2 APK on device`
 - `eacf351 feat: generalize Air3 scene feedback`
-- Current checkpoint commit message: `fix: stabilize Air3 HUD paging and voice controls`
+- `7acec71 fix: stabilize Air3 HUD paging and scene feedback`
+- Current checkpoint commit message: `fix: tune Air3 voice VAD for room noise`
 
 ## GitHub Storage Status
 
@@ -50,7 +51,8 @@ Local Git checkpoints and GitHub remote storage are established.
 - Branch: `origin/air3-v2-task1-docs`
 - Existing tag: `v2.0.8-task8-versioned-build`
 - Existing tag: `v2.0.9-general-scene-feedback`
-- Next tag for this checkpoint after commit and push: `v2.0.10-hud-paging-voice-controls`
+- Existing tag: `v2.0.10-hud-paging-voice-controls`
+- Next tag for this checkpoint after commit and push: `v2.0.11-voice-vad-tuning`
 - PR entry: `https://github.com/Cedar15243/yunwei/pull/new/air3-v2-task1-docs`
 
 Note: `gh auth status` may still show GitHub CLI as logged out. Git HTTPS credentials have worked for prior pushes; use `gh auth login` later only if PR or Actions operations need GitHub CLI.

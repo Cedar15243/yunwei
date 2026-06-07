@@ -78,8 +78,8 @@ public final class MainActivity extends Activity {
     private static final long VOICE_NO_SPEECH_TIMEOUT_MS = 3200L;
     private static final int VOICE_UPLOAD_READ_TIMEOUT_MS = 150000;
     private static final long VOICE_AMPLITUDE_POLL_MS = 180L;
-    private static final int VOICE_SPEECH_AMPLITUDE_THRESHOLD = 500;
-    private static final float VOICE_RELATIVE_SILENCE_RATIO = 0.42f;
+    private static final int VOICE_SPEECH_AMPLITUDE_THRESHOLD = 900;
+    private static final float VOICE_RELATIVE_SILENCE_RATIO = 0.70f;
     private static final int HUD_PAGE_CHAR_LIMIT = 54;
     private static final String VOICE_STT_PROMPT =
             "中文普通话现场问题。常见短句：这个是什么、这是什么、有什么问题、下一步怎么做、帮我看屏幕报错。";

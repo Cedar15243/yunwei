@@ -126,6 +126,61 @@ for (const marker of [
   mustInclude(marker);
 }
 
+function readJavaNumberConstant(name) {
+  const match = code.match(new RegExp(`private static final (?:int|float) ${name} = ([0-9.]+)f?;`));
+  if (!match) {
+    throw new Error(`native HUD flow missing numeric constant: ${name}`);
+  }
+  return Number(match[1]);
+}
+
+function simulateVoiceVad(amplitudes) {
+  const pollMs = 180;
+  const minRecordingMs = 900;
+  const silenceAfterSpeechMs = 1100;
+  const noSpeechTimeoutMs = 3200;
+  const speechThreshold = readJavaNumberConstant("VOICE_SPEECH_AMPLITUDE_THRESHOLD");
+  const silenceRatio = readJavaNumberConstant("VOICE_RELATIVE_SILENCE_RATIO");
+  let peakAmplitude = 0;
+  let speechDetected = false;
+  let lastSpeechAt = 0;
+  for (let index = 0; index < amplitudes.length; index += 1) {
+    const now = (index + 1) * pollMs;
+    const amplitude = amplitudes[index];
+    peakAmplitude = Math.max(peakAmplitude, amplitude);
+    if (amplitude >= speechThreshold) {
+      speechDetected = true;
+      const dynamicThreshold = Math.max(speechThreshold, Math.round(peakAmplitude * silenceRatio));
+      if (amplitude >= dynamicThreshold) {
+        lastSpeechAt = now;
+      }
+    }
+    const elapsedMs = now;
+    const silentMs = now - lastSpeechAt;
+    if (speechDetected && elapsedMs >= minRecordingMs && silentMs >= silenceAfterSpeechMs) {
+      return { stopReason: "silence_detected", elapsedMs };
+    }
+    if (!speechDetected && elapsedMs >= noSpeechTimeoutMs) {
+      return { stopReason: "no_speech_timeout", elapsedMs };
+    }
+  }
+  return { stopReason: "max_duration", elapsedMs: 10000 };
+}
+
+const realAir3RoomNoiseAfterSpeech = [
+  128, 261, 2284, 1799, 1521, 2023, 1028, 1017, 1241, 932, 945, 1608,
+  1674, 1490, 1303, 819, 1146, 1096, 957, 1163, 1048, 1043, 653, 583,
+  1942, 1849, 1040, 777, 861, 1346, 794, 967, 721, 1063, 1021, 1187,
+  1537, 1293, 1072, 941, 569, 814, 989, 1409, 2063, 1105, 1057, 661,
+  1063, 600, 920,
+];
+const vadReplay = simulateVoiceVad(realAir3RoomNoiseAfterSpeech);
+if (vadReplay.stopReason !== "silence_detected" || vadReplay.elapsedMs > 4500) {
+  throw new Error(
+    `voice VAD should stop after speech before max duration, got ${vadReplay.stopReason} at ${vadReplay.elapsedMs}ms`,
+  );
+}
+
 mustNotInclude("attachCaptureGestures(root, previewView, scrim, guideOverlay, topPanel, titleText, stepText,\n                centerPanel, resultText, hintText, statusText)", "full-screen taps must not trigger capture when HUD paging exists");
 mustNotInclude("setResultText(voiceIntentLabel(intent))", "voiceIntent must not drive the V2 primary HUD result");
 mustNotInclude("setHintForStep(nextStep, text)", "image responses must render structured HUD fields");
