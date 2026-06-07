@@ -60,3 +60,23 @@ Local Git checkpoints and GitHub remote storage are established.
 - PR entry: `https://github.com/Cedar15243/yunwei/pull/new/air3-v2-task1-docs`
 
 Note: `gh auth status` may still show GitHub CLI as logged out. Git HTTPS credentials have worked for prior pushes; use `gh auth login` later only if PR or Actions operations need GitHub CLI.
+
+## Backend Diagnostic Checkpoint
+
+| Field | Value |
+| --- | --- |
+| Date | `2026-06-07` |
+| Scope | Supabase Edge Function response contract |
+| Purpose | Add stable `diagnosticCode` for voice transcription failures so APK tests can distinguish STT timeout, unsupported provider fallback, invalid official key, empty transcript, and generic STT failure |
+| APK reinstall required | No |
+| Deployed project | `zasgzaatthvfglhbxpgo` |
+
+Validation evidence:
+
+- `npm run validate:ai-brain`
+- `npm run validate:native-hud`
+- `npm run validate:native-build`
+- `npm run validate:supabase`
+- `deno check --config supabase/functions/ops-glasses/deno.json supabase/functions/ops-glasses/index.ts`
+- Live Edge Function smoke test returned HTTP `200`, `feedbackCode=voice_unclear`, `diagnosticCode=custom_stt_timeout`.
+- Air3 device `YM00FCF3NW0031` VAD stopped at `recordingMs=2351`, `stopReason=silence_detected`, and the APK persisted `diagnosticCode=custom_stt_timeout`.

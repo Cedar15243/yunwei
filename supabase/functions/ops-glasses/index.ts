@@ -50,6 +50,14 @@ type FeedbackCode =
   | "network_error"
   | null;
 
+type DiagnosticCode =
+  | "custom_stt_timeout"
+  | "main_provider_stt_unsupported"
+  | "official_stt_invalid_key"
+  | "transcript_empty"
+  | "stt_failed"
+  | null;
+
 type TextOverflowMode = "single" | "paged";
 
 type AiBrainDecision = {
@@ -92,6 +100,7 @@ type GlassesResponse = {
   imageBytes?: number;
   voiceIntent?: VoiceIntent;
   transcript?: string;
+  diagnosticCode?: string;
   transcriptError?: string;
   retestResult?: Record<string, unknown>;
   timestamp: string;
@@ -332,6 +341,7 @@ async function handleVoice(
       },
       "insufficient_info",
     ));
+  const diagnosticCode = transcriptUnavailable ? voiceDiagnosticCode(transcriptError) : null;
   const aiDecisionId = await storeAiDecision(supabase, {
     session,
     contextBundleId: contextBundle.id,
@@ -353,6 +363,7 @@ async function handleVoice(
   return responseFromDecision(sessionId, next, {
     transcript,
     transcriptError,
+    diagnosticCode,
     voiceIntent,
     canRetake: true,
     canEscalate: true,
@@ -1228,6 +1239,23 @@ function voiceTranscriptUnavailableDecision(transcriptError: string): AiBrainDec
   });
 }
 
+function voiceDiagnosticCode(transcriptError: string): DiagnosticCode {
+  const normalized = transcriptError.toLowerCase();
+  if (!normalized.trim() || normalized.includes("transcript_empty")) {
+    return "transcript_empty";
+  }
+  if (/primary-stt:.*(timeout|timed out|signal)/i.test(transcriptError)) {
+    return "custom_stt_timeout";
+  }
+  if (/main-provider-stt:.*(404|not found)/i.test(transcriptError)) {
+    return "main_provider_stt_unsupported";
+  }
+  if (/official-stt:.*invalid_api_key/i.test(transcriptError)) {
+    return "official_stt_invalid_key";
+  }
+  return "stt_failed";
+}
+
 function noPhotoDecision(): AiBrainDecision {
   return decisionFromText({
     step: "locate_server",
@@ -1260,6 +1288,7 @@ function responseFromDecision(
     imageBytes?: number;
     transcript?: string;
     transcriptError?: string;
+    diagnosticCode?: DiagnosticCode;
     voiceIntent?: VoiceIntent;
     retestResult?: Record<string, unknown>;
     canRetake?: boolean;
@@ -1293,6 +1322,7 @@ function responseFromDecision(
     imageBytes: extras.imageBytes,
     voiceIntent: extras.voiceIntent,
     transcript: extras.transcript,
+    diagnosticCode: extras.diagnosticCode ?? undefined,
     transcriptError: extras.transcriptError,
     retestResult: extras.retestResult,
     timestamp: new Date().toISOString(),

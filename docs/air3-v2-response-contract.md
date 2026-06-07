@@ -167,6 +167,7 @@ AI 返回的中文指导可能较长，但眼镜 HUD 不允许把长文直接塞
   "displayText": "语音识别超时，AI 没拿到你刚才说的话。请重新长按，说一句短问题，例如：这个是什么。",
   "displayHint": "请重新长按，说一句短问题；也可以单击重新拍照。",
   "transcript": "",
+  "diagnosticCode": "custom_stt_timeout",
   "humanEscalationSuggestion": false,
   "canRetake": true,
   "canUseVoice": true,
@@ -175,6 +176,12 @@ AI 返回的中文指导可能较长，但眼镜 HUD 不允许把长文直接塞
   "timestamp": "2026-06-05T00:00:00.000Z"
 }
 ```
+
+`diagnosticCode` 只在语音转写失败或 transcript 为空时返回，用于定位失败层级：
+`custom_stt_timeout` 表示自部署 STT 带音频文件推理超时；`main_provider_stt_unsupported`
+表示主 AI provider 不支持 `/audio/transcriptions`；`official_stt_invalid_key`
+表示官方 OpenAI 转写 fallback key 无效；`transcript_empty` 表示所有转写路径没有产出文本；
+`stt_failed` 表示其它 STT 失败。
 
 ## 建议转人工响应
 
