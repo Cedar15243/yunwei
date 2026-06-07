@@ -23,13 +23,13 @@ This document records APK version separation rules and GitHub storage checkpoint
 
 | Field | Value |
 | --- | --- |
-| Checkpoint | `v2.0.13-voice-diagnostic-hud` |
+| Checkpoint | `v2.0.14-wav-stt-voice` |
 | Date | `2026-06-07` |
 | Branch | `air3-v2-task1-docs` |
-| APK versionCode | `213` |
-| APK versionName | `2.0.13` |
+| APK versionCode | `214` |
+| APK versionName | `2.0.14` |
 | APK naming rule | `Air3NativeCameraTest-v<versionName>-<gitSha>.apk` |
-| Purpose | Show stable voice diagnostic reasons on the Air3 HUD and support a dedicated official STT fallback key |
+| Purpose | Record Air3 voice as 16 kHz mono PCM WAV so the configured self-hosted STT can return a non-empty transcript |
 
 ## Included Local Commits
 
@@ -45,7 +45,7 @@ This document records APK version separation rules and GitHub storage checkpoint
 - `95eddc0 fix: tune Air3 voice VAD for room noise`
 - `f5c5c32 fix: surface voice transcription timeouts`
 - `9a0be9e feat: add Air3 voice diagnostic codes`
-- Current checkpoint commit message: `feat: show voice diagnostic cause on HUD`
+- Current checkpoint commit message: `fix: record Air3 voice as wav for STT`
 
 ## GitHub Storage Status
 
@@ -58,10 +58,25 @@ Local Git checkpoints and GitHub remote storage are established.
 - Existing tag: `v2.0.11-voice-vad-tuning`
 - Existing tag: `v2.0.11-voice-timeout-feedback`
 - Existing tag: `v2.0.12-voice-stt-timeout-ux`
-- Next tag for this checkpoint after commit and push: `v2.0.13-voice-diagnostic-hud`
+- Existing tag: `v2.0.13-voice-diagnostic-hud`
+- Next tag for this checkpoint after commit and push: `v2.0.14-wav-stt-voice`
 - PR entry: `https://github.com/Cedar15243/yunwei/pull/new/air3-v2-task1-docs`
 
 Note: `gh auth status` may still show GitHub CLI as logged out. Git HTTPS credentials have worked for prior pushes; use `gh auth login` later only if PR or Actions operations need GitHub CLI.
+
+## APK 2.0.14 WAV STT Voice Checkpoint
+
+| Field | Value |
+| --- | --- |
+| Version | `2.0.14` / `214` |
+| Scope | Air3 native voice capture and Supabase STT dispatch |
+| Purpose | Match the configured self-hosted STT service by uploading WAV instead of m4a/AAC |
+
+Validation basis:
+
+- Direct STT checks showed a standard WAV request returns `这个是什么?`, while the previous Air3 m4a/AAC request returned an empty transcript.
+- The native APK now records 16 kHz mono PCM WAV via `AudioRecord`, uploads `audio/wav`, and preserves VAD auto-stop.
+- The backend now calls STT when `OPENAI_TRANSCRIBE_API_KEY` is configured, even if the main AI key is separate.
 
 ## Backend Diagnostic Checkpoint
 

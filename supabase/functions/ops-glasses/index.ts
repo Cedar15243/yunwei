@@ -284,7 +284,7 @@ async function handleVoice(
     filePath = `${sessionId}/voice/${crypto.randomUUID()}.${extensionForAudio(audio.contentType)}`;
     await uploadBytes(supabase, filePath, audio.bytes, audio.contentType);
 
-    if (env.OPENAI_API_KEY) {
+    if (hasTranscribeCredentials(env)) {
       try {
         transcript = await transcribeAudio(env, audio.bytes, audio.contentType, stringOrEmpty(payload.sttPrompt));
       } catch (error) {
@@ -933,6 +933,10 @@ async function transcribeAudioWithModel(
 
 function shouldSendOpenAiTranscribeFields(env: Env): boolean {
   return isOfficialOpenAiTranscribe(env);
+}
+
+function hasTranscribeCredentials(env: Env): boolean {
+  return Boolean(env.OPENAI_TRANSCRIBE_API_KEY || env.OPENAI_API_KEY || env.OPENAI_OFFICIAL_TRANSCRIBE_API_KEY);
 }
 
 function canFallbackToOfficialTranscribe(env: Env): boolean {

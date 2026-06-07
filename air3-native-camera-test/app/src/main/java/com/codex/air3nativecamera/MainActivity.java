@@ -24,6 +24,8 @@ import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.os.Handler;
@@ -49,12 +51,14 @@ import org.json.JSONArray;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.RandomAccessFile;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Locale;
@@ -80,6 +84,11 @@ public final class MainActivity extends Activity {
     private static final long VOICE_AMPLITUDE_POLL_MS = 180L;
     private static final int VOICE_SPEECH_AMPLITUDE_THRESHOLD = 900;
     private static final float VOICE_RELATIVE_SILENCE_RATIO = 0.70f;
+    private static final int VOICE_AUDIO_SOURCE = MediaRecorder.AudioSource.VOICE_RECOGNITION;
+    private static final int VOICE_SAMPLE_RATE_HZ = 16000;
+    private static final int VOICE_WAV_CHANNEL_COUNT = 1;
+    private static final int VOICE_WAV_BITS_PER_SAMPLE = 16;
+    private static final int VOICE_WAV_HEADER_BYTES = 44;
     private static final int HUD_PAGE_CHAR_LIMIT = 54;
     private static final String VOICE_STT_PROMPT =
             "中文普通话现场问题。常见短句：这个是什么、这是什么、有什么问题、下一步怎么做、帮我看屏幕报错。";
@@ -106,12 +115,15 @@ public final class MainActivity extends Activity {
     private String sessionId = "";
     private String currentStep = "locate_server";
     private boolean captureInFlight;
-    private MediaRecorder voiceRecorder;
+    private AudioRecord voiceRecorder;
     private File voiceFile;
+    private Thread voiceRecordThread;
+    private final AtomicBoolean voiceRecordThreadRunning = new AtomicBoolean(false);
     private boolean recordingVoice;
     private long voiceRecordingStartedAt;
     private long voiceLastSpeechAt;
     private boolean voiceSpeechDetected;
+    private volatile int voiceCurrentAmplitude;
     private int voicePeakAmplitude;
     private Runnable voiceStopRunnable;
     private Runnable voiceAmplitudeMonitor;
@@ -620,22 +632,34 @@ public final class MainActivity extends Activity {
 
         try {
             final int generation = beginInteraction();
-            voiceFile = new File(getCacheDir(), "ops_voice_" + System.currentTimeMillis() + ".m4a");
-            voiceRecorder = new MediaRecorder();
-            voiceRecorder.setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION);
-            voiceRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-            voiceRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            voiceRecorder.setAudioSamplingRate(16000);
-            voiceRecorder.setAudioEncodingBitRate(64000);
-            voiceRecorder.setOutputFile(voiceFile.getAbsolutePath());
-            voiceRecorder.prepare();
-            voiceRecorder.start();
+            voiceFile = new File(getCacheDir(), "ops_voice_" + System.currentTimeMillis() + ".wav");
+            int minBufferSize = AudioRecord.getMinBufferSize(
+                    VOICE_SAMPLE_RATE_HZ,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT);
+            if (minBufferSize <= 0) {
+                throw new IllegalStateException("AudioRecord minBufferSize=" + minBufferSize);
+            }
+            final int bufferSize = Math.max(minBufferSize, VOICE_SAMPLE_RATE_HZ / 2);
+            voiceRecorder = new AudioRecord(
+                    VOICE_AUDIO_SOURCE,
+                    VOICE_SAMPLE_RATE_HZ,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize);
+            if (voiceRecorder.getState() != AudioRecord.STATE_INITIALIZED) {
+                throw new IllegalStateException("AudioRecord failed to initialize");
+            }
+            voiceRecorder.startRecording();
             recordingVoice = true;
             activeVoiceGeneration = generation;
             voiceRecordingStartedAt = System.currentTimeMillis();
             voiceLastSpeechAt = voiceRecordingStartedAt;
             voiceSpeechDetected = false;
+            voiceCurrentAmplitude = 0;
             voicePeakAmplitude = 0;
+            voiceRecordThreadRunning.set(true);
+            startVoiceRecordThread(voiceRecorder, voiceFile, bufferSize);
             setResultText("正在录音");
             setStatus("请说短句问题。说完后会自动上传，也可以再按中心键立即结束。");
             voiceStopRunnable = new Runnable() {
@@ -663,20 +687,15 @@ public final class MainActivity extends Activity {
                     return;
                 }
                 long now = System.currentTimeMillis();
-                try {
-                    int amplitude = voiceRecorder.getMaxAmplitude();
-                    voicePeakAmplitude = Math.max(voicePeakAmplitude, amplitude);
-                    if (amplitude >= VOICE_SPEECH_AMPLITUDE_THRESHOLD) {
-                        voiceSpeechDetected = true;
-                        if (amplitude >= voiceDynamicSilenceThreshold()) {
-                            voiceLastSpeechAt = now;
-                        }
-                        android.util.Log.i("Air3NativeCameraTest", "voice amplitude=" + amplitude + " speech=true");
-                    } else if (amplitude > 0) {
-                        android.util.Log.i("Air3NativeCameraTest", "voice amplitude=" + amplitude + " speech=false");
+                int amplitude = voiceCurrentAmplitude;
+                if (amplitude >= VOICE_SPEECH_AMPLITUDE_THRESHOLD) {
+                    voiceSpeechDetected = true;
+                    if (amplitude >= voiceDynamicSilenceThreshold()) {
+                        voiceLastSpeechAt = now;
                     }
-                } catch (Exception error) {
-                    android.util.Log.w("Air3NativeCameraTest", "Voice amplitude poll failed", error);
+                    android.util.Log.i("Air3NativeCameraTest", "voice amplitude=" + amplitude + " speech=true");
+                } else if (amplitude > 0) {
+                    android.util.Log.i("Air3NativeCameraTest", "voice amplitude=" + amplitude + " speech=false");
                 }
                 long elapsed = now - voiceRecordingStartedAt;
                 long silentMs = now - voiceLastSpeechAt;
@@ -694,6 +713,89 @@ public final class MainActivity extends Activity {
             }
         };
         mainHandler.postDelayed(voiceAmplitudeMonitor, VOICE_AMPLITUDE_POLL_MS);
+    }
+
+    private void startVoiceRecordThread(final AudioRecord recorder, final File outputFile, final int bufferSize) {
+        voiceRecordThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                byte[] buffer = new byte[bufferSize];
+                int audioBytes = 0;
+                RandomAccessFile output = null;
+                try {
+                    output = new RandomAccessFile(outputFile, "rw");
+                    output.setLength(0);
+                    writeWavHeader(output, 0);
+                    while (voiceRecordThreadRunning.get()) {
+                        int read = recorder.read(buffer, 0, buffer.length);
+                        if (read > 0) {
+                            output.write(buffer, 0, read);
+                            audioBytes += read;
+                            int amplitude = voicePcmAmplitude(buffer, read);
+                            voiceCurrentAmplitude = amplitude;
+                            if (amplitude > 0) {
+                                voicePeakAmplitude = Math.max(voicePeakAmplitude, amplitude);
+                            }
+                        }
+                    }
+                } catch (Exception error) {
+                    android.util.Log.w("Air3NativeCameraTest", "Voice WAV writer failed", error);
+                } finally {
+                    if (output != null) {
+                        try {
+                            output.seek(0);
+                            writeWavHeader(output, audioBytes);
+                            output.close();
+                        } catch (Exception closeError) {
+                            android.util.Log.w("Air3NativeCameraTest", "Voice WAV finalize failed", closeError);
+                        }
+                    }
+                }
+            }
+        }, "Air3VoiceWavRecorder");
+        voiceRecordThread.start();
+    }
+
+    private static int voicePcmAmplitude(byte[] buffer, int length) {
+        int peak = 0;
+        int safeLength = length - (length % 2);
+        for (int index = 0; index < safeLength; index += 2) {
+            int low = buffer[index] & 0xff;
+            int high = buffer[index + 1];
+            int sample = (high << 8) | low;
+            peak = Math.max(peak, Math.abs(sample));
+        }
+        return peak;
+    }
+
+    private static void writeWavHeader(RandomAccessFile output, int pcmDataBytes) throws IOException {
+        int byteRate = VOICE_SAMPLE_RATE_HZ * VOICE_WAV_CHANNEL_COUNT * VOICE_WAV_BITS_PER_SAMPLE / 8;
+        int blockAlign = VOICE_WAV_CHANNEL_COUNT * VOICE_WAV_BITS_PER_SAMPLE / 8;
+        output.writeBytes("RIFF");
+        writeLittleEndianInt(output, 36 + pcmDataBytes);
+        output.writeBytes("WAVE");
+        output.writeBytes("fmt ");
+        writeLittleEndianInt(output, 16);
+        writeLittleEndianShort(output, 1);
+        writeLittleEndianShort(output, VOICE_WAV_CHANNEL_COUNT);
+        writeLittleEndianInt(output, VOICE_SAMPLE_RATE_HZ);
+        writeLittleEndianInt(output, byteRate);
+        writeLittleEndianShort(output, blockAlign);
+        writeLittleEndianShort(output, VOICE_WAV_BITS_PER_SAMPLE);
+        output.writeBytes("data");
+        writeLittleEndianInt(output, pcmDataBytes);
+    }
+
+    private static void writeLittleEndianInt(RandomAccessFile output, int value) throws IOException {
+        output.write(value & 0xff);
+        output.write((value >> 8) & 0xff);
+        output.write((value >> 16) & 0xff);
+        output.write((value >> 24) & 0xff);
+    }
+
+    private static void writeLittleEndianShort(RandomAccessFile output, int value) throws IOException {
+        output.write(value & 0xff);
+        output.write((value >> 8) & 0xff);
     }
 
     private int voiceDynamicSilenceThreshold() {
@@ -727,23 +829,25 @@ public final class MainActivity extends Activity {
             android.util.Log.w("Air3NativeCameraTest", "Voice recorder stop failed", error);
         } finally {
             recordingVoice = false;
+            voiceRecordThreadRunning.set(false);
             releaseVoiceRecorder();
+            waitForVoiceRecordThread();
         }
         if (upload && finishedFile != null && finishedFile.exists() && finishedFile.length() > 0) {
             if (durationMs < VOICE_MIN_RECORDING_MS) {
                 stopReason = "too_short";
-                persistVoiceDiagnostics(finishedFile.length(), durationMs, "VOICE_RECOGNITION", stopReason);
+                persistVoiceDiagnostics(finishedFile.length(), durationMs, "VOICE_RECOGNITION_WAV", stopReason);
                 setResultText("录音太短");
                 setHintText("请至少说满一句完整问题\n说完后停顿一下，系统会自动结束");
                 setStatus("没有录到完整问题。请按语音按钮后说完一句话，再停顿一下。");
                 return;
             }
-            persistVoiceDiagnostics(finishedFile.length(), durationMs, "VOICE_RECOGNITION", stopReason);
+            persistVoiceDiagnostics(finishedFile.length(), durationMs, "VOICE_RECOGNITION_WAV", stopReason);
             setResultText("语音上传中");
             setStatus("语音已录制，正在上传给 AI 转文字。");
             uploadVoiceAudio(finishedFile, durationMs, stopReason, generation);
         } else if ("no_speech_timeout".equals(stopReason)) {
-            persistVoiceDiagnostics(finishedFile == null ? 0 : finishedFile.length(), durationMs, "VOICE_RECOGNITION", stopReason);
+            persistVoiceDiagnostics(finishedFile == null ? 0 : finishedFile.length(), durationMs, "VOICE_RECOGNITION_WAV", stopReason);
             setResultText("没有听到声音");
             setHintText("没有检测到有效语音\n请靠近眼镜麦克风后再问一次");
             setStatus("没有听到有效语音。请靠近眼镜麦克风，说完一句话后停顿。");
@@ -761,6 +865,18 @@ public final class MainActivity extends Activity {
         voiceRecorder = null;
     }
 
+    private void waitForVoiceRecordThread() {
+        if (voiceRecordThread == null) {
+            return;
+        }
+        try {
+            voiceRecordThread.join(1200L);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        }
+        voiceRecordThread = null;
+    }
+
     private void uploadVoiceAudio(File audioFile, long recordingMs, String stopReason, int generation) {
         new Thread(new Runnable() {
             @Override
@@ -769,14 +885,14 @@ public final class MainActivity extends Activity {
                 try {
                     byte[] audioBytes = readFileBytes(audioFile);
                     JSONObject payload = new JSONObject();
-                    payload.put("audioBase64", "data:audio/mp4;base64," + Base64.encodeToString(audioBytes, Base64.NO_WRAP));
-                    payload.put("audioFormat", "audio/mp4");
+                    payload.put("audioBase64", "data:audio/wav;base64," + Base64.encodeToString(audioBytes, Base64.NO_WRAP));
+                    payload.put("audioFormat", "audio/wav");
                     payload.put("expectedLanguage", "zh");
                     payload.put("sttPrompt", VOICE_STT_PROMPT);
                     payload.put("recordingMs", recordingMs);
                     payload.put("stopReason", stopReason);
                     payload.put("timestamp", System.currentTimeMillis());
-                    payload.put("source", "air3-media-recorder");
+                    payload.put("source", "air3-audio-record-wav");
                     byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
 
                     if (sessionId.length() == 0) {
@@ -798,7 +914,7 @@ public final class MainActivity extends Activity {
                             ? connection.getInputStream()
                             : connection.getErrorStream();
                     String responseText = readAll(input);
-                    persistVoiceDiagnostics(audioBytes.length, recordingMs, "VOICE_RECOGNITION", stopReason);
+                    persistVoiceDiagnostics(audioBytes.length, recordingMs, "VOICE_RECOGNITION_WAV", stopReason);
                     persistVoiceResponse(status, audioBytes.length, responseText, null);
                     if (status < 200 || status >= 300) {
                         throw new IOException("voice_upload_http_" + status + ": " + responseText);
@@ -815,7 +931,7 @@ public final class MainActivity extends Activity {
                     setResultText("语音同步失败");
                     setHintText("语音没有同步到 AI\n请确认网络后重试，或单击重新拍照");
                     setStatus("语音没有同步成功，请改用单击拍照继续。");
-                    persistVoiceDiagnostics(audioFile.length(), recordingMs, "VOICE_RECOGNITION", stopReason);
+                    persistVoiceDiagnostics(audioFile.length(), recordingMs, "VOICE_RECOGNITION_WAV", stopReason);
                     persistVoiceResponse(-1, audioFile.length(), "", error);
                     android.util.Log.w("Air3NativeCameraTest", "Voice upload failed", error);
                 } finally {

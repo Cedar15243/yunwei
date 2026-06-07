@@ -132,6 +132,7 @@ for (const marker of [
   "voiceTranscriptUnavailableDecision(",
   "const transcriptUnavailable = audioBase64 && !transcript",
   "const shouldAskAiBrain = !audioBase64 || transcript.length > 0",
+  "hasTranscribeCredentials(env)",
   "shouldAskAiBrain && imageBase64",
   "createContextBundle(",
   "requestAiBrainDecision(",
@@ -169,6 +170,7 @@ for (const marker of [
   "OPENAI_TRANSCRIBE_API_KEY",
   "OPENAI_TRANSCRIBE_BASE_URL",
   "OPENAI_OFFICIAL_TRANSCRIBE_API_KEY",
+  "function hasTranscribeCredentials(",
   "openAiTranscribeUrl(env, \"/audio/transcriptions\")",
   "isOfficialOpenAiTranscribe(env)",
   "isOfficialOpenAiMainProvider(env)",
@@ -181,5 +183,6 @@ for (const marker of [
 
 mustNotInclude("const sttRequestTimeoutMs = 115_000;", "STT must not block the glasses HUD for nearly two minutes");
 mustNotInclude("return env.OPENAI_OFFICIAL_TRANSCRIBE_API_KEY || env.OPENAI_API_KEY || \"\";", "official STT fallback must not reuse a non-official main AI key");
+mustNotInclude("if (env.OPENAI_API_KEY) {\n      try {\n        transcript = await transcribeAudio", "voice STT must run when only OPENAI_TRANSCRIBE_API_KEY is configured");
 
 console.log("AI brain flow validation passed.");

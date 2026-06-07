@@ -74,7 +74,16 @@ for (const marker of [
   "AI 运维现场指导",
   "请对准需要判断的现场画面",
   "正在上传给 AI 分析现场画面",
-  "MediaRecorder.AudioSource.VOICE_RECOGNITION",
+  "AudioRecord",
+  "VOICE_AUDIO_SOURCE = MediaRecorder.AudioSource.VOICE_RECOGNITION",
+  "VOICE_SAMPLE_RATE_HZ = 16000",
+  "VOICE_WAV_CHANNEL_COUNT = 1",
+  "VOICE_WAV_BITS_PER_SAMPLE = 16",
+  "writeWavHeader(",
+  "voicePcmAmplitude(",
+  "audio/wav",
+  "data:audio/wav;base64,",
+  "air3-audio-record-wav",
   "VOICE_RECORDING_MS",
   "VOICE_SILENCE_AFTER_SPEECH_MS",
   "VOICE_NO_SPEECH_TIMEOUT_MS",
@@ -82,7 +91,6 @@ for (const marker of [
   "VOICE_AMPLITUDE_POLL_MS",
   "VOICE_RELATIVE_SILENCE_RATIO",
   "voicePeakAmplitude",
-  "voiceRecorder.getMaxAmplitude()",
   "voiceDynamicSilenceThreshold()",
   "stopVoiceRecording(true, \"silence_detected\")",
   "stopVoiceRecording(false, \"no_speech_timeout\")",
@@ -100,7 +108,7 @@ for (const marker of [
   "Voice button manual finish",
   "Voice button dispatch touch",
   "Voice button touch action=",
-  "persistVoiceDiagnostics(finishedFile.length(), durationMs, \"VOICE_RECOGNITION\", stopReason)",
+  "persistVoiceDiagnostics(finishedFile.length(), durationMs, \"VOICE_RECOGNITION_WAV\", stopReason)",
   "stopReason = \"too_short\"",
   "没有听到声音",
   "录音太短",
@@ -199,5 +207,9 @@ mustNotInclude("setStatus(statusForStep(nextStep))", "image responses must rende
 mustNotInclude("服务器 SSH 恢复", "native HUD must not present the app as server-only");
 mustNotInclude("请对准服务器本地控制台或终端窗口", "home HUD must accept any field scene");
 mustNotInclude("正在上传给 AI 识别服务器控制台", "upload HUD must describe general scene analysis");
+mustNotInclude("new MediaRecorder()", "Air3 STT service reliably recognizes WAV; native voice capture must not upload m4a/AAC");
+mustNotInclude("MediaRecorder.OutputFormat.MPEG_4", "voice capture must not use m4a/AAC for STT");
+mustNotInclude("MediaRecorder.AudioEncoder.AAC", "voice capture must not use AAC for STT");
+mustNotInclude("data:audio/mp4;base64,", "voice upload must send WAV content type");
 
 console.log("Native HUD flow validation passed.");
