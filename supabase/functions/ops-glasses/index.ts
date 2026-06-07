@@ -841,13 +841,34 @@ function extractJsonObject(value: string): string {
 }
 
 async function transcribeAudio(env: Env, bytes: Uint8Array, contentType: string, promptHint = ""): Promise<string> {
-  const primary = await transcribeAudioWithModel(env, env.OPENAI_TRANSCRIBE_MODEL, bytes, contentType, promptHint);
-  if (primary) return primary;
-  if (isOfficialOpenAiTranscribe(env) && env.OPENAI_TRANSCRIBE_MODEL !== "whisper-1") {
-    const fallback = await transcribeAudioWithModel(env, "whisper-1", bytes, contentType, promptHint);
-    if (fallback) return fallback;
+  const errors: string[] = [];
+  try {
+    const primary = await transcribeAudioWithModel(env, env.OPENAI_TRANSCRIBE_MODEL, bytes, contentType, promptHint);
+    if (primary) return primary;
+  } catch (error) {
+    errors.push(`primary-stt:${error instanceof Error ? error.message : String(error)}`);
   }
-  throw new Error("transcript_empty");
+
+  if (isOfficialOpenAiTranscribe(env) && env.OPENAI_TRANSCRIBE_MODEL !== "whisper-1") {
+    try {
+      const fallback = await transcribeAudioWithModel(env, "whisper-1", bytes, contentType, promptHint);
+      if (fallback) return fallback;
+    } catch (error) {
+      errors.push(`whisper-stt:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (canFallbackToOfficialTranscribe(env)) {
+    try {
+      const official = officialOpenAiTranscribeEnv(env);
+      const fallback = await transcribeAudioWithModel(official, "gpt-4o-mini-transcribe", bytes, contentType, promptHint);
+      if (fallback) return fallback;
+    } catch (error) {
+      errors.push(`official-stt:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  throw new Error(errors.length ? errors.join(" | ") : "transcript_empty");
 }
 
 async function transcribeAudioWithModel(
@@ -884,6 +905,19 @@ async function transcribeAudioWithModel(
 
 function shouldSendOpenAiTranscribeFields(env: Env): boolean {
   return isOfficialOpenAiTranscribe(env);
+}
+
+function canFallbackToOfficialTranscribe(env: Env): boolean {
+  return !isOfficialOpenAiTranscribe(env) && Boolean(env.OPENAI_API_KEY);
+}
+
+function officialOpenAiTranscribeEnv(env: Env): Env {
+  return {
+    ...env,
+    OPENAI_TRANSCRIBE_API_KEY: env.OPENAI_API_KEY,
+    OPENAI_TRANSCRIBE_BASE_URL: "https://api.openai.com/v1",
+    OPENAI_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe",
+  };
 }
 
 function sttPrompt(promptHint = ""): string {
