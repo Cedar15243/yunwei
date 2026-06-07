@@ -858,6 +858,22 @@ async function transcribeAudio(env: Env, bytes: Uint8Array, contentType: string,
     }
   }
 
+  if (canFallbackToMainProviderTranscribe(env)) {
+    try {
+      const mainProvider = mainProviderTranscribeEnv(env);
+      const fallback = await transcribeAudioWithModel(
+        mainProvider,
+        "gpt-4o-mini-transcribe",
+        bytes,
+        contentType,
+        promptHint,
+      );
+      if (fallback) return fallback;
+    } catch (error) {
+      errors.push(`main-provider-stt:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   if (canFallbackToOfficialTranscribe(env)) {
     try {
       const official = officialOpenAiTranscribeEnv(env);
@@ -909,6 +925,19 @@ function shouldSendOpenAiTranscribeFields(env: Env): boolean {
 
 function canFallbackToOfficialTranscribe(env: Env): boolean {
   return !isOfficialOpenAiTranscribe(env) && Boolean(env.OPENAI_API_KEY);
+}
+
+function canFallbackToMainProviderTranscribe(env: Env): boolean {
+  return Boolean(env.OPENAI_API_KEY) && env.OPENAI_BASE_URL !== env.OPENAI_TRANSCRIBE_BASE_URL;
+}
+
+function mainProviderTranscribeEnv(env: Env): Env {
+  return {
+    ...env,
+    OPENAI_TRANSCRIBE_API_KEY: env.OPENAI_API_KEY,
+    OPENAI_TRANSCRIBE_BASE_URL: env.OPENAI_BASE_URL,
+    OPENAI_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe",
+  };
 }
 
 function officialOpenAiTranscribeEnv(env: Env): Env {
