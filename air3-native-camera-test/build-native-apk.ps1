@@ -134,6 +134,7 @@ $dingdangBackendBaseUrl = if ($env:DINGDANG_BACKEND_BASE_URL) { $env:DINGDANG_BA
 $dingdangBackendApiKey = $opsKey
 $escapedEndpoint = $opsEndpoint.Replace("\", "\\").Replace('"', '\"')
 $escapedKey = $opsKey.Replace("\", "\\").Replace('"', '\"')
+$escapedAppLabel = $appLabel.Replace("\", "\\").Replace('"', '\"')
 $escapedDingdangBackendBaseUrl = $dingdangBackendBaseUrl.Replace("\", "\\").Replace('"', '\"')
 $escapedDingdangBackendApiKey = $dingdangBackendApiKey.Replace("\", "\\").Replace('"', '\"')
 $escapedDirectGptBaseUrl = $directGptBaseUrl.Replace("\", "\\").Replace('"', '\"')
@@ -143,10 +144,12 @@ $escapedDirectAsrEndpoint = $directAsrEndpoint.Replace("\", "\\").Replace('"', '
 $escapedDirectAsrKey = $directAsrKey.Replace("\", "\\").Replace('"', '\"')
 $fastUpload = if ($env:AIR3_APK_FAST_UPLOAD -eq "1") { "true" } else { "false" }
 $directGptEnabled = if ($env:AIR3_APK_DIRECT_GPT -eq "1") { "true" } else { "false" }
-@"
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+$generatedConfigSource = @"
 package com.codex.air3nativecamera;
 
 final class GeneratedConfig {
+    static final String APP_LABEL = "$escapedAppLabel";
     static final String EVENTS_ENDPOINT = "$escapedEndpoint";
     static final String OPS_GLASSES_API_KEY = "$escapedKey";
     static final String DINGDANG_BACKEND_BASE_URL = "$escapedDingdangBackendBaseUrl";
@@ -162,7 +165,8 @@ final class GeneratedConfig {
     private GeneratedConfig() {
     }
 }
-"@ | Set-Content -LiteralPath $generatedConfig -Encoding ASCII
+"@
+[System.IO.File]::WriteAllText($generatedConfig, $generatedConfigSource, $utf8NoBom)
 $javaFiles = @(
   Get-ChildItem -LiteralPath $src -Recurse -Filter "*.java" | ForEach-Object { $_.FullName }
   Get-ChildItem -LiteralPath $generatedSrc -Recurse -Filter "*.java" | ForEach-Object { $_.FullName }

@@ -12,6 +12,9 @@ const instantChatBuildScriptPath = path.join(root, "scripts/build-air3-instant-c
 const instantChatInstallVerifyScriptPath = path.join(root, "scripts/install-and-verify-air3-instant-chat.ps1");
 const dingdangBuildScriptPath = path.join(root, "scripts/build-dingdang-ops-ai-apk.ps1");
 const dingdangInstallVerifyScriptPath = path.join(root, "scripts/install-and-verify-dingdang-ops-ai.ps1");
+const assistantBuildScriptPath = path.join(root, "scripts/build-dingdang-ai-assistant-apk.ps1");
+const assistantInstallVerifyScriptPath = path.join(root, "scripts/install-and-verify-dingdang-ai-assistant.ps1");
+const assistantDirectBuildInstallScriptPath = path.join(root, "scripts/build-install-dingdang-ai-assistant-direct-apk.ps1");
 const packageJsonPath = path.join(root, "package.json");
 
 const buildScript = fs.readFileSync(buildScriptPath, "utf8");
@@ -35,6 +38,15 @@ const dingdangBuildScript = fs.existsSync(dingdangBuildScriptPath)
   : "";
 const dingdangInstallVerifyScript = fs.existsSync(dingdangInstallVerifyScriptPath)
   ? fs.readFileSync(dingdangInstallVerifyScriptPath, "utf8")
+  : "";
+const assistantBuildScript = fs.existsSync(assistantBuildScriptPath)
+  ? fs.readFileSync(assistantBuildScriptPath, "utf8")
+  : "";
+const assistantInstallVerifyScript = fs.existsSync(assistantInstallVerifyScriptPath)
+  ? fs.readFileSync(assistantInstallVerifyScriptPath, "utf8")
+  : "";
+const assistantDirectBuildInstallScript = fs.existsSync(assistantDirectBuildInstallScriptPath)
+  ? fs.readFileSync(assistantDirectBuildInstallScriptPath, "utf8")
   : "";
 const packageJson = fs.readFileSync(packageJsonPath, "utf8");
 
@@ -76,6 +88,8 @@ for (const marker of [
   'throw "OPS_GLASSES_API_KEY missing. Set env:OPS_GLASSES_API_KEY or create tmp/ops_glasses_api_key.local."',
   '$directGptKey = $env:DIRECT_GPT_API_KEY.Trim()',
   'throw "DIRECT_GPT_API_KEY missing. Set env:DIRECT_GPT_API_KEY or create tmp/direct_gpt_api_key.local."',
+  '$escapedAppLabel = $appLabel.Replace("\\", "\\\\").Replace(\'"\', \'\\"\')',
+  'static final String APP_LABEL = "$escapedAppLabel";',
   'static final boolean DIRECT_GPT_ENABLED = $directGptEnabled;',
   'static final String DINGDANG_BACKEND_BASE_URL = "$escapedDingdangBackendBaseUrl";',
   'static final String DINGDANG_BACKEND_API_KEY = "$escapedDingdangBackendApiKey";',
@@ -118,6 +132,11 @@ for (const marker of [
   "`610`",
   "`6.1.0-asr-final-autostop`",
   "`叮当运维AI`",
+  "`com.codex.air3nativecamera.dingdangassistant`",
+  "`620`",
+  "`6.2.0-assistant-ui-autostop`",
+  "`叮当ai助手`",
+  "DingdangAiAssistant-v<versionName>-<gitSha>.apk",
   "AIR3_APK_VERSION_CODE",
   "AIR3_APK_VERSION_NAME",
 ]) {
@@ -300,6 +319,56 @@ for (const marker of [
   'foreach ($marker in @($ExpectedLabel, $photoMarker, $voiceMarker, $speakMarker))',
 ]) {
   mustInclude(dingdangInstallVerifyScript, marker, `dingdang install-and-verify script must include ${marker}`);
+}
+
+for (const marker of [
+  '$env:AIR3_APK_APP_ID = "com.codex.air3nativecamera.dingdangassistant"',
+  '$assistantLabel = -join @([char]0x53EE, [char]0x5F53, "ai", [char]0x52A9, [char]0x624B)',
+  '$env:AIR3_APK_APP_LABEL = $assistantLabel',
+  '$env:AIR3_APK_OUTPUT_NAME = "DingdangAiAssistant"',
+  '$env:AIR3_APK_VERSION_CODE = "620"',
+  '$env:AIR3_APK_VERSION_NAME = "6.2.0-assistant-ui-autostop"',
+  '$env:AIR3_APK_DIRECT_GPT = "0"',
+  'build-native-apk.ps1',
+]) {
+  mustInclude(assistantBuildScript, marker, `assistant build script must include ${marker}`);
+}
+
+for (const marker of [
+  'param(',
+  '[string]$Serial = "YM00FCF3NW0031"',
+  '[string]$Package = "com.codex.air3nativecamera.dingdangassistant"',
+  '[string]$OldPackage = "com.codex.air3nativecamera.dingdangops"',
+  '[string]$ApkPath = "air3-native-camera-test\\build\\DingdangAiAssistant.apk"',
+  '[int]$ExpectedVersionCode = 620',
+  '[string]$ExpectedVersionName = "6.2.0-assistant-ui-autostop"',
+  '[string]$ExpectedLabel = (-join @([char]0x53EE, [char]0x5F53, "ai", [char]0x52A9, [char]0x624B))',
+  'install -r $apk',
+  'pm grant $Package android.permission.CAMERA',
+  'pm grant $Package android.permission.RECORD_AUDIO',
+  'foreach ($requiredPackage in @($OldPackage, $Package))',
+  'Expected package missing after assistant install',
+  'versionCode=$ExpectedVersionCode',
+  'versionName=$([regex]::Escape($ExpectedVersionName))',
+  'resolve-activity --brief $Package',
+  'am start --display 0 -n "$Package/$Activity"',
+  'uiautomator dump /dev/tty',
+  'screencap -p',
+  '$photoMarker = -join @([char]0x70B9, [char]0x6211, [char]0x62CD, [char]0x7167)',
+  '$voiceMarker = -join @([char]0x70B9, [char]0x6211, [char]0x8BF4, [char]0x8BDD)',
+]) {
+  mustInclude(assistantInstallVerifyScript, marker, `assistant install-and-verify script must include ${marker}`);
+}
+
+for (const marker of [
+  'scripts\\build-dingdang-ai-assistant-apk.ps1',
+  'scripts\\install-and-verify-dingdang-ai-assistant.ps1',
+  'DIRECT_GPT_API_KEY',
+  'DIRECT_ASR_API_KEY',
+  'DIRECT_ASR_ENDPOINT',
+  'Key values are loaded but will not be printed',
+]) {
+  mustInclude(assistantDirectBuildInstallScript, marker, `assistant direct build/install script must include ${marker}`);
 }
 
 console.log("Native build versioning validation passed.");

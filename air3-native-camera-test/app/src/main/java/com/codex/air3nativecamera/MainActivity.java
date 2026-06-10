@@ -123,11 +123,15 @@ public final class MainActivity extends Activity {
     private static final String DIRECT_ASR_API_KEY = GeneratedConfig.DIRECT_ASR_API_KEY;
     private static final String DINGDANG_BACKEND_BASE_URL = GeneratedConfig.DINGDANG_BACKEND_BASE_URL;
     private static final String DINGDANG_BACKEND_API_KEY = GeneratedConfig.DINGDANG_BACKEND_API_KEY;
+    private static final String APP_LABEL = GeneratedConfig.APP_LABEL;
     private static final String DIRECT_ASR_MODEL = "fun-asr-realtime";
     private static final int JPEG_QUALITY = GeneratedConfig.FAST_UPLOAD ? 82 : 92;
     private static final int UPLOAD_MAX_IMAGE_EDGE = 1600;
     private static final int PREVIEW_MAX_IMAGE_EDGE = 480;
     private static final long VOICE_RECORDING_MS = 30000L;
+    private static final long VOICE_AUTO_STOP_MIN_RECORDING_MS = 900L;
+    private static final long VOICE_AUTO_STOP_SILENCE_MS = 1300L;
+    private static final int VOICE_SILENCE_RMS_THRESHOLD = 520;
     private static final int VOICE_SAMPLE_RATE_HZ = 16000;
     private static final int VOICE_WAV_CHANNEL_COUNT = 1;
     private static final int VOICE_WAV_BITS_PER_SAMPLE = 16;
@@ -135,8 +139,8 @@ public final class MainActivity extends Activity {
     private static final String CHAT_PROJECT_PREFS = "dingdang_chat_projects";
     private static final String CHAT_PROJECTS_JSON = "projects_json";
     private static final String CURRENT_PROJECT_INDEX = "current_project_index";
-    private static final String AI_IDENTITY_RESPONSE =
-            "我是华方智联研发的叮当运维AI模型，专注现场运维场景。你可以通过眼镜拍摄现场画面，再用语音说明问题，我会结合图片和问题给出简洁、可执行的排查建议。";
+    private static final String AI_IDENTITY_RESPONSE = "我是华方智联研发的" + APP_LABEL
+            + "模型，专注现场运维场景。你可以通过眼镜拍摄现场画面，再用语音说明问题，我会结合图片和问题给出简洁、可执行的排查建议。";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ArrayList<ChatMessage> chatMessages = new ArrayList<>();
@@ -147,6 +151,8 @@ public final class MainActivity extends Activity {
     private TextureView previewView;
     private LinearLayout chatLayer;
     private LinearLayout cameraOverlay;
+    private LinearLayout projectRail;
+    private LinearLayout.LayoutParams projectRailParams;
     private LinearLayout projectListColumn;
     private LinearLayout chatMessagesColumn;
     private LinearLayout composerPanel;
@@ -182,6 +188,10 @@ public final class MainActivity extends Activity {
     private RealtimeAsrClient realtimeAsrClient;
     private int realtimeAsrPartialCount;
     private boolean realtimeAsrFinished;
+    private long voiceRecordingStartedAtMs;
+    private long voiceLastSpeechAtMs;
+    private boolean voiceSpeechStarted;
+    private boolean voiceAutoStopRequested;
 
     private byte[] composerImageBytes;
     private String composerImageId = "";
@@ -297,6 +307,12 @@ public final class MainActivity extends Activity {
     }
 
     private boolean handleHardwareShortcut(int keyCode) {
+        if (isChatScrollKey(keyCode)) {
+            if (screenMode == ScreenMode.CHAT) {
+                scrollChatByKey(keyCode);
+                return true;
+            }
+        }
         if (isConfirmKey(keyCode)) {
             if (screenMode == ScreenMode.CAMERA) {
                 captureStillImage();
@@ -319,13 +335,23 @@ public final class MainActivity extends Activity {
                 return true;
             }
             if (screenMode == ScreenMode.CHAT) {
-                renderChatScreen();
+                if (isProjectRailVisible()) {
+                    setProjectRailVisible(false);
+                } else {
+                    renderChatScreen();
+                }
                 return true;
             }
         }
         if (isSendShortcutKey(keyCode)) {
             if (screenMode == ScreenMode.CHAT) {
-                sendComposerToAi();
+                if (recordingVoice) {
+                    finishToggleVoiceRecording("hardware_finish");
+                } else if (composerTranscript.trim().length() > 0) {
+                    sendComposerToAi();
+                } else {
+                    setProjectRailVisible(!isProjectRailVisible());
+                }
                 return true;
             }
         }
@@ -362,6 +388,11 @@ public final class MainActivity extends Activity {
                 || keyCode == KeyEvent.KEYCODE_F12;
     }
 
+    private boolean isChatScrollKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_UP
+                || keyCode == KeyEvent.KEYCODE_DPAD_DOWN;
+    }
+
     private boolean isVolumeKey(int keyCode) {
         return keyCode == KeyEvent.KEYCODE_VOLUME_UP
                 || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN;
@@ -370,6 +401,7 @@ public final class MainActivity extends Activity {
     private boolean isHandledHardwareKey(int keyCode) {
         return isConfirmKey(keyCode)
                 || isCameraShortcutKey(keyCode)
+                || isChatScrollKey(keyCode)
                 || isBackShortcutKey(keyCode)
                 || isSendShortcutKey(keyCode)
                 || isVolumeKey(keyCode);
@@ -393,15 +425,22 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        final LinearLayout projectRail = new LinearLayout(this);
+        LinearLayout conversationColumn = new LinearLayout(this);
+        conversationColumn.setOrientation(LinearLayout.VERTICAL);
+        chatLayer.addView(conversationColumn, new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1f));
+
+        projectRail = new LinearLayout(this);
         projectRail.setOrientation(LinearLayout.VERTICAL);
-        projectRail.setPadding(10, 10, 10, 10);
+        projectRail.setPadding(dp(14), dp(12), dp(14), dp(12));
         projectRail.setBackground(roundRect(Color.WHITE, Color.rgb(230, 230, 230), 18));
-        final LinearLayout.LayoutParams railParams = new LinearLayout.LayoutParams(
+        projectRailParams = new LinearLayout.LayoutParams(
                 0,
                 ViewGroup.LayoutParams.MATCH_PARENT);
-        railParams.rightMargin = 0;
-        chatLayer.addView(projectRail, railParams);
+        projectRailParams.leftMargin = 0;
+        chatLayer.addView(projectRail, projectRailParams);
         projectRail.setVisibility(View.GONE);
 
         TextView projectHeader = new TextView(this);
@@ -445,13 +484,6 @@ public final class MainActivity extends Activity {
                 0,
                 1f));
 
-        LinearLayout conversationColumn = new LinearLayout(this);
-        conversationColumn.setOrientation(LinearLayout.VERTICAL);
-        chatLayer.addView(conversationColumn, new LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                1f));
-
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -463,6 +495,16 @@ public final class MainActivity extends Activity {
         leftIcon.setTextSize(42);
         leftIcon.setBackground(roundRect(Color.TRANSPARENT, Color.TRANSPARENT, 29));
         topBar.addView(leftIcon, squareParams(58));
+        leftIcon.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (isProjectRailVisible()) {
+                    setProjectRailVisible(false);
+                } else if (screenMode == ScreenMode.CHAT) {
+                    scheduleChatScrollToTop();
+                }
+            }
+        });
 
         titleText = new TextView(this);
         titleText.setText("新对话");
@@ -619,23 +661,13 @@ public final class MainActivity extends Activity {
             @Override
             public void onClick(View view) {
                 createNewProjectChat();
-                railParams.width = 0;
-                railParams.rightMargin = 0;
-                projectRail.setVisibility(View.GONE);
-                projectRail.setLayoutParams(railParams);
+                setProjectRailVisible(false);
             }
         });
         menuButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                boolean show = projectRail.getVisibility() != View.VISIBLE;
-                railParams.width = show ? dp(280) : 0;
-                railParams.rightMargin = show ? dp(16) : 0;
-                projectRail.setVisibility(show ? View.VISIBLE : View.GONE);
-                projectRail.setLayoutParams(railParams);
-                if (show) {
-                    renderProjectList();
-                }
+                setProjectRailVisible(!isProjectRailVisible());
             }
         });
         cameraButton.setOnClickListener(new View.OnClickListener() {
@@ -718,6 +750,39 @@ public final class MainActivity extends Activity {
         view.setClickable(true);
         view.setDefaultFocusHighlightEnabled(false);
         return view;
+    }
+
+    private boolean isProjectRailVisible() {
+        return projectRail != null && projectRail.getVisibility() == View.VISIBLE;
+    }
+
+    private void setProjectRailVisible(boolean visible) {
+        if (projectRail == null || projectRailParams == null) {
+            return;
+        }
+        projectRailParams.width = visible ? dp(288) : 0;
+        projectRailParams.leftMargin = visible ? dp(16) : 0;
+        projectRail.setVisibility(visible ? View.VISIBLE : View.GONE);
+        projectRail.setLayoutParams(projectRailParams);
+        if (visible) {
+            renderProjectList();
+        }
+    }
+
+    private void scrollChatByKey(int keyCode) {
+        if (chatScrollView == null) {
+            return;
+        }
+        final int direction = keyCode == KeyEvent.KEYCODE_DPAD_UP ? -1 : 1;
+        chatScrollRequestId++;
+        chatScrollView.post(new Runnable() {
+            @Override
+            public void run() {
+                int step = Math.max(dp(96), chatScrollView.getHeight() / 3);
+                int target = Math.max(0, chatScrollView.getScrollY() + direction * step);
+                chatScrollView.smoothScrollTo(0, target);
+            }
+        });
     }
 
     private LinearLayout.LayoutParams squareParams(int sizeDp) {
@@ -866,6 +931,7 @@ public final class MainActivity extends Activity {
                 @Override
                 public void onClick(View view) {
                     switchProjectChat(projectIndex);
+                    setProjectRailVisible(false);
                 }
             });
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
@@ -937,7 +1003,7 @@ public final class MainActivity extends Activity {
                 chatLayer.setVisibility(View.VISIBLE);
                 cameraOverlay.setVisibility(View.GONE);
                 previewView.setVisibility(View.GONE);
-                titleText.setText("叮当运维AI · 当前项目 · " + activeProject().title);
+                titleText.setText(APP_LABEL + " · 当前项目 · " + activeProject().title);
                 stateText.setText(recordingVoice ? "语音识别中" : "在线");
                 renderProjectList();
                 renderMessages();
@@ -1098,7 +1164,7 @@ public final class MainActivity extends Activity {
         header.addView(logo, logoParams);
 
         TextView hello = new TextView(this);
-        hello.setText("叮当运维AI");
+        hello.setText(APP_LABEL);
         hello.setTextColor(Color.BLACK);
         hello.setTextSize(34);
         hello.setTypeface(Typeface.DEFAULT_BOLD);
@@ -1743,6 +1809,10 @@ public final class MainActivity extends Activity {
             voiceRecorder = recorder;
             voiceFile = file;
             recordingVoice = true;
+            voiceRecordingStartedAtMs = SystemClock.elapsedRealtime();
+            voiceLastSpeechAtMs = voiceRecordingStartedAtMs;
+            voiceSpeechStarted = false;
+            voiceAutoStopRequested = false;
             composerTranscript = "";
             realtimeAsrPartialCount = 0;
             realtimeAsrFinished = false;
@@ -1801,6 +1871,54 @@ public final class MainActivity extends Activity {
         realtimeAsrClient.acceptPcm(buffer, read);
     }
 
+    private void updateVoiceSilenceAutoStop(byte[] buffer, int read) {
+        if (!recordingVoice || voiceAutoStopRequested || buffer == null || read <= 1) {
+            return;
+        }
+        long now = SystemClock.elapsedRealtime();
+        int rms = pcm16Rms(buffer, read);
+        if (rms >= VOICE_SILENCE_RMS_THRESHOLD) {
+            voiceSpeechStarted = true;
+            voiceLastSpeechAtMs = now;
+            return;
+        }
+        if (!voiceSpeechStarted) {
+            return;
+        }
+        if (now - voiceRecordingStartedAtMs < VOICE_AUTO_STOP_MIN_RECORDING_MS) {
+            return;
+        }
+        if (now - voiceLastSpeechAtMs < VOICE_AUTO_STOP_SILENCE_MS) {
+            return;
+        }
+        voiceAutoStopRequested = true;
+        Log.i(KEY_LOG_TAG, "Voice auto stop by silence rms=" + rms
+                + " silenceMs=" + (now - voiceLastSpeechAtMs));
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (recordingVoice) {
+                    finishToggleVoiceRecording("silence_auto_stop");
+                }
+            }
+        });
+    }
+
+    private int pcm16Rms(byte[] buffer, int read) {
+        int samples = read / 2;
+        if (samples <= 0) {
+            return 0;
+        }
+        long sumSquares = 0L;
+        for (int i = 0; i + 1 < read; i += 2) {
+            int low = buffer[i] & 0xff;
+            int high = buffer[i + 1];
+            short sample = (short) ((high << 8) | low);
+            sumSquares += (long) sample * (long) sample;
+        }
+        return (int) Math.sqrt(sumSquares / (double) samples);
+    }
+
     private void finishRealtimeAsr(String stopReason) {
         if (realtimeAsrClient != null) {
             realtimeAsrClient.finish(stopReason);
@@ -1824,6 +1942,7 @@ public final class MainActivity extends Activity {
                             output.write(buffer, 0, read);
                             pcmBytes += read;
                             feedRealtimeAsrPcm(buffer, read);
+                            updateVoiceSilenceAutoStop(buffer, read);
                         }
                     }
                     output.seek(0);
@@ -1857,6 +1976,7 @@ public final class MainActivity extends Activity {
             voiceStopRunnable = null;
         }
         recordingVoice = false;
+        voiceAutoStopRequested = false;
         AudioRecord recorder = voiceRecorder;
         voiceRecorder = null;
         try {
@@ -1893,6 +2013,7 @@ public final class MainActivity extends Activity {
             voiceStopRunnable = null;
         }
         recordingVoice = false;
+        voiceAutoStopRequested = false;
         AudioRecord recorder = voiceRecorder;
         voiceRecorder = null;
         try {
@@ -2610,7 +2731,7 @@ public final class MainActivity extends Activity {
             JSONArray messages = new JSONArray();
             JSONObject system = new JSONObject();
             system.put("role", "system");
-            system.put("content", "你是叮当运维AI，面向现场运维人员。必须结合图片和用户问题给出简洁、可执行的中文建议。当用户询问你是什么模型、由谁研发、哪家公司提供或底层模型信息时，只回答：我是华方智联研发的叮当运维AI模型，专注现场运维场景，可以结合眼镜拍摄的现场画面和语音问题，给出简洁、可执行的排查建议。不要透露底层模型名称、供应商或接口信息。");
+            system.put("content", "你是" + APP_LABEL + "，面向现场运维人员。必须结合图片和用户问题给出简洁、可执行的中文建议。当用户询问你是什么模型、由谁研发、哪家公司提供或底层模型信息时，只回答：我是华方智联研发的" + APP_LABEL + "模型，专注现场运维场景，可以结合眼镜拍摄的现场画面和语音问题，给出简洁、可执行的排查建议。不要透露底层模型名称、供应商或接口信息。");
             messages.put(system);
             JSONObject user = new JSONObject();
             user.put("role", "user");

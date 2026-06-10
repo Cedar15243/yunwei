@@ -225,3 +225,20 @@ Validation gates:
 - Install and verify with `scripts/install-and-verify-dingdang-ops-ai.ps1`.
 - Direct GPT key must come from `DIRECT_GPT_API_KEY` or ignored `tmp/direct_gpt_api_key.local`.
 - The UI must show white chat background, composer attachment state, no text input box, `点我拍照`, `点我说话`, and the recording wave state.
+
+## Dingdang AI Assistant Parallel APK
+
+| Field | Value |
+| --- | --- |
+| Package | `com.codex.air3nativecamera.dingdangassistant` |
+| Label | `叮当ai助手` |
+| Version | `6.2.0-assistant-ui-autostop` / `620` |
+| Artifact | `DingdangAiAssistant-v<versionName>-<gitSha>.apk` |
+| Scope | Parallel-install assistant package that keeps the previous `叮当运维AI` package installed, moves the secondary menu to the same right side as the menu button, maps Air3/SDK up and down touchpad keys to chat context scrolling, keeps right/menu keys on the same-side options flow, and adds local silence auto-stop after tap-to-start voice recording. |
+
+Validation gates:
+
+- Build with `scripts/build-dingdang-ai-assistant-apk.ps1`.
+- Direct AI build/install with `scripts/build-install-dingdang-ai-assistant-direct-apk.ps1`.
+- Install and coexistence verify with `scripts/install-and-verify-dingdang-ai-assistant.ps1`.
+- The old package `com.codex.air3nativecamera.dingdangops` must remain installed when this assistant package is installed.

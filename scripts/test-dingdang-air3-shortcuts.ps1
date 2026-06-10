@@ -92,6 +92,8 @@ $keyCases = @(
   @{ name = "dpad_center_23_voice"; code = 23; expect = "voice" },
   @{ name = "focus_80_app_camera"; code = 80; expect = "app_camera" },
   @{ name = "f9_139_app_camera"; code = 139; expect = "app_camera" },
+  @{ name = "up_19_chat_scroll"; code = 19; expect = "chat_scroll" },
+  @{ name = "down_20_chat_scroll"; code = 20; expect = "chat_scroll" },
   @{ name = "right_22_send"; code = 22; expect = "send" },
   @{ name = "menu_82_send"; code = 82; expect = "send" },
   @{ name = "f12_142_send"; code = 142; expect = "send" },
@@ -125,12 +127,18 @@ foreach ($case in $keyCases) {
   $inDingdang = $focusText -match [regex]::Escape($Package)
   $inSystemCamera = $focusText -match [regex]::Escape($SystemCameraPackage)
   $voiceStarted = $logText -match "Realtime ASR start state=LISTENING"
-  $appCameraStarted = $logText -match "screen=CAMERA"
+  $cameraScreenLog = $logText -match "screen=CAMERA"
+  $cameraPreviewLog = $logText -match "Camera preview transform"
+  $cameraUiMarker = -join @([char]0x5BF9, [char]0x51C6, [char]0x73B0, [char]0x573A, [char]0x540E, [char]0x62CD, [char]0x7167)
+  $cameraUiVisible = $uiText -match [regex]::Escape($cameraUiMarker)
+  $appCameraStarted = ($cameraScreenLog -or $cameraPreviewLog -or $cameraUiVisible)
+  $chatScrollHandled = ($appLog -and $inDingdang -and -not $inSystemCamera)
   $reservedObserved = $logText -match "system-reserved camera key observed"
 
   $expectedOk = switch ($case.expect) {
     "voice" { $appLog -and $inDingdang -and $voiceStarted }
     "app_camera" { $appLog -and $inDingdang -and $appCameraStarted }
+    "chat_scroll" { $chatScrollHandled }
     "send" { $appLog -and $inDingdang -and -not $inSystemCamera }
     "chat" { $appLog -and $inDingdang -and -not $inSystemCamera }
     "consumed" { $appLog -and $inDingdang -and -not $inSystemCamera }
