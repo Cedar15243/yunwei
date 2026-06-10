@@ -10,208 +10,289 @@ const code = fs.readFileSync(activityPath, "utf8");
 
 function mustInclude(marker, message = marker) {
   if (!code.includes(marker)) {
-    throw new Error(`native HUD flow missing marker: ${message}`);
+    throw new Error(`native chat flow missing marker: ${message}`);
   }
 }
 
 function mustNotInclude(marker, message = marker) {
   if (code.includes(marker)) {
-    throw new Error(`native HUD flow keeps forbidden marker: ${message}`);
+    throw new Error(`native chat flow keeps forbidden marker: ${message}`);
   }
 }
 
+function methodBody(name) {
+  const start = code.indexOf(`private void ${name}`);
+  if (start < 0) {
+    throw new Error(`native chat flow missing method: ${name}`);
+  }
+  const next = code.indexOf("\n    private void ", start + 1);
+  return code.slice(start, next < 0 ? code.length : next);
+}
+
+function methodBlock(signature) {
+  const start = code.indexOf(signature);
+  if (start < 0) {
+    throw new Error(`native chat flow missing block: ${signature}`);
+  }
+  const next = code.indexOf("\n    private ", start + 1);
+  return code.slice(start, next < 0 ? code.length : next);
+}
+
 for (const marker of [
-  "private static final class HudResponse",
-  "final String rawResponse;",
-  "final String sessionId;",
-  "final String step;",
-  "final String resultType;",
-  "final String feedbackCode;",
-  "final String diagnosticCode;",
-  "final String displayTitle;",
-  "final String displayText;",
-  "final String displayHint;",
-  "final String[] displayPages;",
-  "final int totalPages;",
-  "final boolean humanEscalationSuggestion;",
-  "HudResponse(JSONObject response, String fallbackSessionId, String fallbackStep)",
-  "resultType = response.optString(\"resultType\", \"instruction\")",
-  "feedbackCode = response.optString(\"feedbackCode\", \"\")",
-  "diagnosticCode = response.optString(\"diagnosticCode\", \"\")",
-  "displayTitle = response.optString(\"displayTitle\", firstInstructionLine(legacyText))",
-  "displayText = response.optString(\"displayText\", legacyText)",
-  "displayHint = response.optString(\"displayHint\", \"\")",
-  "String fullText = response.optString(\"fullText\", displayText)",
-  "displayPages = parseDisplayPages(response, fullText)",
-  "totalPages = displayPages.length",
-  "humanEscalationSuggestion = response.optBoolean(\"humanEscalationSuggestion\", false)",
-  "private HudResponse activeHud",
-  "private int activeHudPageIndex",
-  "advanceHudPageOrCapture(",
-  "backHudPageOrRetake()",
-  "hasNextHudPage() ? \"下一页\" : \"拍照中\"",
-  "hasPreviousHudPage() ? \"上一页\" : \"已重拍\"",
-  "private boolean hasNextHudPage()",
-  "private boolean hasPreviousHudPage()",
-  "renderHudPage()",
-  "第 \" + (pageIndex + 1) + \"/\" + totalPages + \" 页",
-  "private void applyHudResponse(final HudResponse hud)",
-  "persistSession(hud.sessionId, hud.step)",
-  "persistLastResponse(hud.rawResponse)",
-  "private boolean restoreLastHudResponse()",
-  "restoreLastHudResponse();",
-  "new HudResponse(new JSONObject(lastResponse), sessionId, currentStep)",
-  "private static final int HUD_PAGE_CHAR_LIMIT",
-  "private static String[] paginateLocalHudText(String text)",
-  "for (int index = 0; index < normalized.length(); index += HUD_PAGE_CHAR_LIMIT)",
-  "stepText.setText(stepLabel(hud.step))",
-  "fallbackHint(HudResponse hud)",
-  "diagnosticHint(hud)",
-  "statusForHud(HudResponse hud)",
-  "HudResponse hud = new HudResponse(response, sessionId, currentStep)",
-  "applyHudResponse(hud)",
-  "return \"等待 AI 指导\";",
-  "AI 运维现场指导",
-  "请对准需要判断的现场画面",
-  "正在上传给 AI 分析现场画面",
-  "AudioRecord",
-  "VOICE_AUDIO_SOURCE = MediaRecorder.AudioSource.VOICE_RECOGNITION",
-  "VOICE_SAMPLE_RATE_HZ = 16000",
-  "VOICE_WAV_CHANNEL_COUNT = 1",
-  "VOICE_WAV_BITS_PER_SAMPLE = 16",
-  "writeWavHeader(",
-  "voicePcmAmplitude(",
-  "audio/wav",
-  "data:audio/wav;base64,",
-  "air3-audio-record-wav",
-  "VOICE_RECORDING_MS",
-  "VOICE_SILENCE_AFTER_SPEECH_MS",
-  "VOICE_NO_SPEECH_TIMEOUT_MS",
-  "VOICE_UPLOAD_READ_TIMEOUT_MS",
-  "VOICE_AMPLITUDE_POLL_MS",
-  "VOICE_RELATIVE_SILENCE_RATIO",
-  "voicePeakAmplitude",
-  "voiceDynamicSilenceThreshold()",
-  "stopVoiceRecording(true, \"silence_detected\")",
-  "stopVoiceRecording(false, \"no_speech_timeout\")",
-  "stopVoiceRecording(true, \"manual_finish\")",
-  "onKeyLongPress(int keyCode, KeyEvent event)",
-  "onKeyUp(int keyCode, KeyEvent event)",
-  "event.startTracking()",
-  "import android.view.MotionEvent;",
-  "dispatchTouchEvent(MotionEvent event)",
-  "isTouchInside(actionVoiceButton, event)",
-  "isTouchInside(View view, MotionEvent event)",
-  "setOnTouchListener(new View.OnTouchListener()",
-  "MotionEvent.ACTION_DOWN",
-  "handleVoiceButtonPress()",
-  "Voice button manual finish",
-  "Voice button dispatch touch",
-  "Voice button touch action=",
-  "persistVoiceDiagnostics(finishedFile.length(), durationMs, \"VOICE_RECOGNITION_WAV\", stopReason)",
-  "stopReason = \"too_short\"",
-  "没有听到声音",
-  "录音太短",
-  "请至少说满一句完整问题",
-  "没有检测到有效语音",
-  "语音同步失败",
-  "setHintText(\"语音没有同步到 AI",
-  "private void setHintText(String value)",
-  "centerKeyLongPressed",
-  "beginInteraction()",
-  "isCurrentInteraction(generation)",
-  "applyHudResponseIfCurrent(hud, generation)",
-  "if (status < 200 || status >= 300)",
-  "throw new IOException(\"image_upload_http_\" + status + \": \" + responseText)",
-  "throw new IOException(\"voice_upload_http_\" + status + \": \" + responseText)",
-  "custom_stt_timeout",
-  "official_stt_invalid_key",
-  "main_provider_stt_unsupported",
-  "suspicious_transcript",
-  "语音识别结果不可信",
-  "网络连接失败",
-  "暂时连接不到 AI 运维服务",
-  "Skip stale captured image before UI generation=",
-  "Skip stale capture completion generation=",
-  "Skip stale image upload after prepare generation=",
-  "payload.put(\"stopReason\"",
-  "payload.put(\"sttPrompt\"",
-  "connection.setReadTimeout(VOICE_UPLOAD_READ_TIMEOUT_MS)",
-  "persistVoiceDiagnostics",
+  "private enum ScreenMode { CHAT, CAMERA }",
+  "private interface ChatAiClient",
+  "private static final class DirectGptClient implements ChatAiClient",
+  "private static final class BackendGptClient implements ChatAiClient",
+  "private static final class BackendChatClient implements ChatAiClient, RealtimeAsrClient",
+  "private static final class DirectAsrClient",
+  "private interface RealtimeAsrClient",
+  "private enum VoiceStreamState { IDLE, LISTENING, PARTIAL_READY, FINAL_READY, AI_PENDING, AI_DONE, VOICE_UNCLEAR }",
+  "private static final class ChatMessage",
+  "private final ArrayList<ChatMessage> chatMessages = new ArrayList<>();",
+  "private static final class ChatProject",
+  "private final ArrayList<ChatProject> chatProjects = new ArrayList<>();",
+  "private LinearLayout projectListColumn;",
+  "createNewProjectChat()",
+  "switchProjectChat(",
+  "persistChatProjects()",
+  "restoreChatProjects()",
+  "renderProjectList()",
+  "private LinearLayout chatMessagesColumn;",
+  "private LinearLayout composerPanel;",
+  "private TextView attachmentPreviewText;",
+  "private ImageView attachmentPreviewImage;",
+  "private Bitmap composerImagePreviewBitmap;",
+  "private TextView transcriptDraftText;",
+  "private TextView voiceButton;",
+  "private AudioWaveView voiceWaveView;",
+  "private static final class AudioWaveView extends View",
+  "renderChatScreen()",
+  "renderCameraScreen()",
+  "showComposerAttachment(",
+  "uploadImageForChat(",
+  "onBackendImageUploaded(",
+  "appendUserImageMessage(",
+  "latestImageMessage()",
+  "appendUserTranscriptMessage(",
+  "appendAssistantStreamingMessage(",
+  "updateAssistantStreamingMessage(",
+  "finalizeAssistantStreamingMessage(",
+  "enterCameraScreen(",
+  "confirmCapturedPhoto(",
+  "createImagePreviewBase64(",
+  "startToggleVoiceRecording()",
+  "finishToggleVoiceRecording(",
+  "startRealtimeAsr(",
+  "feedRealtimeAsrPcm(",
+  "finishRealtimeAsr(",
+  "stopVoiceCaptureAfterAsrFinal()",
+  "onAsrPartial(",
+  "onAsrFinal(",
+  "onVoiceUnclear(",
+  "voiceStreamState = VoiceStreamState.AI_PENDING",
+  "sendComposerToAi();",
+  "请再说一次",
+  "Realtime ASR partial",
+  "Realtime ASR final",
+  "gptStreamStartedAtMs",
+  "GPT stream start",
+  "GPT stream first delta latencyMs=",
+  "sendComposerToAi()",
+  "private static final String AI_IDENTITY_RESPONSE",
+  "华方智联研发的叮当运维AI模型",
+  "isIdentityQuestion(",
+  "appendAssistantMessage(AI_IDENTITY_RESPONSE)",
+  "backendImagesUrl()",
+  "backendAsrUrl()",
+  "backendDiagnoseStreamUrl()",
+  "/images",
+  "/asr",
+  "/diagnose/stream",
+  "image_id",
+  "final_text",
+  "text/event-stream",
+  "parseSseDelta(",
+  "parseBackendAsrEvent(",
+  "new BackendChatClient(",
+  "GeneratedConfig.DINGDANG_BACKEND_BASE_URL",
+  "GeneratedConfig.DINGDANG_BACKEND_API_KEY",
+  "public boolean dispatchKeyEvent(KeyEvent event)",
+  "KEY_LOG_TAG = \"DingdangKey\"",
+  "isConfirmKey(",
+  "isCameraShortcutKey(",
+  "isBackShortcutKey(",
+  "isSendShortcutKey(",
+  "isVolumeKey(",
+  "isHandledHardwareKey(",
+  "handleHardwareShortcut(",
+  "isSystemReservedCameraKey(",
+  "system-reserved camera key observed; not used as an app shortcut",
+  "event.getAction() == KeyEvent.ACTION_DOWN && isHandledHardwareKey(event.getKeyCode())",
+  "event.getAction() == KeyEvent.ACTION_UP && handleHardwareShortcut(event.getKeyCode())",
+  "KeyEvent.KEYCODE_CAMERA",
+  "KeyEvent.KEYCODE_FOCUS",
+  "KEYCODE_DVR",
+  "KeyEvent.KEYCODE_F9",
+  "KeyEvent.KEYCODE_F10",
+  "KeyEvent.KEYCODE_F12",
+  "KeyEvent.KEYCODE_VOLUME_UP",
+  "KeyEvent.KEYCODE_VOLUME_DOWN",
+  "enterCameraScreen(\"hardware-key\")",
+  "createChatAiClient()",
+  "new DirectGptClient(",
+  "new BackendGptClient(",
+  "new BackendChatClient(",
+  "DIRECT_GPT_API_KEY",
+  "DIRECT_GPT_BASE_URL",
+  "DIRECT_GPT_MODEL",
+  "DIRECT_ASR_ENDPOINT",
+  "import android.widget.ImageView;",
+  "attachmentPreviewImage.setScaleType(ImageView.ScaleType.FIT_CENTER)",
+  "image_preview_base64",
+  "message.imagePreviewBitmap",
+  "voiceStatusForDiagnostic(",
+  "语音服务未连接",
+  "asr_endpoint_missing",
+  "composerImageUploadFailed",
+  "ExifInterface",
+  "scaleBitmapToMaxEdge(",
+  "root.setBackgroundColor(Color.WHITE)",
+  "AudioWaveView",
+  "叮当运维AI",
+  "叮当运维AI · 当前项目",
+  "assistantHomeAction(\"点我拍照\", false)",
+  "assistantHomeAction(recordingVoice ? \"结束提问\" : \"点我说话\", true)",
+  "voiceButton.setContentDescription(\"点我说话\")",
+  "cameraButton.setContentDescription(\"点我拍照\")",
+  "shouldShowHomeActions()",
+  "shouldShowComposerPanel()",
+  "if (shouldShowHomeActions())",
+  "composerPanel.setVisibility(showComposerPanel ? View.VISIBLE : View.GONE)",
+  "transcriptDraftText.setVisibility(View.GONE)",
+  "!\"点我说话\".equals(composerTranscript.trim())",
+  "chatScrollView.setDefaultFocusHighlightEnabled(false)",
+  "button.setDefaultFocusHighlightEnabled(false)",
+  "action.setDefaultFocusHighlightEnabled(false)",
+  "root.requestFocus()",
+  "private int liveTranscriptMessageIndex = -1;",
+  "updateLiveTranscriptMessage(partial, false)",
+  "updateLiveTranscriptMessage(finalText, true)",
+  "hasLiveTranscriptMessage()",
+  "clearLiveTranscriptMessageIfStreaming()",
+  "Camera preview transform view=",
+  "bufferRatio",
+  "照片已添加",
+  "点我说话",
+  "postInvalidateDelayed(48L)",
+  "新建项目",
+  "会话记录",
+  "当前项目",
 ]) {
   mustInclude(marker);
 }
 
-function readJavaNumberConstant(name) {
-  const match = code.match(new RegExp(`private static final (?:int|float) ${name} = ([0-9.]+)f?;`));
-  if (!match) {
-    throw new Error(`native HUD flow missing numeric constant: ${name}`);
-  }
-  return Number(match[1]);
+for (const marker of [
+  "private TextView evidenceText;",
+  "evidencePanel",
+  "evidenceForHud(",
+  "renderConversationHudPage()",
+  "activeHudPageIndex",
+  "private static final class HudResponse",
+  "applyHudResponse(",
+  "sendVoiceMultipart(",
+  "sendVoiceLegacyJson(",
+  "directAsrClient.transcribe(voiceFile",
+  "OPS_GLASSES_API_KEY",
+  "DASHSCOPE_API_KEY",
+  "EVENTS_ENDPOINT",
+  "现场证据",
+  "AI 运维现场指导",
+  "assistantHomeAction(\"拍照识别\"",
+  "assistantHomeAction(recordingVoice ? \"结束提问\" : \"语音提问\"",
+  "cameraButton = iconButton(\"+\")",
+  "voiceButton = iconButton(\"▷\")",
+  "voiceButton.setText(\"▷\")",
+  "voiceButton.setText(\"■\")",
+  "cameraButton.setContentDescription(\"拍照上传\")",
+  "照片会留在输入框",
+  "已添加到输入框",
+  "点一下结束录音",
+  "最后点发送",
+  "山东华方",
+]) {
+  mustNotInclude(marker);
 }
 
-function simulateVoiceVad(amplitudes) {
-  const pollMs = 180;
-  const minRecordingMs = 900;
-  const silenceAfterSpeechMs = 1100;
-  const noSpeechTimeoutMs = 3200;
-  const speechThreshold = readJavaNumberConstant("VOICE_SPEECH_AMPLITUDE_THRESHOLD");
-  const silenceRatio = readJavaNumberConstant("VOICE_RELATIVE_SILENCE_RATIO");
-  let peakAmplitude = 0;
-  let speechDetected = false;
-  let lastSpeechAt = 0;
-  for (let index = 0; index < amplitudes.length; index += 1) {
-    const now = (index + 1) * pollMs;
-    const amplitude = amplitudes[index];
-    peakAmplitude = Math.max(peakAmplitude, amplitude);
-    if (amplitude >= speechThreshold) {
-      speechDetected = true;
-      const dynamicThreshold = Math.max(speechThreshold, Math.round(peakAmplitude * silenceRatio));
-      if (amplitude >= dynamicThreshold) {
-        lastSpeechAt = now;
-      }
-    }
-    const elapsedMs = now;
-    const silentMs = now - lastSpeechAt;
-    if (speechDetected && elapsedMs >= minRecordingMs && silentMs >= silenceAfterSpeechMs) {
-      return { stopReason: "silence_detected", elapsedMs };
-    }
-    if (!speechDetected && elapsedMs >= noSpeechTimeoutMs) {
-      return { stopReason: "no_speech_timeout", elapsedMs };
-    }
-  }
-  return { stopReason: "max_duration", elapsedMs: 10000 };
+const startVoiceIndex = code.indexOf("startToggleVoiceRecording()");
+const finishVoiceIndex = code.indexOf("finishToggleVoiceRecording(");
+if (startVoiceIndex < 0 || finishVoiceIndex < 0 || startVoiceIndex > finishVoiceIndex) {
+  throw new Error("voice interaction must be click-to-start and click-to-stop");
 }
 
-const realAir3RoomNoiseAfterSpeech = [
-  128, 261, 2284, 1799, 1521, 2023, 1028, 1017, 1241, 932, 945, 1608,
-  1674, 1490, 1303, 819, 1146, 1096, 957, 1163, 1048, 1043, 653, 583,
-  1942, 1849, 1040, 777, 861, 1346, 794, 967, 721, 1063, 1021, 1187,
-  1537, 1293, 1072, 941, 569, 814, 989, 1409, 2063, 1105, 1057, 661,
-  1063, 600, 920,
-];
-const vadReplay = simulateVoiceVad(realAir3RoomNoiseAfterSpeech);
-if (vadReplay.stopReason !== "silence_detected" || vadReplay.elapsedMs > 4500) {
-  throw new Error(
-    `voice VAD should stop after speech before max duration, got ${vadReplay.stopReason} at ${vadReplay.elapsedMs}ms`,
-  );
+const recordThreadIndex = code.indexOf("private void startVoiceRecordThread(");
+const stopVoiceIndex = code.indexOf("private void stopVoiceRecording(", recordThreadIndex);
+const recordThreadBody = code.slice(recordThreadIndex, stopVoiceIndex < 0 ? code.length : stopVoiceIndex);
+if (!recordThreadBody.includes("feedRealtimeAsrPcm(buffer, read)") ||
+    !code.includes("onAsrPartial(")) {
+  throw new Error("voice recording must feed PCM chunks into realtime ASR and show partial text while speaking");
 }
 
-const voiceUploadReadTimeoutMs = readJavaNumberConstant("VOICE_UPLOAD_READ_TIMEOUT_MS");
-if (voiceUploadReadTimeoutMs !== 65000) {
-  throw new Error(`voice upload read timeout should be 65000ms, got ${voiceUploadReadTimeoutMs}ms`);
+const asrFinalBody = methodBody("onAsrFinal(");
+if (!asrFinalBody.includes("voiceStreamState = VoiceStreamState.AI_PENDING") ||
+    !asrFinalBody.includes("stopVoiceCaptureAfterAsrFinal()") ||
+    !asrFinalBody.includes("sendComposerToAi();")) {
+  throw new Error("final ASR text must auto-send to GPT to reduce glasses-side operations");
 }
 
-mustNotInclude("attachCaptureGestures(root, previewView, scrim, guideOverlay, topPanel, titleText, stepText,\n                centerPanel, resultText, hintText, statusText)", "full-screen taps must not trigger capture when HUD paging exists");
-mustNotInclude("setResultText(voiceIntentLabel(intent))", "voiceIntent must not drive the V2 primary HUD result");
-mustNotInclude("setHintForStep(nextStep, text)", "image responses must render structured HUD fields");
-mustNotInclude("setStatus(statusForStep(nextStep))", "image responses must render status by resultType/feedbackCode");
-mustNotInclude("服务器 SSH 恢复", "native HUD must not present the app as server-only");
-mustNotInclude("请对准服务器本地控制台或终端窗口", "home HUD must accept any field scene");
-mustNotInclude("正在上传给 AI 识别服务器控制台", "upload HUD must describe general scene analysis");
-mustNotInclude("new MediaRecorder()", "Air3 STT service reliably recognizes WAV; native voice capture must not upload m4a/AAC");
-mustNotInclude("MediaRecorder.OutputFormat.MPEG_4", "voice capture must not use m4a/AAC for STT");
-mustNotInclude("MediaRecorder.AudioEncoder.AAC", "voice capture must not use AAC for STT");
-mustNotInclude("data:audio/mp4;base64,", "voice upload must send WAV content type");
+const voiceUnclearBody = methodBody("onVoiceUnclear(");
+if (!voiceUnclearBody.includes("composerTranscript = voiceStatusForDiagnostic(code)") ||
+    !voiceUnclearBody.includes("voiceStatusForDiagnostic(code)")) {
+  throw new Error("voice unclear state must replace listening placeholders with a short retry diagnosis");
+}
 
-console.log("Native HUD flow validation passed.");
+const confirmPhotoIndex = code.indexOf("private void confirmCapturedPhoto(byte[] jpegBytes)");
+const nextMethodIndex = code.indexOf("\n    private void ", confirmPhotoIndex + 1);
+const confirmPhotoBody = code.slice(confirmPhotoIndex, nextMethodIndex < 0 ? code.length : nextMethodIndex);
+if (!confirmPhotoBody.includes("composerImageBytes = jpegBytes") ||
+    !confirmPhotoBody.includes("composerImagePreviewBase64 = createImagePreviewBase64(jpegBytes)") ||
+    !confirmPhotoBody.includes("showComposerAttachment(") ||
+    confirmPhotoBody.includes("sendComposerToAi()")) {
+  throw new Error("camera photo must stay in the composer with a real thumbnail before sending");
+}
+
+const imageBubbleBody = methodBlock("private View imageMessageBubble(");
+if (!imageBubbleBody.includes("ImageView imageView = new ImageView(this)") ||
+    !imageBubbleBody.includes("message.imagePreviewBase64") ||
+    !imageBubbleBody.includes("message.imagePreviewBitmap") ||
+    !imageBubbleBody.includes("ImageView.ScaleType.FIT_CENTER")) {
+  throw new Error("sent photo messages must render a non-stretched image thumbnail in chat");
+}
+
+const uploadImageBody = methodBody("uploadImageForChat(");
+if (!uploadImageBody.includes("DIRECT_GPT_ENABLED") ||
+    !uploadImageBody.includes("onBackendImageUploaded(\"local-photo\", jpegBytes)")) {
+  throw new Error("direct GPT mode must keep local photos usable without backend image upload");
+}
+
+const sendComposerBody = methodBody("sendComposerToAi(");
+if (!sendComposerBody.includes("effectiveImageId") ||
+    !sendComposerBody.includes("latestImageMessage()") ||
+    !sendComposerBody.includes("contextImage.imageId") ||
+    !sendComposerBody.includes("composerImageUploadFailed") ||
+    !sendComposerBody.includes("isIdentityQuestion(prompt)") ||
+    !sendComposerBody.includes("appendAssistantMessage(AI_IDENTITY_RESPONSE)") ||
+    !sendComposerBody.includes("appendUserImageMessage(effectiveImageId, imagePreviewBase64)")) {
+  throw new Error("sending must distinguish upload failure from upload-in-progress and preserve the chat thumbnail");
+}
+if (sendComposerBody.includes("if (image == null)")) {
+  throw new Error("voice-only conversations must not be blocked by a missing photo");
+}
+
+const hardwareShortcutBody = methodBlock("private boolean handleHardwareShortcut(");
+if (!hardwareShortcutBody.includes("screenMode == ScreenMode.CAMERA") ||
+    !hardwareShortcutBody.includes("captureStillImage();") ||
+    !hardwareShortcutBody.includes("startToggleVoiceRecording();")) {
+  throw new Error("hardware shortcuts must execute from dispatch ACTION_UP even when a child view has focus");
+}
+
+console.log("Native chat flow validation passed.");

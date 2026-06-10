@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Air3 语音对话 HUD 预览</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial,
+          sans-serif;
+        background: #050807;
+        color: #f3fff9;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 24px;
+        background:
+          radial-gradient(circle at 50% -10%, rgba(50, 110, 80, 0.16), transparent 38%),
+          linear-gradient(180deg, #09100e 0%, #030606 100%);
+      }
+
+      .page-head {
+        max-width: 1440px;
+        margin: 0 auto 18px;
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 28px;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      .summary {
+        margin: 0;
+        color: #aec7bd;
+        font-size: 15px;
+      }
+
+      .state-switcher {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
+      .state-switcher button {
+        appearance: none;
+        min-height: 34px;
+        border: 1px solid rgba(93, 255, 173, 0.28);
+        border-radius: 6px;
+        padding: 0 12px;
+        background: rgba(8, 22, 22, 0.76);
+        color: #c9ded7;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .state-switcher button.active {
+        border-color: #5dffad;
+        color: #effff7;
+        background: rgba(26, 72, 53, 0.82);
+      }
+
+      .stage-wrap {
+        max-width: 1440px;
+        margin: 0 auto;
+      }
+
+      .stage {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        overflow: hidden;
+        border: 1px solid rgba(93, 255, 173, 0.36);
+        border-radius: 8px;
+        background: #020606;
+        box-shadow: 0 28px 80px rgba(0, 0, 0, 0.48);
+      }
+
+      .camera {
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(90deg, rgba(2, 6, 7, 0.48), rgba(2, 6, 7, 0.08) 42%, rgba(2, 6, 7, 0.52)),
+          linear-gradient(180deg, rgba(2, 9, 10, 0.15), rgba(0, 0, 0, 0.62)),
+          radial-gradient(circle at 18% 76%, rgba(175, 160, 118, 0.18), transparent 16%),
+          radial-gradient(circle at 79% 35%, rgba(36, 114, 90, 0.24), transparent 23%),
+          linear-gradient(118deg, #0c0f0c 0%, #081719 48%, #030606 100%);
+      }
+
+      .camera::before,
+      .camera::after {
+        content: "";
+        position: absolute;
+        opacity: 0.58;
+      }
+
+      .camera::before {
+        right: 8%;
+        top: 12%;
+        width: 38%;
+        height: 43%;
+        border: 1px solid rgba(90, 255, 170, 0.12);
+        background:
+          repeating-linear-gradient(
+            0deg,
+            rgba(89, 255, 172, 0.18) 0 2px,
+            transparent 2px 21px
+          ),
+          linear-gradient(90deg, rgba(6, 25, 28, 0.82), rgba(8, 18, 22, 0.5));
+        transform: skewY(-3deg);
+      }
+
+      .camera::after {
+        left: 0;
+        bottom: 0;
+        width: 44%;
+        height: 34%;
+        background:
+          linear-gradient(16deg, rgba(205, 190, 145, 0.18), transparent 48%),
+          repeating-linear-gradient(
+            92deg,
+            rgba(240, 230, 190, 0.11) 0 2px,
+            transparent 2px 24px
+          );
+        filter: blur(0.3px);
+      }
+
+      .hud-frame {
+        position: absolute;
+        inset: 1.2%;
+        border: 2px solid rgba(93, 255, 173, 0.74);
+        border-radius: 22px;
+        pointer-events: none;
+      }
+
+      .hud-frame::before,
+      .hud-frame::after {
+        content: "";
+        position: absolute;
+        width: 12%;
+        border-top: 2px solid rgba(93, 255, 173, 0.28);
+        top: 49.8%;
+      }
+
+      .hud-frame::before {
+        left: -1.2%;
+      }
+
+      .hud-frame::after {
+        right: -1.2%;
+      }
+
+      .topbar {
+        position: absolute;
+        left: 2.4%;
+        right: 2.4%;
+        top: 2.1%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 48px;
+        border-bottom: 1px solid rgba(93, 255, 173, 0.58);
+      }
+
+      .brand,
+      .mode {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .brand {
+        color: #f2fff8;
+        font-size: clamp(16px, 1.7vw, 26px);
+      }
+
+      .mode {
+        color: #5dffad;
+        font-size: clamp(14px, 1.45vw, 22px);
+      }
+
+      .system-icons {
+        display: inline-flex;
+        gap: 10px;
+        align-items: center;
+        color: #d9fff0;
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .content {
+        position: absolute;
+        left: 7%;
+        right: 7%;
+        top: 12%;
+        bottom: 17%;
+        display: grid;
+        grid-template-columns: minmax(0, 1.18fr) minmax(280px, 0.72fr);
+        gap: 6.6%;
+        align-items: center;
+      }
+
+      .conversation {
+        min-width: 0;
+      }
+
+      .turn {
+        display: grid;
+        grid-template-columns: 58px minmax(0, 1fr);
+        gap: 18px;
+        margin-bottom: 22px;
+      }
+
+      .avatar {
+        width: 58px;
+        height: 58px;
+        display: grid;
+        place-items: center;
+        border: 2px solid currentColor;
+        border-radius: 50%;
+        color: #46e7ff;
+        background: rgba(3, 19, 22, 0.74);
+        box-shadow: 0 0 22px rgba(70, 231, 255, 0.18);
+      }
+
+      .turn.ai .avatar {
+        color: #5dffad;
+        box-shadow: 0 0 22px rgba(93, 255, 173, 0.18);
+      }
+
+      .meta {
+        margin-bottom: 7px;
+        color: #56e8ff;
+        font-size: clamp(13px, 1.12vw, 17px);
+        font-weight: 800;
+      }
+
+      .turn.ai .meta {
+        color: #5dffad;
+      }
+
+      .time {
+        margin-left: 12px;
+        color: #8fa39d;
+        font-weight: 600;
+      }
+
+      .bubble {
+        width: fit-content;
+        max-width: 100%;
+        border: 1px solid rgba(225, 245, 238, 0.25);
+        border-radius: 8px;
+        padding: 13px 16px;
+        background: rgba(16, 24, 24, 0.74);
+        color: #f1fff9;
+        font-size: clamp(16px, 1.5vw, 24px);
+        line-height: 1.32;
+        backdrop-filter: blur(8px);
+      }
+
+      .instruction {
+        width: min(780px, 100%);
+        border-color: rgba(93, 255, 173, 0.48);
+        padding: 20px 24px;
+        background: rgba(8, 17, 18, 0.82);
+        box-shadow: inset 0 0 34px rgba(93, 255, 173, 0.05);
+      }
+
+      .instruction-title {
+        margin: 0 0 12px;
+        color: #f6fff9;
+        font-size: clamp(22px, 2.2vw, 34px);
+        line-height: 1.15;
+        font-weight: 900;
+      }
+
+      .instruction ol {
+        margin: 0;
+        padding-left: 30px;
+        color: #e7f4ef;
+        font-size: clamp(17px, 1.55vw, 24px);
+        line-height: 1.45;
+      }
+
+      .instruction li + li {
+        margin-top: 5px;
+      }
+
+      .warning {
+        margin-top: 14px;
+        color: #ffbf47;
+        font-size: clamp(14px, 1.2vw, 18px);
+        font-weight: 800;
+      }
+
+      .listen-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-left: 76px;
+        margin-top: 10px;
+        color: #56e8ff;
+        font-size: clamp(15px, 1.35vw, 21px);
+        font-weight: 800;
+      }
+
+      .mic {
+        display: grid;
+        width: 52px;
+        height: 52px;
+        place-items: center;
+        border: 2px solid #56e8ff;
+        border-radius: 50%;
+        background: rgba(4, 27, 30, 0.7);
+        box-shadow: 0 0 28px rgba(86, 232, 255, 0.28);
+      }
+
+      .wave {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        width: 300px;
+        max-width: 38vw;
+      }
+
+      .wave span {
+        width: 4px;
+        height: calc(10px + var(--h) * 1px);
+        border-radius: 10px;
+        background: #56e8ff;
+        opacity: 0.84;
+      }
+
+      .evidence {
+        align-self: center;
+        border: 1px solid rgba(93, 255, 173, 0.52);
+        border-radius: 8px;
+        padding: 22px;
+        background: rgba(3, 13, 15, 0.7);
+        box-shadow: inset 0 0 42px rgba(93, 255, 173, 0.04);
+      }
+
+      .evidence-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: #5dffad;
+        font-size: clamp(18px, 1.75vw, 28px);
+        font-weight: 900;
+      }
+
+      .check {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        border-radius: 50%;
+        background: #5dffad;
+        color: #03100b;
+        font-size: 20px;
+      }
+
+      .preview {
+        position: relative;
+        margin: 18px 0 14px;
+        aspect-ratio: 16 / 9;
+        overflow: hidden;
+        border: 1px solid rgba(230, 245, 240, 0.3);
+        border-radius: 8px;
+        background:
+          repeating-linear-gradient(
+            0deg,
+            rgba(93, 255, 173, 0.21) 0 2px,
+            transparent 2px 18px
+          ),
+          linear-gradient(112deg, #182a32 0%, #081317 100%);
+      }
+
+      .preview::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(90deg, transparent 8%, rgba(255, 255, 255, 0.08) 9%, transparent 10%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 34%);
+      }
+
+      .evidence-time {
+        color: #c8d9d3;
+        font-size: clamp(15px, 1.25vw, 20px);
+        font-weight: 700;
+      }
+
+      .hint {
+        margin-top: 14px;
+        color: #9fb8ae;
+        font-size: clamp(13px, 1.05vw, 17px);
+        line-height: 1.45;
+      }
+
+      .controls {
+        position: absolute;
+        left: 15%;
+        right: 15%;
+        bottom: 4.5%;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 4.8%;
+      }
+
+      .control {
+        min-width: 0;
+        height: 72px;
+        display: grid;
+        grid-template-columns: auto auto 1fr;
+        align-items: center;
+        gap: 14px;
+        border: 1px solid rgba(93, 255, 173, 0.58);
+        border-radius: 8px;
+        padding: 0 18px;
+        background: rgba(4, 19, 18, 0.78);
+        color: #ecfff6;
+      }
+
+      .control.active {
+        box-shadow:
+          0 0 0 1px rgba(93, 255, 173, 0.38),
+          inset 0 0 24px rgba(93, 255, 173, 0.08);
+      }
+
+      .key {
+        display: grid;
+        width: 48px;
+        height: 48px;
+        place-items: center;
+        border: 2px solid #5dffad;
+        border-radius: 8px;
+        color: #5dffad;
+        font-size: 28px;
+        font-weight: 900;
+      }
+
+      .icon {
+        display: grid;
+        width: 28px;
+        height: 28px;
+        place-items: center;
+        color: #f6fff9;
+      }
+
+      .control-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: clamp(16px, 1.45vw, 24px);
+        font-weight: 900;
+      }
+
+      .screen-note {
+        max-width: 1440px;
+        margin: 12px auto 0;
+        color: #8da79c;
+        font-size: 13px;
+      }
+
+      svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      @media (max-width: 960px) {
+        body {
+          padding: 14px;
+        }
+
+        .page-head {
+          display: block;
+        }
+
+        .state-switcher {
+          justify-content: flex-start;
+          margin-top: 14px;
+        }
+
+        .content {
+          left: 5%;
+          right: 5%;
+          grid-template-columns: 1fr;
+          gap: 16px;
+          top: 10%;
+          bottom: 18%;
+          align-content: center;
+        }
+
+        .evidence {
+          display: none;
+        }
+
+        .controls {
+          left: 4%;
+          right: 4%;
+          gap: 8px;
+        }
+
+        .control {
+          height: 58px;
+          gap: 8px;
+          padding: 0 8px;
+        }
+
+        .key {
+          width: 36px;
+          height: 36px;
+          font-size: 21px;
+        }
+
+        .icon {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="page-head">
+      <div>
+        <h1>Air3 语音对话 HUD 预览</h1>
+        <p class="summary">对话是主流程，照片是现场证据；底部三键保持 Air3 可操作性。</p>
+      </div>
+      <nav class="state-switcher" aria-label="切换预览状态">
+        <button class="active" type="button" data-state="normal">对话指导</button>
+        <button type="button" data-state="listening">正在听</button>
+        <button type="button" data-state="photo">画面更新</button>
+        <button type="button" data-state="warning">需要补充</button>
+      </nav>
+    </header>
+
+    <main class="stage-wrap">
+      <section class="stage" aria-label="Air3 语音对话 HUD">
+        <div class="camera"></div>
+        <div class="hud-frame"></div>
+
+        <div class="topbar">
+          <div class="brand">
+            <span aria-hidden="true">⌐○-○</span>
+            <span>叮当保AI 运维眼镜</span>
+            <span class="system-icons">|  Wi-Fi  92%  |  10:28</span>
+          </div>
+          <div class="mode">
+            <span>语音现场指导</span>
+            <span aria-hidden="true">▂▆▇▃</span>
+          </div>
+        </div>
+
+        <div class="content">
+          <div class="conversation">
+            <div class="turn user">
+              <div class="avatar" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="8" r="4" fill="currentColor" />
+                  <path d="M5 21c1.3-4.4 12.7-4.4 14 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </div>
+              <div>
+                <div class="meta">你（语音）<span class="time">10:24:31</span></div>
+                <div class="bubble" data-user-one>系统告警，应用访问超时，该怎么处理？</div>
+              </div>
+            </div>
+
+            <div class="turn ai">
+              <div class="avatar" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <rect x="5" y="7" width="14" height="11" rx="5" stroke="currentColor" stroke-width="2" />
+                  <circle cx="10" cy="12.5" r="1.4" fill="currentColor" />
+                  <circle cx="14" cy="12.5" r="1.4" fill="currentColor" />
+                  <path d="M12 7V4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path d="M8 18l-2 2M16 18l2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </div>
+              <div>
+                <div class="meta">叮当保AI <span class="time">10:24:36</span></div>
+                <div class="bubble instruction">
+                  <h2 class="instruction-title" data-title>请按以下步骤排查处理：</h2>
+                  <ol data-steps>
+                    <li>检查应用服务状态，确认是否正常运行。</li>
+                    <li>查看服务器资源使用情况，重点关注 CPU 和内存。</li>
+                    <li>检查网络连通性，执行 ping 网关地址。</li>
+                    <li>若问题仍未解决，重启应用服务并观察。</li>
+                  </ol>
+                  <div class="warning" data-warning>操作前请确认已通知相关人员。</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="turn user">
+              <div class="avatar" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="8" r="4" fill="currentColor" />
+                  <path d="M5 21c1.3-4.4 12.7-4.4 14 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </div>
+              <div>
+                <div class="meta">你（语音）<span class="time">10:25:12</span></div>
+                <div class="bubble" data-user-two>应用服务正常，CPU 占用 80%，下一步？</div>
+              </div>
+            </div>
+
+            <div class="listen-row">
+              <div class="mic" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <rect x="9" y="4" width="6" height="10" rx="3" stroke="currentColor" stroke-width="2" />
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </div>
+              <span data-listen-label>正在聆听...</span>
+              <div class="wave" aria-hidden="true">
+                <span style="--h: 4"></span><span style="--h: 10"></span><span style="--h: 18"></span><span style="--h: 8"></span>
+                <span style="--h: 22"></span><span style="--h: 31"></span><span style="--h: 15"></span><span style="--h: 27"></span>
+                <span style="--h: 12"></span><span style="--h: 20"></span><span style="--h: 34"></span><span style="--h: 17"></span>
+                <span style="--h: 26"></span><span style="--h: 13"></span><span style="--h: 8"></span>
+              </div>
+            </div>
+          </div>
+
+          <aside class="evidence" aria-label="现场画面证据">
+            <div class="evidence-head">
+              <span data-evidence-title>现场画面已更新</span>
+              <span class="check" aria-hidden="true">✓</span>
+            </div>
+            <div class="preview"></div>
+            <div class="evidence-time" data-evidence-time>10:28:35</div>
+            <div class="hint" data-evidence-hint>
+              照片只作为本轮对话上下文。需要重新确认画面时，按 1 更新现场画面。
+            </div>
+          </aside>
+        </div>
+
+        <div class="controls">
+          <div class="control" data-control="photo">
+            <div class="key">1</div>
+            <div class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M5 8h3l1.5-2h5L16 8h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2" />
+                <circle cx="12" cy="13.5" r="3.2" stroke="currentColor" stroke-width="2" />
+              </svg>
+            </div>
+            <div class="control-label">拍照更新画面</div>
+          </div>
+          <div class="control active" data-control="voice">
+            <div class="key">2</div>
+            <div class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <rect x="9" y="4" width="6" height="10" rx="3" stroke="currentColor" stroke-width="2" />
+                <path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </div>
+            <div class="control-label">语音提问</div>
+          </div>
+          <div class="control" data-control="back">
+            <div class="key">3</div>
+            <div class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M9 7H5v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M5 11a7 7 0 1 0 2-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </div>
+            <div class="control-label">返回 / 重拍</div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <p class="screen-note">预览说明：这是 UI 方向稿，不包含 APK 逻辑改动；真实落地时可复用现有拍照、语音、分页和诊断状态。</p>
+
+    <script>
+      const states = {
+        normal: {
+          title: "请按以下步骤排查处理：",
+          steps: [
+            "检查应用服务状态，确认是否正常运行。",
+            "查看服务器资源使用情况，重点关注 CPU 和内存。",
+            "检查网络连通性，执行 ping 网关地址。",
+            "若问题仍未解决，重启应用服务并观察。"
+          ],
+          warning: "操作前请确认已通知相关人员。",
+          userOne: "系统告警，应用访问超时，该怎么处理？",
+          userTwo: "应用服务正常，CPU 占用 80%，下一步？",
+          listen: "正在聆听...",
+          evidenceTitle: "现场画面已更新",
+          evidenceTime: "10:28:35",
+          evidenceHint: "照片只作为本轮对话上下文。需要重新确认画面时，按 1 更新现场画面。",
+          activeControl: "voice"
+        },
+        listening: {
+          title: "我在听，请直接说现场情况",
+          steps: [
+            "用一句短话说明你刚刚做了什么。",
+            "如果屏幕有变化，可以说“我已输入完成”。",
+            "说完后松开按键，系统会自动转文字。"
+          ],
+          warning: "请靠近麦克风，说短一点、慢一点。",
+          userOne: "刚刚按 2 开始语音提问。",
+          userTwo: "准备补充现场结果。",
+          listen: "正在录音...",
+          evidenceTitle: "沿用上一张现场画面",
+          evidenceTime: "10:28:35",
+          evidenceHint: "本轮先听语音，不强制重新拍照。需要更新画面时再按 1。",
+          activeControl: "voice"
+        },
+        photo: {
+          title: "现场画面已经更新",
+          steps: [
+            "我看到终端窗口和资源监控页面。",
+            "当前可以继续用语音说明你想排查的问题。",
+            "如果要让我读屏幕输出，请保持画面稳定。"
+          ],
+          warning: "画面清晰时不需要重复拍照。",
+          userOne: "我拍了一张新的现场画面。",
+          userTwo: "你能结合这张图继续判断吗？",
+          listen: "等待语音提问",
+          evidenceTitle: "现场画面已更新",
+          evidenceTime: "10:31:02",
+          evidenceHint: "这张照片会作为后续语音对话的上下文，直到你再次按 1 更新。",
+          activeControl: "photo"
+        },
+        warning: {
+          title: "还需要补充一个关键信息",
+          steps: [
+            "当前画面能看到告警，但看不到完整命令输出。",
+            "请按 1 更新终端输出画面，或按 2 说明错误码。",
+            "不要先执行重启，先确认影响范围。"
+          ],
+          warning: "信息不足时只给下一步确认动作，不直接给高风险命令。",
+          userOne: "只看到告警列表，没有打开终端。",
+          userTwo: "现在能不能直接重启服务？",
+          listen: "等待补充信息",
+          evidenceTitle: "画面证据不足",
+          evidenceTime: "10:32:18",
+          evidenceHint: "请把完整终端输出放进画面，或用语音补充服务名和错误码。",
+          activeControl: "back"
+        }
+      };
+
+      const buttons = document.querySelectorAll("[data-state]");
+      const title = document.querySelector("[data-title]");
+      const steps = document.querySelector("[data-steps]");
+      const warning = document.querySelector("[data-warning]");
+      const userOne = document.querySelector("[data-user-one]");
+      const userTwo = document.querySelector("[data-user-two]");
+      const listenLabel = document.querySelector("[data-listen-label]");
+      const evidenceTitle = document.querySelector("[data-evidence-title]");
+      const evidenceTime = document.querySelector("[data-evidence-time]");
+      const evidenceHint = document.querySelector("[data-evidence-hint]");
+      const controls = document.querySelectorAll("[data-control]");
+
+      function renderState(key) {
+        const state = states[key];
+        title.textContent = state.title;
+        steps.innerHTML = state.steps.map((item) => `<li>${item}</li>`).join("");
+        warning.textContent = state.warning;
+        userOne.textContent = state.userOne;
+        userTwo.textContent = state.userTwo;
+        listenLabel.textContent = state.listen;
+        evidenceTitle.textContent = state.evidenceTitle;
+        evidenceTime.textContent = state.evidenceTime;
+        evidenceHint.textContent = state.evidenceHint;
+
+        buttons.forEach((button) => {
+          button.classList.toggle("active", button.dataset.state === key);
+        });
+        controls.forEach((control) => {
+          control.classList.toggle("active", control.dataset.control === state.activeControl);
+        });
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => renderState(button.dataset.state));
+      });
+    </script>
+  </body>
+</html>

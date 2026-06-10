@@ -2,7 +2,7 @@ package com.codex.air3nativecamera;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -11,8 +11,8 @@ import android.graphics.Color;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.graphics.Paint;
-import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
+import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -22,139 +22,233 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
-import android.media.Image;
-import android.media.ImageReader;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
+import android.media.ExifInterface;
+import android.media.Image;
+import android.media.ImageReader;
 import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Base64;
+import android.util.Log;
 import android.util.Size;
 import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
-import org.json.JSONObject;
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.RandomAccessFile;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.Socket;
 import java.net.URL;
-import java.nio.ByteBuffer;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Locale;
+import java.util.UUID;
+
+import javax.net.ssl.SSLSocketFactory;
 
 public final class MainActivity extends Activity {
+    private enum ScreenMode { CHAT, CAMERA }
+    private enum VoiceStreamState { IDLE, LISTENING, PARTIAL_READY, FINAL_READY, AI_PENDING, AI_DONE, VOICE_UNCLEAR }
+
+    private interface ChatAiClient {
+        void send(String prompt, String imageId, byte[] jpegBytes, StreamingCallback callback);
+    }
+
+    private interface BackendImageUploadCallback {
+        void onUploaded(String sessionId, String imageId, int imageBytes);
+        void onError(Exception error);
+    }
+
+    private interface RealtimeAsrClient {
+        void start(RealtimeAsrCallback callback);
+        void acceptPcm(byte[] pcm, int length);
+        void finish(String stopReason);
+        void cancel();
+    }
+
+    private interface RealtimeAsrCallback {
+        void onPartial(String text);
+        void onFinal(String text);
+        void onUnclear(String diagnosticCode);
+        void onError(Exception error);
+    }
+
+    private interface StreamingCallback {
+        void onDelta(String text);
+        void onComplete();
+        void onError(Exception error);
+    }
+
     private static final int REQUEST_CAMERA = 1001;
     private static final int REQUEST_AUDIO = 1002;
-    private static final String EVENTS_ENDPOINT = GeneratedConfig.EVENTS_ENDPOINT;
-    private static final String OPS_GLASSES_API_KEY = GeneratedConfig.OPS_GLASSES_API_KEY;
-    private static final String PREF_SESSION_ID = "opsSessionId";
-    private static final String PREF_CURRENT_STEP = "opsCurrentStep";
-    private static final String PREF_LAST_RESPONSE = "opsLastResponse";
-    private static final float GUIDE_FRAME_WIDTH_RATIO = 0.72f;
-    private static final float GUIDE_FRAME_HEIGHT_RATIO = 0.50f;
-    private static final float GUIDE_FRAME_TOP_OFFSET_RATIO = 0.27f;
-    private static final boolean UPLOAD_FULL_CAMERA_JPEG = true;
-    private static final int JPEG_QUALITY = 94;
-    private static final long VOICE_RECORDING_MS = 10000L;
-    private static final long VOICE_MIN_RECORDING_MS = 900L;
-    private static final long VOICE_SILENCE_AFTER_SPEECH_MS = 1100L;
-    private static final long VOICE_NO_SPEECH_TIMEOUT_MS = 3200L;
-    private static final int VOICE_UPLOAD_READ_TIMEOUT_MS = 65000;
-    private static final long VOICE_AMPLITUDE_POLL_MS = 180L;
-    private static final int VOICE_SPEECH_AMPLITUDE_THRESHOLD = 900;
-    private static final float VOICE_RELATIVE_SILENCE_RATIO = 0.70f;
-    private static final int VOICE_AUDIO_SOURCE = MediaRecorder.AudioSource.VOICE_RECOGNITION;
+    private static final int KEYCODE_DVR = 173;
+    private static final String KEY_LOG_TAG = "DingdangKey";
+    private static final String JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+    private static final boolean DIRECT_GPT_ENABLED = GeneratedConfig.DIRECT_GPT_ENABLED;
+    private static final String DIRECT_GPT_BASE_URL = GeneratedConfig.DIRECT_GPT_BASE_URL;
+    private static final String DIRECT_GPT_MODEL = GeneratedConfig.DIRECT_GPT_MODEL;
+    private static final String DIRECT_GPT_API_KEY = GeneratedConfig.DIRECT_GPT_API_KEY;
+    private static final String DIRECT_ASR_ENDPOINT = GeneratedConfig.DIRECT_ASR_ENDPOINT;
+    private static final String DIRECT_ASR_API_KEY = GeneratedConfig.DIRECT_ASR_API_KEY;
+    private static final String DINGDANG_BACKEND_BASE_URL = GeneratedConfig.DINGDANG_BACKEND_BASE_URL;
+    private static final String DINGDANG_BACKEND_API_KEY = GeneratedConfig.DINGDANG_BACKEND_API_KEY;
+    private static final String DIRECT_ASR_MODEL = "fun-asr-realtime";
+    private static final int JPEG_QUALITY = GeneratedConfig.FAST_UPLOAD ? 82 : 92;
+    private static final int UPLOAD_MAX_IMAGE_EDGE = 1600;
+    private static final int PREVIEW_MAX_IMAGE_EDGE = 480;
+    private static final long VOICE_RECORDING_MS = 30000L;
     private static final int VOICE_SAMPLE_RATE_HZ = 16000;
     private static final int VOICE_WAV_CHANNEL_COUNT = 1;
     private static final int VOICE_WAV_BITS_PER_SAMPLE = 16;
     private static final int VOICE_WAV_HEADER_BYTES = 44;
-    private static final int HUD_PAGE_CHAR_LIMIT = 54;
-    private static final String VOICE_STT_PROMPT =
-            "中文普通话现场问题。常见短句：这个是什么、这是什么、有什么问题、下一步怎么做、帮我看屏幕报错。";
+    private static final String CHAT_PROJECT_PREFS = "dingdang_chat_projects";
+    private static final String CHAT_PROJECTS_JSON = "projects_json";
+    private static final String CURRENT_PROJECT_INDEX = "current_project_index";
+    private static final String AI_IDENTITY_RESPONSE =
+            "我是华方智联研发的叮当运维AI模型，专注现场运维场景。你可以通过眼镜拍摄现场画面，再用语音说明问题，我会结合图片和问题给出简洁、可执行的排查建议。";
 
-    private TextureView previewView;
-    private TextView titleText;
-    private TextView stepText;
-    private TextView hintText;
-    private TextView resultText;
-    private TextView statusText;
-    private TextView actionCaptureButton;
-    private TextView actionVoiceButton;
-    private TextView actionBackButton;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ArrayList<ChatMessage> chatMessages = new ArrayList<>();
+    private final ArrayList<ChatProject> chatProjects = new ArrayList<>();
+
+    private ScreenMode screenMode = ScreenMode.CHAT;
+    private FrameLayout root;
+    private TextureView previewView;
+    private LinearLayout chatLayer;
+    private LinearLayout cameraOverlay;
+    private LinearLayout projectListColumn;
+    private LinearLayout chatMessagesColumn;
+    private LinearLayout composerPanel;
+    private TextView titleText;
+    private TextView stateText;
+    private TextView attachmentPreviewText;
+    private ImageView attachmentPreviewImage;
+    private TextView transcriptDraftText;
+    private TextView cameraButton;
+    private TextView voiceButton;
+    private AudioWaveView voiceWaveView;
+    private TextView menuButton;
+    private TextView cameraStatusText;
+    private ScrollView chatScrollView;
+
     private HandlerThread cameraThread;
     private Handler cameraHandler;
     private CameraDevice cameraDevice;
     private CameraCaptureSession captureSession;
     private ImageReader imageReader;
-    private Size captureSize = new Size(1280, 720);
-    private Size previewSize = new Size(1280, 720);
-    private int sensorOrientation;
+    private Size previewSize;
+    private Size captureSize;
     private String cameraId;
-    private String sessionId = "";
-    private String currentStep = "locate_server";
+    private int sensorOrientation;
     private boolean captureInFlight;
+
     private AudioRecord voiceRecorder;
-    private File voiceFile;
     private Thread voiceRecordThread;
-    private final AtomicBoolean voiceRecordThreadRunning = new AtomicBoolean(false);
+    private File voiceFile;
     private boolean recordingVoice;
-    private long voiceRecordingStartedAt;
-    private long voiceLastSpeechAt;
-    private boolean voiceSpeechDetected;
-    private volatile int voiceCurrentAmplitude;
-    private int voicePeakAmplitude;
     private Runnable voiceStopRunnable;
-    private Runnable voiceAmplitudeMonitor;
-    private int activeVoiceGeneration;
-    private int captureGeneration;
-    private int interactionGeneration;
-    private boolean centerKeyLongPressed;
-    private HudResponse activeHud;
-    private int activeHudPageIndex;
-    private int cameraOpenRetryCount;
+    private VoiceStreamState voiceStreamState = VoiceStreamState.IDLE;
+    private RealtimeAsrClient realtimeAsrClient;
+    private int realtimeAsrPartialCount;
+    private boolean realtimeAsrFinished;
+
+    private byte[] composerImageBytes;
+    private String composerImageId = "";
+    private String composerImagePreviewBase64 = "";
+    private Bitmap composerImagePreviewBitmap;
+    private boolean composerImageUploadFailed;
+    private boolean sendAfterImageUpload;
+    private String composerTranscript = "";
+    private int streamingAssistantIndex = -1;
+    private int liveTranscriptMessageIndex = -1;
+    private boolean scrollChatToBottom;
+    private int chatScrollRequestId;
+    private long gptStreamStartedAtMs = 0L;
+    private boolean gptFirstDeltaLogged = false;
+    private int currentProjectIndex = 0;
+    private ChatAiClient chatAiClient;
+    private BackendChatClient backendChatClient;
+    private DirectAsrClient directAsrClient;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        sessionId = getPreferences(MODE_PRIVATE).getString(PREF_SESSION_ID, "");
-        currentStep = getPreferences(MODE_PRIVATE).getString(PREF_CURRENT_STEP, "locate_server");
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        chatAiClient = createChatAiClient();
+        directAsrClient = new DirectAsrClient(DIRECT_ASR_ENDPOINT, DIRECT_ASR_API_KEY);
+        realtimeAsrClient = createRealtimeAsrClient();
+        restoreChatProjects();
         buildUi();
-
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            setResultText("需要相机权限");
-            setStatus("请允许相机权限，然后重新进入应用。");
             requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
-            return;
+        } else {
+            startCameraFlow();
         }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_AUDIO);
+        }
+        renderChatScreen();
+    }
 
-        startCameraFlow();
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (previewView != null && previewView.isAvailable() && cameraDevice == null
+                && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            startCameraFlow();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        persistChatProjects();
+        stopVoiceRecording(false, "pause");
+        closeCamera();
+        stopCameraThread();
+        super.onPause();
     }
 
     @Override
     protected void onDestroy() {
+        persistChatProjects();
         stopVoiceRecording(false, "destroy");
         closeCamera();
         stopCameraThread();
@@ -162,557 +256,1555 @@ public final class MainActivity extends Activity {
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        if (previewView != null &&
-                checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            startCameraFlow();
-            restoreLastHudResponse();
-        }
-    }
-
-    @Override
-    protected void onPause() {
-        closeCamera();
-        stopCameraThread();
-        super.onPause();
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_CAMERA &&
-                grantResults.length > 0 &&
-                grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startCameraFlow();
-        } else {
-            setResultText("没有相机权限");
-            setStatus("相机权限未授权，无法采集现场画面。");
-        }
-    }
-
-    @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        android.util.Log.i("Air3NativeCameraTest", "key action=" + event.getAction()
-                + " code=" + event.getKeyCode()
-                + " name=" + KeyEvent.keyCodeToString(event.getKeyCode())
-                + " repeat=" + event.getRepeatCount());
+        if (event.getAction() == KeyEvent.ACTION_DOWN || event.getAction() == KeyEvent.ACTION_UP) {
+            Log.i(KEY_LOG_TAG,
+                    "dispatch action=" + event.getAction()
+                            + " keyCode=" + event.getKeyCode()
+                            + " keyName=" + KeyEvent.keyCodeToString(event.getKeyCode())
+                            + " scanCode=" + event.getScanCode()
+                            + " deviceId=" + event.getDeviceId()
+                            + " source=" + event.getSource()
+                            + " repeat=" + event.getRepeatCount()
+                            + " screen=" + screenMode);
+        }
+        if (event.getAction() == KeyEvent.ACTION_DOWN && isHandledHardwareKey(event.getKeyCode())) {
+            return true;
+        }
+        if (event.getAction() == KeyEvent.ACTION_UP && handleHardwareShortcut(event.getKeyCode())) {
+            return true;
+        }
         return super.dispatchKeyEvent(event);
     }
 
     @Override
-    public boolean dispatchTouchEvent(MotionEvent event) {
-        if (actionVoiceButton != null && isTouchInside(actionVoiceButton, event)) {
-            android.util.Log.i("Air3NativeCameraTest", "Voice button dispatch touch action=" + event.getAction()
-                    + " recording=" + recordingVoice);
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                showActionFeedback(actionVoiceButton, recordingVoice ? "结束录音" : "语音中");
-                return true;
-            }
-            if (event.getAction() == MotionEvent.ACTION_UP) {
-                handleVoiceButtonPress();
-                return true;
-            }
-        }
-        return super.dispatchTouchEvent(event);
-    }
-
-    private boolean isTouchInside(View view, MotionEvent event) {
-        int[] location = new int[2];
-        view.getLocationOnScreen(location);
-        float rawX = event.getRawX();
-        float rawY = event.getRawY();
-        return rawX >= location[0]
-                && rawX <= location[0] + view.getWidth()
-                && rawY >= location[1]
-                && rawY <= location[1] + view.getHeight();
-    }
-
-    @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
-            if (recordingVoice) {
-                stopVoiceRecording(true, "manual_finish");
-                return true;
-            }
-            centerKeyLongPressed = false;
-            event.startTracking();
-            setStatus("中心键已按下：短按拍照，长按语音。");
-            return true;
+        Log.i(KEY_LOG_TAG,
+                "onKeyDown keyCode=" + keyCode
+                        + " keyName=" + KeyEvent.keyCodeToString(keyCode)
+                        + " scanCode=" + event.getScanCode()
+                        + " deviceId=" + event.getDeviceId()
+                        + " source=" + event.getSource()
+                        + " screen=" + screenMode);
+        if (isHandledHardwareKey(keyCode)) {
+            return handleHardwareShortcut(keyCode);
         }
-        if (keyCode == KeyEvent.KEYCODE_CAMERA) {
-            setStatus("相机键已记录。当前版本请使用中心点击拍照，避免系统快捷键退出应用。");
-            return true;
-        }
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
-            backHudPageOrRetake();
-            return true;
+        if (isSystemReservedCameraKey(keyCode)) {
+            Log.i(KEY_LOG_TAG, "system-reserved camera key observed; not used as an app shortcut");
+            return super.onKeyDown(keyCode, event);
         }
         return super.onKeyDown(keyCode, event);
     }
 
-    @Override
-    public boolean onKeyLongPress(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
-            centerKeyLongPressed = true;
-            startCloudVoiceCapture();
+    private boolean handleHardwareShortcut(int keyCode) {
+        if (isConfirmKey(keyCode)) {
+            if (screenMode == ScreenMode.CAMERA) {
+                captureStillImage();
+            } else {
+                startToggleVoiceRecording();
+            }
             return true;
         }
-        return super.onKeyLongPress(keyCode, event);
+        if (isCameraShortcutKey(keyCode)) {
+            if (screenMode == ScreenMode.CAMERA) {
+                captureStillImage();
+            } else {
+                enterCameraScreen("hardware-key");
+            }
+            return true;
+        }
+        if (isBackShortcutKey(keyCode)) {
+            if (screenMode == ScreenMode.CAMERA) {
+                renderChatScreen();
+                return true;
+            }
+            if (screenMode == ScreenMode.CHAT) {
+                renderChatScreen();
+                return true;
+            }
+        }
+        if (isSendShortcutKey(keyCode)) {
+            if (screenMode == ScreenMode.CHAT) {
+                sendComposerToAi();
+                return true;
+            }
+        }
+        if (isVolumeKey(keyCode)) {
+            return true;
+        }
+        return false;
     }
 
-    @Override
-    public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
-            if (!recordingVoice && !centerKeyLongPressed) {
-                advanceHudPageOrCapture("key-center");
-            }
-            centerKeyLongPressed = false;
-            return true;
-        }
-        return super.onKeyUp(keyCode, event);
+    private boolean isConfirmKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER;
+    }
+
+    private boolean isCameraShortcutKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_FOCUS
+                || keyCode == KeyEvent.KEYCODE_F9;
+    }
+
+    private boolean isSystemReservedCameraKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_CAMERA
+                || keyCode == KEYCODE_DVR;
+    }
+
+    private boolean isBackShortcutKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+                || keyCode == KeyEvent.KEYCODE_BACK
+                || keyCode == KeyEvent.KEYCODE_F10;
+    }
+
+    private boolean isSendShortcutKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                || keyCode == KeyEvent.KEYCODE_MENU
+                || keyCode == KeyEvent.KEYCODE_F12;
+    }
+
+    private boolean isVolumeKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_VOLUME_UP
+                || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN;
+    }
+
+    private boolean isHandledHardwareKey(int keyCode) {
+        return isConfirmKey(keyCode)
+                || isCameraShortcutKey(keyCode)
+                || isBackShortcutKey(keyCode)
+                || isSendShortcutKey(keyCode)
+                || isVolumeKey(keyCode);
     }
 
     private void buildUi() {
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.rgb(2, 8, 12));
+        root = new FrameLayout(this);
+        root.setBackgroundColor(Color.WHITE);
 
         previewView = new TextureView(this);
-        previewView.setAlpha(0.86f);
+        previewView.setVisibility(View.GONE);
         root.addView(previewView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        View scrim = new View(this);
-        scrim.setBackgroundColor(Color.argb(42, 0, 0, 0));
-        root.addView(scrim, new FrameLayout.LayoutParams(
+        chatLayer = new LinearLayout(this);
+        chatLayer.setOrientation(LinearLayout.HORIZONTAL);
+        chatLayer.setBackgroundColor(Color.rgb(247, 250, 248));
+        chatLayer.setPadding(60, 60, 60, 60);
+        root.addView(chatLayer, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        GuideOverlayView guideOverlay = new GuideOverlayView(this);
-        root.addView(guideOverlay, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        LinearLayout topPanel = new LinearLayout(this);
-        topPanel.setOrientation(LinearLayout.HORIZONTAL);
-        topPanel.setGravity(Gravity.CENTER_VERTICAL);
-        topPanel.setPadding(28, 16, 28, 16);
-        topPanel.setBackground(panelBackground(Color.argb(172, 5, 16, 20), Color.argb(210, 87, 255, 176), 2));
-        FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP);
-        topParams.leftMargin = 32;
-        topParams.rightMargin = 32;
-        topParams.topMargin = 24;
-        root.addView(topPanel, topParams);
-
-        titleText = new TextView(this);
-        titleText.setTextColor(Color.rgb(232, 255, 244));
-        titleText.setTextSize(24);
-        titleText.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        titleText.setText("AI 运维眼镜  |  AI 运维现场指导");
-        topPanel.addView(titleText, new LinearLayout.LayoutParams(
+        final LinearLayout projectRail = new LinearLayout(this);
+        projectRail.setOrientation(LinearLayout.VERTICAL);
+        projectRail.setPadding(10, 10, 10, 10);
+        projectRail.setBackground(roundRect(Color.WHITE, Color.rgb(230, 230, 230), 18));
+        final LinearLayout.LayoutParams railParams = new LinearLayout.LayoutParams(
                 0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        railParams.rightMargin = 0;
+        chatLayer.addView(projectRail, railParams);
+        projectRail.setVisibility(View.GONE);
+
+        TextView projectHeader = new TextView(this);
+        projectHeader.setText("会话记录");
+        projectHeader.setTextColor(Color.rgb(18, 18, 18));
+        projectHeader.setTextSize(18);
+        projectHeader.setTypeface(Typeface.DEFAULT_BOLD);
+        projectHeader.setVisibility(View.GONE);
+        projectRail.addView(projectHeader, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView newProjectButton = menuItem("新对话");
+        newProjectButton.setContentDescription("新建项目");
+        newProjectButton.setTextColor(Color.rgb(20, 20, 20));
+        LinearLayout.LayoutParams newProjectParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        newProjectParams.topMargin = dp(2);
+        projectRail.addView(newProjectButton, newProjectParams);
+
+        TextView memoryButton = menuItem("记忆");
+        projectRail.addView(memoryButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView historyButton = menuItem("历史对话");
+        projectRail.addView(historyButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView settingsButton = menuItem("设置");
+        projectRail.addView(settingsButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        projectListColumn = new LinearLayout(this);
+        projectListColumn.setOrientation(LinearLayout.VERTICAL);
+        projectRail.addView(projectListColumn, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
                 1f));
 
-        stepText = new TextView(this);
-        stepText.setTextColor(Color.rgb(87, 255, 176));
-        stepText.setTextSize(20);
-        stepText.setGravity(Gravity.CENTER);
-        stepText.setPadding(20, 8, 20, 8);
-        stepText.setBackground(panelBackground(Color.argb(120, 7, 36, 29), Color.rgb(87, 255, 176), 2));
-        topPanel.addView(stepText, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout conversationColumn = new LinearLayout(this);
+        conversationColumn.setOrientation(LinearLayout.VERTICAL);
+        chatLayer.addView(conversationColumn, new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1f));
 
-        LinearLayout centerPanel = new LinearLayout(this);
-        centerPanel.setOrientation(LinearLayout.VERTICAL);
-        centerPanel.setGravity(Gravity.CENTER);
-        centerPanel.setPadding(40, 28, 40, 28);
-        centerPanel.setBackground(panelBackground(Color.argb(138, 3, 12, 18), Color.argb(170, 87, 255, 176), 2));
-        FrameLayout.LayoutParams centerParams = new FrameLayout.LayoutParams(
-                Math.round(getResources().getDisplayMetrics().widthPixels * 0.62f),
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER);
-        root.addView(centerPanel, centerParams);
-
-        resultText = new TextView(this);
-        resultText.setTextColor(Color.rgb(87, 255, 176));
-        resultText.setTextSize(32);
-        resultText.setGravity(Gravity.CENTER);
-        resultText.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        centerPanel.addView(resultText, new LinearLayout.LayoutParams(
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        conversationColumn.addView(topBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        hintText = new TextView(this);
-        hintText.setTextColor(Color.rgb(218, 234, 245));
-        hintText.setTextSize(22);
-        hintText.setGravity(Gravity.CENTER);
-        hintText.setPadding(0, 14, 0, 0);
-        centerPanel.addView(hintText, new LinearLayout.LayoutParams(
+        TextView leftIcon = iconButton("‹");
+        leftIcon.setTextSize(42);
+        leftIcon.setBackground(roundRect(Color.TRANSPARENT, Color.TRANSPARENT, 29));
+        topBar.addView(leftIcon, squareParams(58));
+
+        titleText = new TextView(this);
+        titleText.setText("新对话");
+        titleText.setTextColor(Color.rgb(18, 18, 18));
+        titleText.setTextSize(28);
+        titleText.setTypeface(Typeface.DEFAULT_BOLD);
+        titleText.setGravity(Gravity.CENTER);
+        topBar.addView(titleText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        stateText = new TextView(this);
+        stateText.setText("在线");
+        stateText.setTextColor(Color.rgb(78, 85, 94));
+        stateText.setTextSize(15);
+        stateText.setGravity(Gravity.RIGHT);
+        stateText.setVisibility(View.GONE);
+
+        menuButton = iconButton("☰");
+        menuButton.setTextSize(28);
+        menuButton.setBackground(roundRect(Color.TRANSPARENT, Color.TRANSPARENT, 29));
+        topBar.addView(menuButton, squareParams(58));
+
+        chatScrollView = new ScrollView(this);
+        chatScrollView.setFillViewport(false);
+        chatScrollView.setFocusable(false);
+        chatScrollView.setFocusableInTouchMode(false);
+        chatScrollView.setDefaultFocusHighlightEnabled(false);
+        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f);
+        scrollParams.topMargin = 28;
+        scrollParams.bottomMargin = 10;
+        conversationColumn.addView(chatScrollView, scrollParams);
+
+        chatMessagesColumn = new LinearLayout(this);
+        chatMessagesColumn.setOrientation(LinearLayout.VERTICAL);
+        chatMessagesColumn.setPadding(0, 0, 0, 6);
+        chatScrollView.addView(chatMessagesColumn, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        statusText = new TextView(this);
-        statusText.setTextColor(Color.rgb(218, 234, 245));
-        statusText.setTextSize(22);
-        statusText.setGravity(Gravity.LEFT);
-        statusText.setPadding(40, 18, 40, 18);
-        statusText.setBackground(panelBackground(Color.argb(150, 1, 7, 10), Color.argb(120, 218, 234, 245), 1));
-        FrameLayout.LayoutParams statusParams = new FrameLayout.LayoutParams(
+        composerPanel = new LinearLayout(this);
+        composerPanel.setOrientation(LinearLayout.VERTICAL);
+        composerPanel.setGravity(Gravity.CENTER_HORIZONTAL);
+        composerPanel.setPadding(0, 8, 0, 10);
+        composerPanel.setBackground(roundRect(Color.TRANSPARENT, Color.TRANSPARENT, 0));
+        conversationColumn.addView(composerPanel, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM);
-        statusParams.leftMargin = 32;
-        statusParams.rightMargin = 32;
-        statusParams.bottomMargin = 24;
-        root.addView(statusText, statusParams);
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        LinearLayout actionBar = new LinearLayout(this);
-        actionBar.setOrientation(LinearLayout.HORIZONTAL);
-        actionBar.setGravity(Gravity.CENTER);
-        FrameLayout.LayoutParams actionParams = new FrameLayout.LayoutParams(
+        LinearLayout draftBox = new LinearLayout(this);
+        draftBox.setOrientation(LinearLayout.VERTICAL);
+        draftBox.setGravity(Gravity.CENTER_HORIZONTAL);
+        composerPanel.addView(draftBox, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        attachmentPreviewImage = new ImageView(this);
+        attachmentPreviewImage.setVisibility(View.GONE);
+        attachmentPreviewImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        attachmentPreviewImage.setAdjustViewBounds(false);
+        attachmentPreviewImage.setContentDescription("现场照片预览");
+        attachmentPreviewImage.setBackground(roundRect(Color.WHITE, Color.rgb(224, 224, 224), 12));
+        LinearLayout.LayoutParams attachmentImageParams = new LinearLayout.LayoutParams(dp(148), dp(92));
+        attachmentImageParams.bottomMargin = dp(6);
+        draftBox.addView(attachmentPreviewImage, attachmentImageParams);
+
+        attachmentPreviewText = new TextView(this);
+        attachmentPreviewText.setText("");
+        attachmentPreviewText.setTextColor(Color.rgb(68, 76, 84));
+        attachmentPreviewText.setTextSize(15);
+        attachmentPreviewText.setGravity(Gravity.CENTER);
+        attachmentPreviewText.setVisibility(View.GONE);
+        attachmentPreviewText.setPadding(10, 8, 10, 8);
+        attachmentPreviewText.setBackground(roundRect(Color.WHITE, Color.rgb(224, 224, 224), 12));
+        draftBox.addView(attachmentPreviewText, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM);
-        actionParams.leftMargin = 28;
-        actionParams.rightMargin = 28;
-        actionParams.bottomMargin = 120;
-        root.addView(actionBar, actionParams);
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        actionCaptureButton = createActionButton("1", "中心点击", "拍照 / 下一步");
-        actionVoiceButton = createActionButton("2", "长按中心", "语音确认 / 补充说明");
-        actionBackButton = createActionButton("3", "返回键", "重拍 / 返回上一步");
-        actionBar.addView(actionCaptureButton, actionButtonLayoutParams(0));
-        actionBar.addView(actionVoiceButton, actionButtonLayoutParams(1));
-        actionBar.addView(actionBackButton, actionButtonLayoutParams(2));
+        transcriptDraftText = new TextView(this);
+        transcriptDraftText.setText("");
+        transcriptDraftText.setTextColor(Color.rgb(26, 26, 26));
+        transcriptDraftText.setTextSize(18);
+        transcriptDraftText.setGravity(Gravity.CENTER);
+        transcriptDraftText.setMinLines(1);
+        transcriptDraftText.setPadding(18, 10, 18, 10);
+        transcriptDraftText.setBackground(roundRect(Color.WHITE, Color.TRANSPARENT, 14));
+        LinearLayout.LayoutParams transcriptParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        transcriptParams.bottomMargin = dp(8);
+        draftBox.addView(transcriptDraftText, transcriptParams);
 
-        attachActionButtonHandlers();
+        voiceWaveView = new AudioWaveView(this);
+        voiceWaveView.setVisibility(View.GONE);
+        LinearLayout.LayoutParams waveParams = new LinearLayout.LayoutParams(dp(540), dp(90));
+        waveParams.bottomMargin = dp(6);
+        draftBox.addView(voiceWaveView, waveParams);
+
+        LinearLayout controlsRow = new LinearLayout(this);
+        controlsRow.setOrientation(LinearLayout.HORIZONTAL);
+        controlsRow.setGravity(Gravity.CENTER);
+        composerPanel.addView(controlsRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        cameraButton = assistantHomeAction("点我拍照", false);
+        cameraButton.setContentDescription("点我拍照");
+        LinearLayout.LayoutParams cameraParams = new LinearLayout.LayoutParams(dp(202), dp(64));
+        cameraParams.rightMargin = dp(24);
+        controlsRow.addView(cameraButton, cameraParams);
+
+        voiceButton = assistantHomeAction("点我说话", true);
+        voiceButton.setContentDescription("点我说话");
+        controlsRow.addView(voiceButton, new LinearLayout.LayoutParams(dp(202), dp(64)));
+
+        cameraOverlay = new LinearLayout(this);
+        cameraOverlay.setOrientation(LinearLayout.VERTICAL);
+        cameraOverlay.setGravity(Gravity.BOTTOM);
+        cameraOverlay.setPadding(24, 24, 24, 24);
+        cameraOverlay.setVisibility(View.GONE);
+        root.addView(cameraOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        cameraStatusText = new TextView(this);
+        cameraStatusText.setText("对准现场后拍照");
+        cameraStatusText.setTextColor(Color.WHITE);
+        cameraStatusText.setTextSize(22);
+        cameraStatusText.setGravity(Gravity.CENTER);
+        cameraStatusText.setPadding(20, 14, 20, 14);
+        cameraStatusText.setBackground(roundRect(Color.argb(180, 0, 0, 0), Color.TRANSPARENT, 20));
+        cameraOverlay.addView(cameraStatusText, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout cameraActions = new LinearLayout(this);
+        cameraActions.setOrientation(LinearLayout.HORIZONTAL);
+        cameraActions.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams cameraActionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        cameraActionParams.topMargin = 14;
+        cameraOverlay.addView(cameraActions, cameraActionParams);
+
+        TextView backCamera = actionPill("返回聊天");
+        TextView captureCamera = actionPill("拍照");
+        TextView useCamera = actionPill("使用照片");
+        cameraActions.addView(backCamera, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        cameraActions.addView(captureCamera, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        cameraActions.addView(useCamera, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        newProjectButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                createNewProjectChat();
+                railParams.width = 0;
+                railParams.rightMargin = 0;
+                projectRail.setVisibility(View.GONE);
+                projectRail.setLayoutParams(railParams);
+            }
+        });
+        menuButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                boolean show = projectRail.getVisibility() != View.VISIBLE;
+                railParams.width = show ? dp(280) : 0;
+                railParams.rightMargin = show ? dp(16) : 0;
+                projectRail.setVisibility(show ? View.VISIBLE : View.GONE);
+                projectRail.setLayoutParams(railParams);
+                if (show) {
+                    renderProjectList();
+                }
+            }
+        });
+        cameraButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                enterCameraScreen("composer-camera");
+            }
+        });
+        voiceButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (recordingVoice) {
+                    finishToggleVoiceRecording("manual_finish");
+                } else {
+                    startToggleVoiceRecording();
+                }
+            }
+        });
+        backCamera.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                renderChatScreen();
+            }
+        });
+        captureCamera.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                captureStillImage();
+            }
+        });
+        useCamera.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (composerImageBytes == null) {
+                    cameraStatusText.setText("请先拍照");
+                } else {
+                    renderChatScreen();
+                }
+            }
+        });
+
         setContentView(root);
-        showHomeHud();
-        restoreLastHudResponse();
+        root.setFocusableInTouchMode(true);
+        root.requestFocus();
     }
 
-    private TextView createActionButton(String number, String title, String subtitle) {
+    private TextView iconButton(String value) {
         TextView button = new TextView(this);
-        button.setText(number + "  " + title + "\n" + subtitle);
-        button.setTextColor(Color.rgb(218, 234, 245));
-        button.setTextSize(18);
-        button.setGravity(Gravity.CENTER_VERTICAL);
-        button.setPadding(28, 12, 28, 12);
-        button.setBackground(panelBackground(Color.argb(172, 5, 16, 20), Color.argb(190, 87, 255, 176), 2));
+        button.setText(value);
+        button.setTextSize(27);
+        button.setGravity(Gravity.CENTER);
+        button.setTextColor(Color.rgb(34, 34, 34));
+        button.setBackground(roundRect(Color.rgb(235, 235, 235), Color.TRANSPARENT, 27));
         button.setClickable(true);
-        button.setLongClickable(true);
+        button.setDefaultFocusHighlightEnabled(false);
         return button;
     }
 
-    private LinearLayout.LayoutParams actionButtonLayoutParams(int index) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f);
-        if (index > 0) {
-            params.leftMargin = 16;
-        }
+    private TextView actionPill(String text) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(18);
+        view.setTextColor(Color.WHITE);
+        view.setGravity(Gravity.CENTER);
+        view.setPadding(18, 13, 18, 13);
+        view.setBackground(roundRect(Color.argb(210, 0, 0, 0), Color.WHITE, 20));
+        view.setClickable(true);
+        view.setDefaultFocusHighlightEnabled(false);
+        return view;
+    }
+
+    private TextView menuItem(String text) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(18);
+        view.setTextColor(Color.rgb(18, 18, 18));
+        view.setGravity(Gravity.CENTER);
+        view.setPadding(14, 16, 14, 16);
+        view.setBackground(roundRect(Color.WHITE, Color.TRANSPARENT, 0));
+        view.setClickable(true);
+        view.setDefaultFocusHighlightEnabled(false);
+        return view;
+    }
+
+    private LinearLayout.LayoutParams squareParams(int sizeDp) {
+        int px = dp(sizeDp);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(px, px);
+        params.leftMargin = dp(5);
+        params.rightMargin = dp(5);
         return params;
     }
 
-    private void attachActionButtonHandlers() {
-        actionCaptureButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                showActionFeedback(actionCaptureButton, hasNextHudPage() ? "下一页" : "拍照中");
-                advanceHudPageOrCapture("button-center");
-            }
-        });
-        actionCaptureButton.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override
-            public boolean onLongClick(View view) {
-                showActionFeedback(actionCaptureButton, "语音中");
-                startCloudVoiceCapture();
-                return true;
-            }
-        });
-        actionVoiceButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-            }
-        });
-        actionVoiceButton.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override
-            public boolean onLongClick(View view) {
-                return true;
-            }
-        });
-        actionVoiceButton.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View view, MotionEvent event) {
-                android.util.Log.i("Air3NativeCameraTest", "Voice button touch action=" + event.getAction()
-                        + " recording=" + recordingVoice);
-                if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                    showActionFeedback(actionVoiceButton, recordingVoice ? "结束录音" : "语音中");
-                    return true;
-                }
-                if (event.getAction() == MotionEvent.ACTION_UP) {
-                    handleVoiceButtonPress();
-                    return true;
-                }
-                return true;
-            }
-        });
-        actionBackButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                showActionFeedback(actionBackButton, hasPreviousHudPage() ? "上一页" : "已重拍");
-                backHudPageOrRetake();
-            }
-        });
-        actionBackButton.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override
-            public boolean onLongClick(View view) {
-                showActionFeedback(actionBackButton, hasPreviousHudPage() ? "上一页" : "已重拍");
-                backHudPageOrRetake();
-                return true;
-            }
-        });
-    }
-
-    private void handleVoiceButtonPress() {
-        if (recordingVoice) {
-            android.util.Log.i("Air3NativeCameraTest", "Voice button manual finish");
-            showActionFeedback(actionVoiceButton, "结束录音");
-            stopVoiceRecording(true, "manual_finish");
-            return;
-        }
-        showActionFeedback(actionVoiceButton, "语音中");
-        startCloudVoiceCapture();
-    }
-
-    private void showActionFeedback(final TextView button, final String label) {
-        if (button == null) {
-            return;
-        }
-        button.setSelected(true);
-        button.setBackground(panelBackground(Color.argb(220, 8, 42, 35), Color.rgb(87, 255, 176), 3));
-        setStatus(label);
-        mainHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (button != null) {
-                    button.setSelected(false);
-                    button.setBackground(panelBackground(Color.argb(172, 5, 16, 20), Color.argb(190, 87, 255, 176), 2));
-                }
-            }
-        }, 520L);
-    }
-
-    private void prepareRetake() {
-        beginInteraction();
-        activeHud = null;
-        activeHudPageIndex = 0;
-        stopVoiceRecording(false, "retake");
-        captureInFlight = false;
-        setResultText("准备重拍");
-        hintText.setText("请重新对准需要判断的现场画面\n把关键内容放进绿色取景框");
-        setStatus("已进入重拍准备。对准后单击继续采集。");
-    }
-
-    private void advanceHudPageOrCapture(String source) {
-        if (hasNextHudPage()) {
-            activeHudPageIndex += 1;
-            renderHudPage();
-            return;
-        }
-        captureStillImage(source);
-    }
-
-    private void backHudPageOrRetake() {
-        if (hasPreviousHudPage()) {
-            activeHudPageIndex -= 1;
-            renderHudPage();
-            return;
-        }
-        prepareRetake();
-    }
-
-    private boolean hasNextHudPage() {
-        return activeHud != null && activeHud.totalPages > 1 && activeHudPageIndex < activeHud.totalPages - 1;
-    }
-
-    private boolean hasPreviousHudPage() {
-        return activeHud != null && activeHud.totalPages > 1 && activeHudPageIndex > 0;
-    }
-
-    private static GradientDrawable panelBackground(int fillColor, int strokeColor, int strokeWidth) {
+    private GradientDrawable roundRect(int fill, int stroke, int radiusDp) {
         GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(fillColor);
-        drawable.setStroke(strokeWidth, strokeColor);
-        drawable.setCornerRadius(8f);
+        drawable.setColor(fill);
+        drawable.setCornerRadius(dp(radiusDp));
+        if (stroke != Color.TRANSPARENT) {
+            drawable.setStroke(dp(1), stroke);
+        }
         return drawable;
     }
 
-    private void showHomeHud() {
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private void restoreChatProjects() {
+        chatProjects.clear();
+        SharedPreferences prefs = getSharedPreferences(CHAT_PROJECT_PREFS, MODE_PRIVATE);
+        String saved = prefs.getString(CHAT_PROJECTS_JSON, "");
+        currentProjectIndex = prefs.getInt(CURRENT_PROJECT_INDEX, 0);
+        if (saved != null && saved.trim().length() > 0) {
+            try {
+                JSONArray projects = new JSONArray(saved);
+                for (int i = 0; i < projects.length(); i++) {
+                    ChatProject project = ChatProject.fromJson(projects.getJSONObject(i));
+                    chatProjects.add(project);
+                }
+            } catch (Exception ignored) {
+                chatProjects.clear();
+                currentProjectIndex = 0;
+            }
+        }
+        if (chatProjects.isEmpty()) {
+            ChatProject project = new ChatProject(
+                    "project-" + System.currentTimeMillis(),
+                    "现场诊断",
+                    System.currentTimeMillis());
+            project.messages.add(new ChatMessage(
+                    "assistant",
+                    "text",
+                    "先点我拍照记录现场，再点我说话描述问题。语音转成文字后会自动发送给 GPT。",
+                    "",
+                    false));
+            chatProjects.add(project);
+            currentProjectIndex = 0;
+        }
+        if (currentProjectIndex < 0 || currentProjectIndex >= chatProjects.size()) {
+            currentProjectIndex = 0;
+        }
+        loadCurrentProjectMessages();
+    }
+
+    private void persistChatProjects() {
+        saveCurrentProjectFromMessages();
+        JSONArray projects = new JSONArray();
+        for (int i = 0; i < chatProjects.size(); i++) {
+            projects.put(chatProjects.get(i).toJson());
+        }
+        getSharedPreferences(CHAT_PROJECT_PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(CHAT_PROJECTS_JSON, projects.toString())
+                .putInt(CURRENT_PROJECT_INDEX, currentProjectIndex)
+                .apply();
+    }
+
+    private void createNewProjectChat() {
+        saveCurrentProjectFromMessages();
+        ChatProject project = new ChatProject(
+                "project-" + System.currentTimeMillis(),
+                "现场诊断 " + (chatProjects.size() + 1),
+                System.currentTimeMillis());
+        project.messages.add(new ChatMessage(
+                "assistant",
+                "text",
+                "这是新的运维项目记录。先拍照，再语音描述问题，我会结合现场继续分析。",
+                "",
+                false));
+        chatProjects.add(0, project);
+        currentProjectIndex = 0;
+        composerImageBytes = null;
+        composerImageId = "";
+        composerImagePreviewBase64 = "";
+        composerImagePreviewBitmap = null;
+        composerImageUploadFailed = false;
+        sendAfterImageUpload = false;
+        composerTranscript = "";
+        streamingAssistantIndex = -1;
+        liveTranscriptMessageIndex = -1;
+        loadCurrentProjectMessages();
+        persistChatProjects();
+        scrollChatToBottom = true;
+        renderChatScreen();
+    }
+
+    private void switchProjectChat(int index) {
+        if (index < 0 || index >= chatProjects.size() || index == currentProjectIndex) {
+            return;
+        }
+        saveCurrentProjectFromMessages();
+        currentProjectIndex = index;
+        composerImageBytes = null;
+        composerImageId = "";
+        composerImagePreviewBase64 = "";
+        composerImagePreviewBitmap = null;
+        composerImageUploadFailed = false;
+        sendAfterImageUpload = false;
+        composerTranscript = "";
+        streamingAssistantIndex = -1;
+        liveTranscriptMessageIndex = -1;
+        loadCurrentProjectMessages();
+        persistChatProjects();
+        scrollChatToBottom = true;
+        renderChatScreen();
+    }
+
+    private void renderProjectList() {
+        if (projectListColumn == null) {
+            return;
+        }
+        projectListColumn.removeAllViews();
+        for (int i = 0; i < chatProjects.size(); i++) {
+            final int projectIndex = i;
+            ChatProject project = chatProjects.get(i);
+            TextView item = new TextView(this);
+            item.setText(projectListLabel(project));
+            item.setTextColor(Color.rgb(24, 24, 24));
+            item.setTextSize(14);
+            item.setMinLines(2);
+            item.setGravity(Gravity.CENTER_VERTICAL);
+            item.setPadding(10, 8, 10, 8);
+            item.setBackground(roundRect(
+                    i == currentProjectIndex ? Color.WHITE : Color.TRANSPARENT,
+                    i == currentProjectIndex ? Color.rgb(218, 218, 218) : Color.TRANSPARENT,
+                    12));
+            item.setClickable(true);
+            item.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    switchProjectChat(projectIndex);
+                }
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.bottomMargin = dp(8);
+            projectListColumn.addView(item, params);
+        }
+    }
+
+    private String projectListLabel(ChatProject project) {
+        int userMessages = 0;
+        for (int i = 0; i < project.messages.size(); i++) {
+            if ("user".equals(project.messages.get(i).role)) {
+                userMessages++;
+            }
+        }
+        return project.title + "\n" + userMessages + " 次对话";
+    }
+
+    private ChatProject activeProject() {
+        if (chatProjects.isEmpty()) {
+            restoreChatProjects();
+        }
+        if (currentProjectIndex < 0 || currentProjectIndex >= chatProjects.size()) {
+            currentProjectIndex = 0;
+        }
+        return chatProjects.get(currentProjectIndex);
+    }
+
+    private void loadCurrentProjectMessages() {
+        chatMessages.clear();
+        ChatProject project = activeProject();
+        for (int i = 0; i < project.messages.size(); i++) {
+            chatMessages.add(project.messages.get(i).copy());
+        }
+    }
+
+    private void saveCurrentProjectFromMessages() {
+        if (chatProjects.isEmpty() || currentProjectIndex < 0 || currentProjectIndex >= chatProjects.size()) {
+            return;
+        }
+        ChatProject project = chatProjects.get(currentProjectIndex);
+        project.messages.clear();
+        for (int i = 0; i < chatMessages.size(); i++) {
+            project.messages.add(chatMessages.get(i).copy());
+        }
+        project.updatedAt = System.currentTimeMillis();
+    }
+
+    private void updateCurrentProjectTitle(String prompt) {
+        ChatProject project = activeProject();
+        if (project.title.startsWith("现场诊断")) {
+            String clean = prompt == null ? "" : prompt.trim().replace('\n', ' ');
+            if (clean.length() > 16) {
+                clean = clean.substring(0, 16);
+            }
+            if (clean.length() > 0) {
+                project.title = clean;
+            }
+        }
+    }
+
+    private void renderChatScreen() {
+        screenMode = ScreenMode.CHAT;
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                stepText.setText(stepLabel(currentStep));
-                resultText.setText("任务待开始");
-                hintText.setText("请对准需要判断的现场画面\n中心点击开始采集，长按语音提问");
-                statusText.setText("1 中心点击：拍照/下一步    2 长按中心：语音确认    3 返回键：重拍/上一步");
+                chatLayer.setVisibility(View.VISIBLE);
+                cameraOverlay.setVisibility(View.GONE);
+                previewView.setVisibility(View.GONE);
+                titleText.setText("叮当运维AI · 当前项目 · " + activeProject().title);
+                stateText.setText(recordingVoice ? "语音识别中" : "在线");
+                renderProjectList();
+                renderMessages();
+                renderComposer();
             }
         });
-        android.util.Log.i("Air3NativeCameraTest", "Formal HUD home shown.");
     }
 
-    private static final class GuideOverlayView extends View {
-        private final Paint framePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint dimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-
-        GuideOverlayView(Activity activity) {
-            super(activity);
-            setWillNotDraw(false);
-            framePaint.setColor(Color.rgb(87, 255, 176));
-            framePaint.setStyle(Paint.Style.STROKE);
-            framePaint.setStrokeWidth(4f);
-
-            dimPaint.setColor(Color.argb(42, 0, 0, 0));
-            dimPaint.setStyle(Paint.Style.FILL);
-
-            textPaint.setColor(Color.rgb(218, 234, 245));
-            textPaint.setTextSize(28f);
-            textPaint.setTextAlign(Paint.Align.CENTER);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            float width = getWidth();
-            float height = getHeight();
-            float frameWidth = width * GUIDE_FRAME_WIDTH_RATIO;
-            float frameHeight = height * GUIDE_FRAME_HEIGHT_RATIO;
-            float left = (width - frameWidth) / 2f;
-            float top = height * GUIDE_FRAME_TOP_OFFSET_RATIO;
-            RectF frame = new RectF(left, top, left + frameWidth, top + frameHeight);
-
-            canvas.drawRect(0f, 0f, width, frame.top, dimPaint);
-            canvas.drawRect(0f, frame.bottom, width, height, dimPaint);
-            canvas.drawRect(0f, frame.top, frame.left, frame.bottom, dimPaint);
-            canvas.drawRect(frame.right, frame.top, width, frame.bottom, dimPaint);
-
-            canvas.drawRoundRect(frame, 12f, 12f, framePaint);
-            float centerX = frame.centerX();
-            float centerY = frame.centerY();
-            canvas.drawLine(centerX - 42f, centerY, centerX + 42f, centerY, framePaint);
-            canvas.drawLine(centerX, centerY - 42f, centerX, centerY + 42f, framePaint);
-            canvas.drawText("让关键画面填满绿色框，内容清楚后再拍", centerX, frame.bottom - 30f, textPaint);
+    private void renderCameraScreen() {
+        screenMode = ScreenMode.CAMERA;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                chatLayer.setVisibility(View.GONE);
+                previewView.setVisibility(View.VISIBLE);
+                cameraOverlay.setVisibility(View.VISIBLE);
+                cameraStatusText.setText(composerImageBytes == null ? "对准现场后拍照" : "照片已添加，返回后可继续语音提问");
+            }
+        });
+        if (cameraDevice == null && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            startCameraFlow();
         }
     }
 
-    private void startCloudVoiceCapture() {
+    private void renderMessages() {
+        chatMessagesColumn.removeAllViews();
+        chatMessagesColumn.addView(assistantHomeHeader());
+        for (ChatMessage message : chatMessages) {
+            chatMessagesColumn.addView(messageBubble(message));
+        }
+        final boolean shouldScrollToBottom = scrollChatToBottom;
+        scrollChatToBottom = false;
+        if (shouldScrollToBottom) {
+            scheduleChatScrollToBottom();
+        } else {
+            scheduleChatScrollToTop();
+        }
+    }
+
+    private void scheduleChatScrollToTop() {
+        if (chatScrollView == null) {
+            return;
+        }
+        final int requestId = ++chatScrollRequestId;
+        chatScrollView.post(new Runnable() {
+            @Override
+            public void run() {
+                if (requestId != chatScrollRequestId) {
+                    return;
+                }
+                chatScrollView.fullScroll(View.FOCUS_UP);
+            }
+        });
+    }
+
+    private void scheduleChatScrollToBottom() {
+        int requestId = ++chatScrollRequestId;
+        postChatScrollToBottom(0L, requestId);
+        postChatScrollToBottom(80L, requestId);
+        postChatScrollToBottom(220L, requestId);
+    }
+
+    private void postChatScrollToBottom(long delayMs, final int requestId) {
+        if (chatScrollView == null) {
+            return;
+        }
+        Runnable scrollAction = new Runnable() {
+            @Override
+            public void run() {
+                if (requestId != chatScrollRequestId) {
+                    return;
+                }
+                scrollChatToBottomNow();
+            }
+        };
+        if (delayMs <= 0L) {
+            chatScrollView.post(scrollAction);
+        } else {
+            chatScrollView.postDelayed(scrollAction, delayMs);
+        }
+    }
+
+    private void scrollChatToBottomNow() {
+        if (chatScrollView == null || chatMessagesColumn == null) {
+            return;
+        }
+        chatScrollView.fullScroll(View.FOCUS_DOWN);
+        int maxScrollY = Math.max(0, chatMessagesColumn.getMeasuredHeight() - chatScrollView.getHeight());
+        chatScrollView.scrollTo(0, maxScrollY);
+    }
+
+    private View assistantHomeHeader() {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.VERTICAL);
+        header.setGravity(Gravity.CENTER_HORIZONTAL);
+        header.setPadding(0, 0, 0, dp(16));
+
+        ChatMessage lastUser = lastUserMessage();
+        if (lastUser != null) {
+            LinearLayout lastCard = new LinearLayout(this);
+            lastCard.setOrientation(LinearLayout.VERTICAL);
+            lastCard.setPadding(dp(28), dp(18), dp(28), dp(18));
+            lastCard.setBackground(roundRect(Color.WHITE, Color.TRANSPARENT, 18));
+
+            TextView lastLabel = new TextView(this);
+            lastLabel.setText("上次对话");
+            lastLabel.setTextColor(Color.rgb(130, 130, 130));
+            lastLabel.setTextSize(16);
+            lastCard.addView(lastLabel, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            TextView lastTitle = new TextView(this);
+            lastTitle.setText(activeProject().title);
+            lastTitle.setTextColor(Color.rgb(18, 18, 18));
+            lastTitle.setTextSize(20);
+            lastTitle.setTypeface(Typeface.DEFAULT_BOLD);
+            LinearLayout.LayoutParams lastTitleParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            lastTitleParams.topMargin = dp(10);
+            lastCard.addView(lastTitle, lastTitleParams);
+
+            TextView lastContent = new TextView(this);
+            lastContent.setText(lastUser.text);
+            lastContent.setTextColor(Color.rgb(54, 54, 54));
+            lastContent.setTextSize(17);
+            lastContent.setSingleLine(true);
+            LinearLayout.LayoutParams lastContentParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            lastContentParams.topMargin = dp(8);
+            lastCard.addView(lastContent, lastContentParams);
+
+            LinearLayout.LayoutParams lastCardParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            lastCardParams.leftMargin = dp(0);
+            lastCardParams.rightMargin = dp(0);
+            lastCardParams.bottomMargin = dp(34);
+            header.addView(lastCard, lastCardParams);
+        } else {
+            View spacer = new View(this);
+            header.addView(spacer, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(88)));
+        }
+
+        TextView logo = new TextView(this);
+        logo.setText("叮");
+        logo.setTextColor(Color.WHITE);
+        logo.setTextSize(28);
+        logo.setTypeface(Typeface.DEFAULT_BOLD);
+        logo.setGravity(Gravity.CENTER);
+        logo.setBackground(roundRect(Color.rgb(16, 128, 96), Color.TRANSPARENT, 28));
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(56), dp(56));
+        logoParams.bottomMargin = dp(14);
+        header.addView(logo, logoParams);
+
+        TextView hello = new TextView(this);
+        hello.setText("叮当运维AI");
+        hello.setTextColor(Color.BLACK);
+        hello.setTextSize(34);
+        hello.setTypeface(Typeface.DEFAULT_BOLD);
+        hello.setGravity(Gravity.CENTER);
+        header.addView(hello, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView powered = new TextView(this);
+        powered.setText("拍照看现场，语音说问题，AI 给出下一步");
+        powered.setTextColor(Color.rgb(96, 96, 96));
+        powered.setTextSize(18);
+        powered.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams poweredParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        poweredParams.topMargin = dp(8);
+        header.addView(powered, poweredParams);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        actionsParams.topMargin = dp(36);
+
+        TextView photo = assistantHomeAction("点我拍照", false);
+        photo.setContentDescription("点我拍照");
+        photo.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                enterCameraScreen("assistant-home-photo");
+            }
+        });
+        actions.addView(photo, new LinearLayout.LayoutParams(dp(202), dp(78)));
+
+        TextView speak = assistantHomeAction(recordingVoice ? "结束提问" : "点我说话", true);
+        speak.setContentDescription(recordingVoice ? "结束提问" : "点我说话");
+        speak.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (recordingVoice) {
+                    finishToggleVoiceRecording("assistant_home_finish");
+                } else {
+                    startToggleVoiceRecording();
+                }
+            }
+        });
+        LinearLayout.LayoutParams speakParams = new LinearLayout.LayoutParams(dp(202), dp(78));
+        speakParams.leftMargin = dp(24);
+        actions.addView(speak, speakParams);
+
+        if (shouldShowHomeActions()) {
+            header.addView(actions, actionsParams);
+        }
+        return header;
+    }
+
+    private boolean shouldShowHomeActions() {
+        return !shouldShowComposerPanel();
+    }
+
+    private boolean shouldShowComposerPanel() {
+        if (recordingVoice || composerImageBytes != null || hasLiveTranscriptMessage() || streamingAssistantIndex >= 0) {
+            return true;
+        }
+        if (composerTranscript.trim().length() > 0 && !"点我说话".equals(composerTranscript.trim())) {
+            return true;
+        }
+        return chatMessages.size() > 0;
+    }
+
+    private TextView assistantHomeAction(String label, boolean primary) {
+        TextView action = new TextView(this);
+        action.setText(label);
+        action.setTextColor(primary ? Color.WHITE : Color.rgb(22, 125, 96));
+        action.setTextSize(21);
+        action.setTypeface(Typeface.DEFAULT_BOLD);
+        action.setGravity(Gravity.CENTER);
+        action.setPadding(dp(18), 0, dp(18), 0);
+        action.setBackground(primary
+                ? roundRect(Color.rgb(22, 163, 110), Color.rgb(22, 163, 110), 24)
+                : roundRect(Color.WHITE, Color.rgb(181, 224, 207), 24));
+        action.setClickable(true);
+        action.setDefaultFocusHighlightEnabled(false);
+        return action;
+    }
+
+    private ChatMessage lastUserMessage() {
+        for (int i = chatMessages.size() - 1; i >= 0; i--) {
+            ChatMessage message = chatMessages.get(i);
+            if ("user".equals(message.role) && "text".equals(message.kind) && message.text.trim().length() > 0) {
+                return message;
+            }
+        }
+        return null;
+    }
+
+    private View messageBubble(ChatMessage message) {
+        if ("image".equals(message.kind)) {
+            return imageMessageBubble(message);
+        }
+        TextView bubble = new TextView(this);
+        bubble.setText(message.text + (message.streaming ? "▌" : ""));
+        bubble.setTextSize(18);
+        bubble.setLineSpacing(3f, 1.0f);
+        bubble.setPadding(16, 12, 16, 12);
+        boolean user = "user".equals(message.role);
+        bubble.setTextColor(Color.rgb(22, 22, 22));
+        bubble.setBackground(roundRect(user ? Color.rgb(235, 245, 255) : Color.rgb(246, 246, 246), Color.TRANSPARENT, 14));
+        return wrapMessageBubble(bubble, user);
+    }
+
+    private View imageMessageBubble(ChatMessage message) {
+        LinearLayout bubble = new LinearLayout(this);
+        bubble.setOrientation(LinearLayout.VERTICAL);
+        bubble.setPadding(10, 10, 10, 10);
+        bubble.setBackground(roundRect(Color.rgb(235, 245, 255), Color.TRANSPARENT, 14));
+
+        if (message.imagePreviewBitmap == null && message.imagePreviewBase64.length() > 0) {
+            message.imagePreviewBitmap = decodeImagePreviewBitmap(message.imagePreviewBase64);
+        }
+        Bitmap preview = message.imagePreviewBitmap;
+        if (preview != null) {
+            ImageView imageView = new ImageView(this);
+            imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            imageView.setAdjustViewBounds(false);
+            imageView.setContentDescription("现场照片");
+            imageView.setImageBitmap(preview);
+            bubble.addView(imageView, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(156)));
+        }
+
+        TextView caption = new TextView(this);
+        caption.setText(message.text);
+        caption.setTextSize(15);
+        caption.setTextColor(Color.rgb(68, 76, 84));
+        caption.setPadding(4, preview == null ? 0 : 8, 4, 0);
+        bubble.addView(caption, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return wrapMessageBubble(bubble, true);
+    }
+
+    private View wrapMessageBubble(View bubble, boolean user) {
+        LinearLayout wrapper = new LinearLayout(this);
+        wrapper.setGravity(user ? Gravity.RIGHT : Gravity.LEFT);
+        wrapper.setPadding(0, 6, 0, 6);
+        int width = Math.round(getResources().getDisplayMetrics().widthPixels * 0.72f);
+        wrapper.addView(bubble, new LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return wrapper;
+    }
+
+    private void renderComposer() {
+        boolean showComposerPanel = shouldShowComposerPanel();
+        composerPanel.setVisibility(showComposerPanel ? View.VISIBLE : View.GONE);
+        if (!showComposerPanel) {
+            voiceWaveView.stop();
+            voiceWaveView.setVisibility(View.GONE);
+            transcriptDraftText.setVisibility(View.GONE);
+            attachmentPreviewImage.setVisibility(View.GONE);
+            attachmentPreviewText.setVisibility(View.GONE);
+            return;
+        }
+        if (composerImageBytes == null) {
+            attachmentPreviewImage.setVisibility(View.GONE);
+            attachmentPreviewImage.setImageBitmap(null);
+            composerImagePreviewBitmap = null;
+            attachmentPreviewText.setVisibility(View.GONE);
+        } else {
+            attachmentPreviewImage.setVisibility(View.VISIBLE);
+            if (composerImagePreviewBitmap == null && composerImagePreviewBase64.length() > 0) {
+                composerImagePreviewBitmap = decodeImagePreviewBitmap(composerImagePreviewBase64);
+            }
+            attachmentPreviewImage.setImageBitmap(composerImagePreviewBitmap);
+            attachmentPreviewText.setVisibility(View.VISIBLE);
+            if (composerImageUploadFailed) {
+                attachmentPreviewText.setText("照片上传失败，请检查后端或重新拍照");
+            } else if ("local-photo".equals(composerImageId) || composerImageId.length() > 0) {
+                attachmentPreviewText.setText("照片已添加");
+            } else {
+                attachmentPreviewText.setText("照片正在上传");
+            }
+        }
+        if (recordingVoice) {
+            transcriptDraftText.setVisibility(View.GONE);
+            voiceWaveView.setVisibility(View.VISIBLE);
+            voiceWaveView.start();
+            voiceButton.setText("结束提问");
+            voiceButton.setContentDescription("结束提问");
+            voiceButton.setTextSize(21);
+            voiceButton.setTextColor(Color.WHITE);
+            voiceButton.setBackground(roundRect(Color.rgb(18, 133, 96), Color.rgb(18, 133, 96), 24));
+        } else {
+            voiceWaveView.stop();
+            voiceWaveView.setVisibility(View.GONE);
+            if (composerTranscript.trim().length() == 0 || "点我说话".equals(composerTranscript.trim())) {
+                transcriptDraftText.setVisibility(View.GONE);
+                transcriptDraftText.setText("");
+            } else {
+                transcriptDraftText.setVisibility(View.VISIBLE);
+                transcriptDraftText.setText(composerTranscript);
+            }
+            transcriptDraftText.setTextColor(Color.rgb(120, 120, 120));
+            voiceButton.setText("点我说话");
+            voiceButton.setContentDescription("点我说话");
+            voiceButton.setTextSize(21);
+            voiceButton.setTextColor(Color.WHITE);
+            voiceButton.setBackground(roundRect(Color.rgb(22, 163, 110), Color.rgb(22, 163, 110), 24));
+        }
+    }
+
+    private void enterCameraScreen(String source) {
+        renderCameraScreen();
+    }
+
+    private void confirmCapturedPhoto(byte[] jpegBytes) {
+        composerImageBytes = jpegBytes;
+        composerImageId = "";
+        composerImagePreviewBase64 = createImagePreviewBase64(jpegBytes);
+        composerImagePreviewBitmap = decodeImagePreviewBitmap(composerImagePreviewBase64);
+        composerImageUploadFailed = false;
+        showComposerAttachment("正在上传");
+        renderChatScreen();
+        uploadImageForChat(jpegBytes);
+    }
+
+    private void showComposerAttachment(String label) {
+        final String safeLabel = label == null ? "" : label;
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                attachmentPreviewText.setVisibility(View.VISIBLE);
+                attachmentPreviewText.setText("照片 " + safeLabel);
+                renderComposer();
+            }
+        });
+    }
+
+    private void uploadImageForChat(final byte[] jpegBytes) {
+        if (DIRECT_GPT_ENABLED || backendChatClient == null || jpegBytes == null || jpegBytes.length == 0) {
+            onBackendImageUploaded("local-photo", jpegBytes);
+            return;
+        }
+        backendChatClient.uploadImageForChat(backendSessionIdForActiveProject(), jpegBytes, new BackendImageUploadCallback() {
+            @Override
+            public void onUploaded(final String sessionId, final String imageId, final int imageBytes) {
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        activeProject().backendSessionId = sessionId;
+                        persistChatProjects();
+                        onBackendImageUploaded(imageId, jpegBytes);
+                    }
+                });
+            }
+
+            @Override
+            public void onError(final Exception error) {
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        composerImageId = "";
+                        composerImageUploadFailed = true;
+                        showComposerAttachment("上传失败：" + safeMessage(error));
+                    }
+                });
+            }
+        });
+    }
+
+    private void onBackendImageUploaded(String imageId, byte[] imageBytes) {
+        composerImageBytes = imageBytes;
+        composerImageId = imageId == null ? "" : imageId;
+        composerImagePreviewBase64 = createImagePreviewBase64(imageBytes);
+        composerImagePreviewBitmap = decodeImagePreviewBitmap(composerImagePreviewBase64);
+        composerImageUploadFailed = false;
+        showComposerAttachment(composerImageId.length() > 0 ? "已上传" : "已添加");
+        renderChatScreen();
+        if (sendAfterImageUpload && composerTranscript.trim().length() > 0) {
+            sendAfterImageUpload = false;
+            sendComposerToAi();
+        }
+    }
+
+    private void appendUserImageMessage(String imageId, String imagePreviewBase64) {
+        chatMessages.add(new ChatMessage("user", "image", "现场照片已随问题发送", imageId, imagePreviewBase64, false));
+    }
+
+    private ChatMessage latestImageMessage() {
+        for (int i = chatMessages.size() - 1; i >= 0; i--) {
+            ChatMessage message = chatMessages.get(i);
+            if ("image".equals(message.kind) && message.imageId != null && message.imageId.length() > 0) {
+                return message;
+            }
+        }
+        return null;
+    }
+
+    private void appendUserTranscriptMessage(String text) {
+        chatMessages.add(new ChatMessage("user", "text", text, "", false));
+        scrollChatToBottom = true;
+        renderChatScreen();
+    }
+
+    private boolean hasLiveTranscriptMessage() {
+        return liveTranscriptMessageIndex >= 0
+                && liveTranscriptMessageIndex < chatMessages.size()
+                && "user".equals(chatMessages.get(liveTranscriptMessageIndex).role)
+                && "text".equals(chatMessages.get(liveTranscriptMessageIndex).kind);
+    }
+
+    private void updateLiveTranscriptMessage(String text, boolean finalText) {
+        String safeText = text == null ? "" : text.trim();
+        if (safeText.length() == 0) {
+            return;
+        }
+        if (!hasLiveTranscriptMessage()) {
+            chatMessages.add(new ChatMessage("user", "text", safeText, "", "", !finalText));
+            liveTranscriptMessageIndex = chatMessages.size() - 1;
+        } else {
+            ChatMessage message = chatMessages.get(liveTranscriptMessageIndex);
+            message.text = safeText;
+            message.streaming = !finalText;
+        }
+        scrollChatToBottom = true;
+        renderChatScreen();
+    }
+
+    private void clearLiveTranscriptMessageIfStreaming() {
+        if (hasLiveTranscriptMessage() && chatMessages.get(liveTranscriptMessageIndex).streaming) {
+            chatMessages.remove(liveTranscriptMessageIndex);
+        }
+        liveTranscriptMessageIndex = -1;
+        scrollChatToBottom = true;
+        renderChatScreen();
+    }
+
+    private void appendAssistantMessage(String text) {
+        chatMessages.add(new ChatMessage("assistant", "text", text, "", false));
+    }
+
+    private void appendAssistantStreamingMessage() {
+        chatMessages.add(new ChatMessage("assistant", "text", "", "", true));
+        streamingAssistantIndex = chatMessages.size() - 1;
+        scrollChatToBottom = true;
+        renderChatScreen();
+    }
+
+    private void markGptStreamStart(String imageId, String prompt) {
+        gptStreamStartedAtMs = SystemClock.elapsedRealtime();
+        gptFirstDeltaLogged = false;
+        Log.i(KEY_LOG_TAG, "GPT stream start promptChars=" + prompt.length()
+                + " hasImageId=" + (imageId != null && imageId.length() > 0));
+    }
+
+    private void logGptFirstDeltaIfNeeded(String delta) {
+        long latencyMs;
+        synchronized (this) {
+            if (gptFirstDeltaLogged || gptStreamStartedAtMs <= 0L) {
+                return;
+            }
+            gptFirstDeltaLogged = true;
+            latencyMs = SystemClock.elapsedRealtime() - gptStreamStartedAtMs;
+        }
+        Log.i(KEY_LOG_TAG, "GPT stream first delta latencyMs=" + latencyMs
+                + " deltaChars=" + (delta == null ? 0 : delta.length()));
+    }
+
+    private void updateAssistantStreamingMessage(String delta) {
+        if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
+            ChatMessage message = chatMessages.get(streamingAssistantIndex);
+            message.text = message.text + delta;
+            scrollChatToBottom = true;
+            renderChatScreen();
+        }
+    }
+
+    private void finalizeAssistantStreamingMessage() {
+        if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
+            chatMessages.get(streamingAssistantIndex).streaming = false;
+        }
+        streamingAssistantIndex = -1;
+        stateText.setText("在线");
+        persistChatProjects();
+        scrollChatToBottom = true;
+        renderChatScreen();
+    }
+
+    private void sendComposerToAi() {
+        final String prompt = composerTranscript.trim();
+        final byte[] image = composerImageBytes;
+        final String imageId = composerImageId;
+        ChatMessage contextImage = image == null ? latestImageMessage() : null;
+        final String imagePreviewBase64 = image != null ? composerImagePreviewBase64 : "";
+        final String effectiveImageId = imageId.length() > 0
+                ? imageId
+                : (image != null && DIRECT_GPT_ENABLED
+                        ? "local-photo"
+                        : (contextImage == null ? "" : contextImage.imageId));
+        if (image != null && effectiveImageId.length() == 0) {
+            if (composerImageUploadFailed) {
+                sendAfterImageUpload = false;
+                showComposerAttachment("上传失败，请检查后端后重试");
+                stateText.setText("照片上传失败");
+            } else {
+                sendAfterImageUpload = true;
+                showComposerAttachment("正在上传，上传完自动发送");
+                stateText.setText("照片上传中");
+            }
+            renderComposer();
+            return;
+        }
+        if (prompt.length() == 0) {
+            setComposerStatus("");
+            return;
+        }
+        if (isIdentityQuestion(prompt)) {
+            updateCurrentProjectTitle(prompt);
+            if (hasLiveTranscriptMessage()) {
+                updateLiveTranscriptMessage(prompt, true);
+                liveTranscriptMessageIndex = -1;
+            } else {
+                appendUserTranscriptMessage(prompt);
+            }
+            composerTranscript = "";
+            renderComposer();
+            appendAssistantMessage(AI_IDENTITY_RESPONSE);
+            scrollChatToBottom = true;
+            persistChatProjects();
+            renderChatScreen();
+            return;
+        }
+        updateCurrentProjectTitle(prompt);
+        if (image != null) {
+            appendUserImageMessage(effectiveImageId, imagePreviewBase64);
+        }
+        if (hasLiveTranscriptMessage()) {
+            updateLiveTranscriptMessage(prompt, true);
+            liveTranscriptMessageIndex = -1;
+        } else {
+            appendUserTranscriptMessage(prompt);
+        }
+        composerTranscript = "";
+        composerImageBytes = null;
+        composerImageId = "";
+        composerImagePreviewBase64 = "";
+        composerImagePreviewBitmap = null;
+        composerImageUploadFailed = false;
+        sendAfterImageUpload = false;
+        renderComposer();
+        appendAssistantStreamingMessage();
+        stateText.setText("Thinking");
+        markGptStreamStart(effectiveImageId, prompt);
+        chatAiClient.send(prompt, effectiveImageId, image, new StreamingCallback() {
+            @Override
+            public void onDelta(String text) {
+                final String delta = text;
+                logGptFirstDeltaIfNeeded(delta);
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        updateAssistantStreamingMessage(delta);
+                    }
+                });
+            }
+
+            @Override
+            public void onComplete() {
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        finalizeAssistantStreamingMessage();
+                    }
+                });
+            }
+
+            @Override
+            public void onError(final Exception error) {
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        updateAssistantStreamingMessage("\n\nAI 调用失败：" + safeMessage(error));
+                        finalizeAssistantStreamingMessage();
+                    }
+                });
+            }
+        });
+        persistChatProjects();
+    }
+
+    private boolean isIdentityQuestion(String text) {
+        String normalized = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
+        normalized = normalized.replace(" ", "").replace("？", "?");
+        if (normalized.length() == 0) {
+            return false;
+        }
+        boolean asksAboutAssistant = normalized.contains("你")
+                || normalized.contains("叮当")
+                || normalized.contains("ai")
+                || normalized.contains("助手")
+                || normalized.contains("系统");
+        boolean asksModel = normalized.contains("什么模型")
+                || normalized.contains("哪个模型")
+                || normalized.contains("用的什么模型")
+                || normalized.contains("用什么模型")
+                || normalized.contains("模型是什么")
+                || normalized.contains("底层模型")
+                || normalized.contains("大模型");
+        boolean genericModelQuestion = normalized.equals("什么模型")
+                || normalized.equals("是什么模型")
+                || normalized.equals("你是什么模型")
+                || normalized.equals("用的什么模型")
+                || normalized.equals("用什么模型")
+                || normalized.equals("模型是什么");
+        return (asksAboutAssistant && asksModel)
+                || genericModelQuestion
+                || normalized.contains("你是谁")
+                || normalized.contains("你叫什么")
+                || normalized.contains("谁研发")
+                || normalized.contains("谁开发")
+                || normalized.contains("谁做的")
+                || normalized.contains("谁家的")
+                || normalized.contains("哪个公司")
+                || normalized.contains("哪家公司")
+                || normalized.contains("厂家是谁")
+                || normalized.contains("供应商是谁");
+    }
+
+    private void setComposerStatus(String text) {
+        composerTranscript = text;
+        renderComposer();
+    }
+
+    private String createImagePreviewBase64(byte[] jpegBytes) {
+        if (jpegBytes == null || jpegBytes.length == 0) {
+            return "";
+        }
+        Bitmap bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length);
+        if (bitmap == null) {
+            return "";
+        }
+        Bitmap scaled = scaleBitmapToMaxEdge(bitmap, PREVIEW_MAX_IMAGE_EDGE);
+        try {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            scaled.compress(Bitmap.CompressFormat.JPEG, 76, output);
+            return Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP);
+        } finally {
+            if (scaled != bitmap) {
+                scaled.recycle();
+            }
+            bitmap.recycle();
+        }
+    }
+
+    private Bitmap decodeImagePreviewBitmap(String imagePreviewBase64) {
+        if (imagePreviewBase64 == null || imagePreviewBase64.length() == 0) {
+            return null;
+        }
+        try {
+            byte[] bytes = Base64.decode(imagePreviewBase64, Base64.NO_WRAP);
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private Bitmap scaleBitmapToMaxEdge(Bitmap bitmap, int maxEdge) {
+        if (bitmap == null || maxEdge <= 0) {
+            return bitmap;
+        }
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int longest = Math.max(width, height);
+        if (longest <= maxEdge) {
+            return bitmap;
+        }
+        float scale = maxEdge / (float) longest;
+        int scaledWidth = Math.max(1, Math.round(width * scale));
+        int scaledHeight = Math.max(1, Math.round(height * scale));
+        return Bitmap.createScaledBitmap(bitmap, scaledWidth, scaledHeight, true);
+    }
+
+    private String backendSessionIdForActiveProject() {
+        ChatProject project = activeProject();
+        if (project.backendSessionId == null) {
+            project.backendSessionId = "";
+        }
+        return project.backendSessionId;
+    }
+
+    private ChatAiClient createChatAiClient() {
+        backendChatClient = new BackendChatClient(DINGDANG_BACKEND_BASE_URL, DINGDANG_BACKEND_API_KEY);
+        if (DIRECT_GPT_ENABLED) {
+            return new DirectGptClient(DIRECT_GPT_BASE_URL, DIRECT_GPT_MODEL, DIRECT_GPT_API_KEY);
+        }
+        return new BackendGptClient(backendChatClient, new BackendGptClient.SessionProvider() {
+            @Override
+            public String sessionId() {
+                return backendSessionIdForActiveProject();
+            }
+        });
+    }
+
+    private RealtimeAsrClient createRealtimeAsrClient() {
+        if (!DIRECT_GPT_ENABLED && backendChatClient != null) {
+            return backendChatClient.withSessionProvider(new BackendChatClient.SessionProvider() {
+                @Override
+                public String sessionId() {
+                    return backendSessionIdForActiveProject();
+                }
+            });
+        }
+        return new DirectAsrClient(DIRECT_ASR_ENDPOINT, DIRECT_ASR_API_KEY, DIRECT_ASR_MODEL);
+    }
+
+    private void startToggleVoiceRecording() {
+        if (recordingVoice) {
+            finishToggleVoiceRecording("manual_finish");
+            return;
+        }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            setResultText("需要麦克风权限");
-            setStatus("请允许麦克风权限，授权后长按可录音确认现场操作。");
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_AUDIO);
             return;
         }
-        if (recordingVoice) {
-            stopVoiceRecording(true, "manual_finish");
-            return;
-        }
-        if (sessionId.length() == 0) {
-            setResultText("请先拍照");
-            setStatus("请先中心点击拍照创建运维会话，再长按进行语音确认。");
-            return;
-        }
-
         try {
-            final int generation = beginInteraction();
-            voiceFile = new File(getCacheDir(), "ops_voice_" + System.currentTimeMillis() + ".wav");
+            File file = new File(getFilesDir(), "last_voice_upload.wav");
             int minBufferSize = AudioRecord.getMinBufferSize(
                     VOICE_SAMPLE_RATE_HZ,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT);
-            if (minBufferSize <= 0) {
-                throw new IllegalStateException("AudioRecord minBufferSize=" + minBufferSize);
-            }
-            final int bufferSize = Math.max(minBufferSize, VOICE_SAMPLE_RATE_HZ / 2);
-            voiceRecorder = new AudioRecord(
-                    VOICE_AUDIO_SOURCE,
+            int bufferSize = Math.max(minBufferSize, VOICE_SAMPLE_RATE_HZ);
+            AudioRecord recorder = new AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
                     VOICE_SAMPLE_RATE_HZ,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT,
                     bufferSize);
-            if (voiceRecorder.getState() != AudioRecord.STATE_INITIALIZED) {
-                throw new IllegalStateException("AudioRecord failed to initialize");
-            }
-            voiceRecorder.startRecording();
+            recorder.startRecording();
+            voiceRecorder = recorder;
+            voiceFile = file;
             recordingVoice = true;
-            activeVoiceGeneration = generation;
-            voiceRecordingStartedAt = System.currentTimeMillis();
-            voiceLastSpeechAt = voiceRecordingStartedAt;
-            voiceSpeechDetected = false;
-            voiceCurrentAmplitude = 0;
-            voicePeakAmplitude = 0;
-            voiceRecordThreadRunning.set(true);
-            startVoiceRecordThread(voiceRecorder, voiceFile, bufferSize);
-            setResultText("正在录音");
-            setStatus("请说短句问题。说完后会自动上传，也可以再按中心键立即结束。");
+            composerTranscript = "";
+            realtimeAsrPartialCount = 0;
+            realtimeAsrFinished = false;
+            startRealtimeAsr();
+            stateText.setText("语音识别中");
+            transcriptDraftText.setText("结束提问");
+            startVoiceRecordThread(recorder, file, bufferSize);
             voiceStopRunnable = new Runnable() {
                 @Override
                 public void run() {
-                    stopVoiceRecording(true, "max_duration");
+                    finishToggleVoiceRecording("max_duration");
                 }
             };
             mainHandler.postDelayed(voiceStopRunnable, VOICE_RECORDING_MS);
-            startVoiceAmplitudeMonitor(generation);
+            renderChatScreen();
         } catch (Exception error) {
             recordingVoice = false;
-            releaseVoiceRecorder();
-            setResultText("录音失败");
-            setStatus("语音录制失败，请改用中心点击拍照继续。");
-            android.util.Log.w("Air3NativeCameraTest", "Voice recording failed", error);
+            setComposerStatus("录音失败：" + safeMessage(error));
         }
     }
 
-    private void startVoiceAmplitudeMonitor(final int generation) {
-        voiceAmplitudeMonitor = new Runnable() {
+    private void startRealtimeAsr() {
+        voiceStreamState = VoiceStreamState.LISTENING;
+        Log.i(KEY_LOG_TAG, "Realtime ASR start state=" + voiceStreamState);
+        realtimeAsrClient.start(new RealtimeAsrCallback() {
             @Override
-            public void run() {
-                if (!recordingVoice || generation != activeVoiceGeneration || voiceRecorder == null) {
-                    return;
-                }
-                long now = System.currentTimeMillis();
-                int amplitude = voiceCurrentAmplitude;
-                if (amplitude >= VOICE_SPEECH_AMPLITUDE_THRESHOLD) {
-                    voiceSpeechDetected = true;
-                    if (amplitude >= voiceDynamicSilenceThreshold()) {
-                        voiceLastSpeechAt = now;
-                    }
-                    android.util.Log.i("Air3NativeCameraTest", "voice amplitude=" + amplitude + " speech=true");
-                } else if (amplitude > 0) {
-                    android.util.Log.i("Air3NativeCameraTest", "voice amplitude=" + amplitude + " speech=false");
-                }
-                long elapsed = now - voiceRecordingStartedAt;
-                long silentMs = now - voiceLastSpeechAt;
-                if (voiceSpeechDetected &&
-                        elapsed >= VOICE_MIN_RECORDING_MS &&
-                        silentMs >= VOICE_SILENCE_AFTER_SPEECH_MS) {
-                    stopVoiceRecording(true, "silence_detected");
-                    return;
-                }
-                if (!voiceSpeechDetected && elapsed >= VOICE_NO_SPEECH_TIMEOUT_MS) {
-                    stopVoiceRecording(false, "no_speech_timeout");
-                    return;
-                }
-                mainHandler.postDelayed(this, VOICE_AMPLITUDE_POLL_MS);
+            public void onPartial(String text) {
+                onAsrPartial(text);
             }
-        };
-        mainHandler.postDelayed(voiceAmplitudeMonitor, VOICE_AMPLITUDE_POLL_MS);
+
+            @Override
+            public void onFinal(String text) {
+                onAsrFinal(text);
+            }
+
+            @Override
+            public void onUnclear(String diagnosticCode) {
+                onVoiceUnclear(diagnosticCode);
+            }
+
+            @Override
+            public void onError(Exception error) {
+                onVoiceUnclear("asr_error:" + safeMessage(error));
+            }
+        });
+    }
+
+    private void finishToggleVoiceRecording(String stopReason) {
+        stopVoiceRecording(true, stopReason);
+    }
+
+    private void feedRealtimeAsrPcm(byte[] buffer, int read) {
+        if (!recordingVoice || realtimeAsrClient == null || read <= 0) {
+            return;
+        }
+        realtimeAsrClient.acceptPcm(buffer, read);
+    }
+
+    private void finishRealtimeAsr(String stopReason) {
+        if (realtimeAsrClient != null) {
+            realtimeAsrClient.finish(stopReason);
+        }
     }
 
     private void startVoiceRecordThread(final AudioRecord recorder, final File outputFile, final int bufferSize) {
@@ -720,59 +1812,198 @@ public final class MainActivity extends Activity {
             @Override
             public void run() {
                 byte[] buffer = new byte[bufferSize];
-                int audioBytes = 0;
+                int pcmBytes = 0;
                 RandomAccessFile output = null;
                 try {
                     output = new RandomAccessFile(outputFile, "rw");
                     output.setLength(0);
                     writeWavHeader(output, 0);
-                    while (voiceRecordThreadRunning.get()) {
+                    while (recordingVoice && recorder == voiceRecorder) {
                         int read = recorder.read(buffer, 0, buffer.length);
                         if (read > 0) {
                             output.write(buffer, 0, read);
-                            audioBytes += read;
-                            int amplitude = voicePcmAmplitude(buffer, read);
-                            voiceCurrentAmplitude = amplitude;
-                            if (amplitude > 0) {
-                                voicePeakAmplitude = Math.max(voicePeakAmplitude, amplitude);
-                            }
+                            pcmBytes += read;
+                            feedRealtimeAsrPcm(buffer, read);
                         }
                     }
-                } catch (Exception error) {
-                    android.util.Log.w("Air3NativeCameraTest", "Voice WAV writer failed", error);
+                    output.seek(0);
+                    writeWavHeader(output, pcmBytes);
+                } catch (final Exception error) {
+                    mainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            setComposerStatus("录音保存失败：" + safeMessage(error));
+                        }
+                    });
                 } finally {
                     if (output != null) {
                         try {
-                            output.seek(0);
-                            writeWavHeader(output, audioBytes);
                             output.close();
-                        } catch (Exception closeError) {
-                            android.util.Log.w("Air3NativeCameraTest", "Voice WAV finalize failed", closeError);
+                        } catch (IOException ignored) {
                         }
                     }
                 }
             }
-        }, "Air3VoiceWavRecorder");
+        }, "DingdangVoiceRecorder");
         voiceRecordThread.start();
     }
 
-    private static int voicePcmAmplitude(byte[] buffer, int length) {
-        int peak = 0;
-        int safeLength = length - (length % 2);
-        for (int index = 0; index < safeLength; index += 2) {
-            int low = buffer[index] & 0xff;
-            int high = buffer[index + 1];
-            int sample = (high << 8) | low;
-            peak = Math.max(peak, Math.abs(sample));
+    private void stopVoiceRecording(boolean transcribe, String stopReason) {
+        if (!recordingVoice && voiceRecorder == null) {
+            return;
         }
-        return peak;
+        if (voiceStopRunnable != null) {
+            mainHandler.removeCallbacks(voiceStopRunnable);
+            voiceStopRunnable = null;
+        }
+        recordingVoice = false;
+        AudioRecord recorder = voiceRecorder;
+        voiceRecorder = null;
+        try {
+            if (recorder != null) {
+                recorder.stop();
+            }
+        } catch (Exception ignored) {
+        }
+        if (recorder != null) {
+            recorder.release();
+        }
+        if (transcribe) {
+            finishRealtimeAsr(stopReason);
+        } else if (realtimeAsrClient != null) {
+            realtimeAsrClient.cancel();
+        }
+        waitForVoiceRecordThread();
+        if (!transcribe || voiceFile == null || !voiceFile.exists() || voiceFile.length() <= VOICE_WAV_HEADER_BYTES) {
+            voiceStreamState = VoiceStreamState.IDLE;
+            stateText.setText("在线");
+            renderComposer();
+            return;
+        }
+        stateText.setText("已听清，正在整理");
+        renderComposer();
     }
 
-    private static void writeWavHeader(RandomAccessFile output, int pcmDataBytes) throws IOException {
+    private void stopVoiceCaptureAfterAsrFinal() {
+        if (!recordingVoice && voiceRecorder == null) {
+            return;
+        }
+        if (voiceStopRunnable != null) {
+            mainHandler.removeCallbacks(voiceStopRunnable);
+            voiceStopRunnable = null;
+        }
+        recordingVoice = false;
+        AudioRecord recorder = voiceRecorder;
+        voiceRecorder = null;
+        try {
+            if (recorder != null) {
+                recorder.stop();
+            }
+        } catch (Exception ignored) {
+        }
+        if (recorder != null) {
+            recorder.release();
+        }
+        waitForVoiceRecordThread();
+    }
+
+    private void onAsrPartial(final String text) {
+        final String partial = text == null ? "" : text.trim();
+        if (partial.length() == 0) {
+            return;
+        }
+        realtimeAsrPartialCount++;
+        Log.i(KEY_LOG_TAG, "Realtime ASR partial count=" + realtimeAsrPartialCount + " text=" + partial);
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (voiceStreamState == VoiceStreamState.FINAL_READY || voiceStreamState == VoiceStreamState.AI_PENDING) {
+                    return;
+                }
+                voiceStreamState = VoiceStreamState.PARTIAL_READY;
+                composerTranscript = partial;
+                stateText.setText("正在听");
+                updateLiveTranscriptMessage(partial, false);
+                renderComposer();
+            }
+        });
+    }
+
+    private void onAsrFinal(final String text) {
+        final String finalText = text == null ? "" : text.trim();
+        Log.i(KEY_LOG_TAG, "Realtime ASR final text=" + finalText);
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                realtimeAsrFinished = true;
+                if (finalText.length() == 0) {
+                    onVoiceUnclear("empty_final_text");
+                    return;
+                }
+                stopVoiceCaptureAfterAsrFinal();
+                voiceStreamState = VoiceStreamState.FINAL_READY;
+                composerTranscript = finalText;
+                updateLiveTranscriptMessage(finalText, true);
+                voiceStreamState = VoiceStreamState.AI_PENDING;
+                stateText.setText("已听清，正在分析");
+                renderComposer();
+                sendComposerToAi();
+            }
+        });
+    }
+
+    private void onVoiceUnclear(final String diagnosticCode) {
+        final String code = diagnosticCode == null || diagnosticCode.trim().length() == 0
+                ? "voice_unclear"
+                : diagnosticCode.trim();
+        Log.i(KEY_LOG_TAG, "Realtime ASR unclear code=" + code);
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (realtimeAsrFinished && composerTranscript.trim().length() > 0) {
+                    return;
+                }
+                voiceStreamState = VoiceStreamState.VOICE_UNCLEAR;
+                composerTranscript = voiceStatusForDiagnostic(code);
+                clearLiveTranscriptMessageIfStreaming();
+                stateText.setText("在线");
+                renderComposer();
+            }
+        });
+    }
+
+    private String voiceStatusForDiagnostic(String code) {
+        String safeCode = code == null ? "" : code;
+        if ("asr_endpoint_missing".equals(safeCode)) {
+            return "语音服务未连接，请检查 ASR 配置";
+        }
+        if ("asr_realtime_unavailable".equals(safeCode) || safeCode.startsWith("asr_error:")) {
+            return "语音服务未连接，请检查后端或网络";
+        }
+        if ("voice_too_short".equals(safeCode)) {
+            return "说话时间太短，请再说一次";
+        }
+        return "没有听清，请再说一次";
+    }
+
+    private void waitForVoiceRecordThread() {
+        Thread thread = voiceRecordThread;
+        voiceRecordThread = null;
+        if (thread == null) {
+            return;
+        }
+        try {
+            thread.join(700L);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void writeWavHeader(RandomAccessFile output, int pcmBytes) throws IOException {
         int byteRate = VOICE_SAMPLE_RATE_HZ * VOICE_WAV_CHANNEL_COUNT * VOICE_WAV_BITS_PER_SAMPLE / 8;
         int blockAlign = VOICE_WAV_CHANNEL_COUNT * VOICE_WAV_BITS_PER_SAMPLE / 8;
         output.writeBytes("RIFF");
-        writeLittleEndianInt(output, 36 + pcmDataBytes);
+        writeLittleEndianInt(output, 36 + pcmBytes);
         output.writeBytes("WAVE");
         output.writeBytes("fmt ");
         writeLittleEndianInt(output, 16);
@@ -783,171 +2014,23 @@ public final class MainActivity extends Activity {
         writeLittleEndianShort(output, blockAlign);
         writeLittleEndianShort(output, VOICE_WAV_BITS_PER_SAMPLE);
         output.writeBytes("data");
-        writeLittleEndianInt(output, pcmDataBytes);
+        writeLittleEndianInt(output, pcmBytes);
     }
 
-    private static void writeLittleEndianInt(RandomAccessFile output, int value) throws IOException {
+    private void writeLittleEndianInt(RandomAccessFile output, int value) throws IOException {
         output.write(value & 0xff);
         output.write((value >> 8) & 0xff);
         output.write((value >> 16) & 0xff);
         output.write((value >> 24) & 0xff);
     }
 
-    private static void writeLittleEndianShort(RandomAccessFile output, int value) throws IOException {
+    private void writeLittleEndianShort(RandomAccessFile output, int value) throws IOException {
         output.write(value & 0xff);
         output.write((value >> 8) & 0xff);
     }
 
-    private int voiceDynamicSilenceThreshold() {
-        return Math.max(VOICE_SPEECH_AMPLITUDE_THRESHOLD, Math.round(voicePeakAmplitude * VOICE_RELATIVE_SILENCE_RATIO));
-    }
-
-    private void cancelVoiceTimers() {
-        if (voiceStopRunnable != null) {
-            mainHandler.removeCallbacks(voiceStopRunnable);
-            voiceStopRunnable = null;
-        }
-        if (voiceAmplitudeMonitor != null) {
-            mainHandler.removeCallbacks(voiceAmplitudeMonitor);
-            voiceAmplitudeMonitor = null;
-        }
-    }
-
-    private void stopVoiceRecording(boolean upload, String stopReason) {
-        if (!recordingVoice && voiceRecorder == null) {
-            return;
-        }
-        cancelVoiceTimers();
-        File finishedFile = voiceFile;
-        long durationMs = voiceRecordingStartedAt > 0 ? System.currentTimeMillis() - voiceRecordingStartedAt : 0L;
-        int generation = activeVoiceGeneration;
-        try {
-            if (voiceRecorder != null) {
-                voiceRecorder.stop();
-            }
-        } catch (Exception error) {
-            android.util.Log.w("Air3NativeCameraTest", "Voice recorder stop failed", error);
-        } finally {
-            recordingVoice = false;
-            voiceRecordThreadRunning.set(false);
-            releaseVoiceRecorder();
-            waitForVoiceRecordThread();
-        }
-        if (upload && finishedFile != null && finishedFile.exists() && finishedFile.length() > 0) {
-            if (durationMs < VOICE_MIN_RECORDING_MS) {
-                stopReason = "too_short";
-                persistVoiceDiagnostics(finishedFile.length(), durationMs, "VOICE_RECOGNITION_WAV", stopReason);
-                setResultText("录音太短");
-                setHintText("请至少说满一句完整问题\n说完后停顿一下，系统会自动结束");
-                setStatus("没有录到完整问题。请按语音按钮后说完一句话，再停顿一下。");
-                return;
-            }
-            persistVoiceDiagnostics(finishedFile.length(), durationMs, "VOICE_RECOGNITION_WAV", stopReason);
-            setResultText("语音上传中");
-            setStatus("语音已录制，正在上传给 AI 转文字。");
-            uploadVoiceAudio(finishedFile, durationMs, stopReason, generation);
-        } else if ("no_speech_timeout".equals(stopReason)) {
-            persistVoiceDiagnostics(finishedFile == null ? 0 : finishedFile.length(), durationMs, "VOICE_RECOGNITION_WAV", stopReason);
-            setResultText("没有听到声音");
-            setHintText("没有检测到有效语音\n请靠近眼镜麦克风后再问一次");
-            setStatus("没有听到有效语音。请靠近眼镜麦克风，说完一句话后停顿。");
-        }
-    }
-
-    private void releaseVoiceRecorder() {
-        if (voiceRecorder == null) {
-            return;
-        }
-        try {
-            voiceRecorder.release();
-        } catch (Exception ignored) {
-        }
-        voiceRecorder = null;
-    }
-
-    private void waitForVoiceRecordThread() {
-        if (voiceRecordThread == null) {
-            return;
-        }
-        try {
-            voiceRecordThread.join(1200L);
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
-        }
-        voiceRecordThread = null;
-    }
-
-    private void uploadVoiceAudio(File audioFile, long recordingMs, String stopReason, int generation) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                HttpURLConnection connection = null;
-                try {
-                    byte[] audioBytes = readFileBytes(audioFile);
-                    JSONObject payload = new JSONObject();
-                    payload.put("audioBase64", "data:audio/wav;base64," + Base64.encodeToString(audioBytes, Base64.NO_WRAP));
-                    payload.put("audioFormat", "audio/wav");
-                    payload.put("expectedLanguage", "zh");
-                    payload.put("sttPrompt", VOICE_STT_PROMPT);
-                    payload.put("recordingMs", recordingMs);
-                    payload.put("stopReason", stopReason);
-                    payload.put("timestamp", System.currentTimeMillis());
-                    payload.put("source", "air3-audio-record-wav");
-                    byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
-
-                    if (sessionId.length() == 0) {
-                        throw new IllegalStateException("No ops session yet. Tap once to create session.");
-                    }
-                    connection = (HttpURLConnection) new URL(voiceEndpoint()).openConnection();
-                    connection.setConnectTimeout(8000);
-                    connection.setReadTimeout(VOICE_UPLOAD_READ_TIMEOUT_MS);
-                    connection.setRequestMethod("POST");
-                    connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                    connection.setRequestProperty("x-ops-glasses-key", OPS_GLASSES_API_KEY);
-                    connection.setDoOutput(true);
-                    try (OutputStream output = connection.getOutputStream()) {
-                        output.write(body);
-                    }
-
-                    int status = connection.getResponseCode();
-                    InputStream input = status >= 200 && status < 300
-                            ? connection.getInputStream()
-                            : connection.getErrorStream();
-                    String responseText = readAll(input);
-                    persistVoiceDiagnostics(audioBytes.length, recordingMs, "VOICE_RECOGNITION_WAV", stopReason);
-                    persistVoiceResponse(status, audioBytes.length, responseText, null);
-                    if (status < 200 || status >= 300) {
-                        throw new IOException("voice_upload_http_" + status + ": " + responseText);
-                    }
-                    JSONObject response = new JSONObject(responseText);
-                    HudResponse hud = new HudResponse(response, sessionId, currentStep);
-                    applyHudResponseIfCurrent(hud, generation);
-                    android.util.Log.i("Air3NativeCameraTest",
-                            "Voice OK http=" + status + " bytes=" + audioBytes.length
-                                    + " resultType=" + hud.resultType
-                                    + " feedbackCode=" + hud.feedbackCode
-                                    + " step=" + hud.step);
-                } catch (Exception error) {
-                    setResultText("语音同步失败");
-                    setHintText("语音没有同步到 AI\n请确认网络后重试，或单击重新拍照");
-                    setStatus("语音没有同步成功，请改用单击拍照继续。");
-                    persistVoiceDiagnostics(audioFile.length(), recordingMs, "VOICE_RECOGNITION_WAV", stopReason);
-                    persistVoiceResponse(-1, audioFile.length(), "", error);
-                    android.util.Log.w("Air3NativeCameraTest", "Voice upload failed", error);
-                } finally {
-                    if (connection != null) {
-                        connection.disconnect();
-                    }
-                }
-            }
-        }, "Air3VoiceAudioUpload").start();
-    }
-
     private void startCameraFlow() {
         startCameraThread();
-        setResultText("正在打开相机");
-        setStatus("正在准备眼镜相机预览。");
-
         previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
             public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
@@ -956,7 +2039,7 @@ public final class MainActivity extends Activity {
 
             @Override
             public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
-                configurePreviewTransform();
+                configurePreviewTransform(width, height);
             }
 
             @Override
@@ -968,7 +2051,6 @@ public final class MainActivity extends Activity {
             public void onSurfaceTextureUpdated(SurfaceTexture surface) {
             }
         });
-
         if (previewView.isAvailable()) {
             openCamera();
         }
@@ -978,7 +2060,7 @@ public final class MainActivity extends Activity {
         if (cameraThread != null) {
             return;
         }
-        cameraThread = new HandlerThread("Air3NativeCamera");
+        cameraThread = new HandlerThread("DingdangCamera");
         cameraThread.start();
         cameraHandler = new Handler(cameraThread.getLooper());
     }
@@ -989,37 +2071,30 @@ public final class MainActivity extends Activity {
         }
         cameraThread.quitSafely();
         try {
-            cameraThread.join(1500);
-        } catch (InterruptedException ignored) {
+            cameraThread.join(800L);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
         }
         cameraThread = null;
         cameraHandler = null;
     }
 
     private void openCamera() {
-        if (cameraDevice != null) {
+        if (cameraDevice != null || cameraHandler == null) {
             return;
-        }
-        if (cameraHandler == null) {
-            startCameraThread();
         }
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             return;
         }
-
         try {
             CameraManager manager = (CameraManager) getSystemService(CAMERA_SERVICE);
             cameraId = chooseCameraId(manager);
             if (cameraId == null) {
-                setResultText("未找到相机");
-                setStatus("没有可用相机，无法采集现场画面。");
                 return;
             }
-
-            logCameraCapabilities(manager, cameraId);
-            sensorOrientation = readSensorOrientation(manager, cameraId);
-            captureSize = chooseCaptureSize(manager, cameraId);
             previewSize = choosePreviewSize(manager, cameraId);
+            captureSize = chooseCaptureSize(manager, cameraId);
+            sensorOrientation = readSensorOrientation(manager, cameraId);
             imageReader = ImageReader.newInstance(
                     captureSize.getWidth(),
                     captureSize.getHeight(),
@@ -1028,18 +2103,12 @@ public final class MainActivity extends Activity {
             imageReader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
                 @Override
                 public void onImageAvailable(ImageReader reader) {
-                    MainActivity.this.onImageAvailable(reader);
+                    handleCapturedImage(reader);
                 }
             }, cameraHandler);
-
-            setStatus("正在打开相机，请保持眼镜稳定。");
-            android.util.Log.i("Air3NativeCameraTest", "Opening camera " + cameraId
-                    + " capture=" + captureSize.getWidth() + "x" + captureSize.getHeight()
-                    + " preview=" + previewSize.getWidth() + "x" + previewSize.getHeight());
             manager.openCamera(cameraId, new CameraDevice.StateCallback() {
                 @Override
                 public void onOpened(CameraDevice camera) {
-                    cameraOpenRetryCount = 0;
                     cameraDevice = camera;
                     createPreviewSession();
                 }
@@ -1048,194 +2117,86 @@ public final class MainActivity extends Activity {
                 public void onDisconnected(CameraDevice camera) {
                     camera.close();
                     cameraDevice = null;
-                    setStatus("相机连接中断，正在尝试恢复。");
-                    retryOpenCamera("disconnected");
                 }
 
                 @Override
                 public void onError(CameraDevice camera, int error) {
                     camera.close();
                     cameraDevice = null;
-                    setResultText("相机异常");
-                    setStatus("相机暂时不可用，正在自动重试。");
-                    android.util.Log.w("Air3NativeCameraTest", "Camera open error=" + error);
-                    retryOpenCamera("error=" + error);
                 }
             }, cameraHandler);
         } catch (Exception error) {
-            setResultText("相机启动失败");
-            setStatus("相机启动失败，正在自动重试。");
-            android.util.Log.w("Air3NativeCameraTest", "Camera failed", error);
-            retryOpenCamera(error.getClass().getSimpleName());
+            cameraStatusText.setText("相机启动失败：" + safeMessage(error));
         }
-    }
-
-    private void retryOpenCamera(String reason) {
-        if (cameraHandler == null || isFinishing()) {
-            return;
-        }
-        if (cameraOpenRetryCount >= 3) {
-            setStatus("相机仍未就绪，请退出后重新进入应用，或关闭其他占用相机的程序。");
-            return;
-        }
-        cameraOpenRetryCount += 1;
-        closeCamera();
-        final int retryNumber = cameraOpenRetryCount;
-        setStatus("相机未就绪，正在第 " + retryNumber + " 次重试。");
-        cameraHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                openCamera();
-            }
-        }, 900L * retryNumber);
     }
 
     private String chooseCameraId(CameraManager manager) throws CameraAccessException {
-        String first = null;
         for (String id : manager.getCameraIdList()) {
-            if (first == null) {
-                first = id;
-            }
             CameraCharacteristics c = manager.getCameraCharacteristics(id);
             Integer facing = c.get(CameraCharacteristics.LENS_FACING);
-            android.util.Log.i("Air3NativeCameraTest", "candidate cameraId=" + id + " facing=" + facing);
             if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
                 return id;
             }
         }
-        return first;
-    }
-
-    private Size chooseCaptureSize(CameraManager manager, String id) throws CameraAccessException {
-        CameraCharacteristics c = manager.getCameraCharacteristics(id);
-        StreamConfigurationMap map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-        if (map == null) {
-            return new Size(1920, 1080);
-        }
-
-        Size[] sizes = map.getOutputSizes(ImageFormat.JPEG);
-        if (sizes == null || sizes.length == 0) {
-            return new Size(1920, 1080);
-        }
-
-        Size best = sizes[0];
-        long bestPixels = (long) best.getWidth() * (long) best.getHeight();
-        for (Size size : sizes) {
-            long pixels = (long) size.getWidth() * (long) size.getHeight();
-            boolean usable = size.getWidth() >= 1920 && size.getHeight() >= 1080;
-            if (usable && pixels > bestPixels) {
-                best = size;
-                bestPixels = pixels;
-            }
-        }
-        return best;
+        String[] ids = manager.getCameraIdList();
+        return ids.length == 0 ? null : ids[0];
     }
 
     private Size choosePreviewSize(CameraManager manager, String id) throws CameraAccessException {
-        CameraCharacteristics c = manager.getCameraCharacteristics(id);
-        StreamConfigurationMap map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+        StreamConfigurationMap map = manager.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+        Size fallback = new Size(1280, 720);
         if (map == null) {
-            return new Size(1920, 1080);
+            return fallback;
         }
-
         Size[] sizes = map.getOutputSizes(SurfaceTexture.class);
-        if (sizes == null || sizes.length == 0) {
-            return new Size(1920, 1080);
-        }
-
-        Size best = sizes[0];
-        double targetAspect = (double) captureSize.getWidth() / (double) captureSize.getHeight();
-        double bestScore = Double.MAX_VALUE;
-        for (Size size : sizes) {
-            double aspect = (double) size.getWidth() / (double) size.getHeight();
-            double aspectPenalty = Math.abs(aspect - targetAspect) * 10000.0;
-            double pixelDelta = Math.abs(((double) size.getWidth() * (double) size.getHeight())
-                    - ((double) captureSize.getWidth() * (double) captureSize.getHeight())) / 100000.0;
-            double undersizePenalty = (size.getWidth() < 1280 || size.getHeight() < 720) ? 5000.0 : 0.0;
-            double score = aspectPenalty + pixelDelta + undersizePenalty;
-            if (score < bestScore) {
-                best = size;
-                bestScore = score;
-            }
-        }
-        return best;
+        return chooseLargestUnder(sizes, 1280, 720, fallback);
     }
 
-    private void logCameraCapabilities(CameraManager manager, String id) throws CameraAccessException {
-        CameraCharacteristics c = manager.getCameraCharacteristics(id);
-        Integer sensorOrientation = c.get(CameraCharacteristics.SENSOR_ORIENTATION);
-        StreamConfigurationMap map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-        android.util.Log.i("Air3NativeCameraTest",
-                "cameraId=" + id + " sensorOrientation=" + sensorOrientation);
+    private Size chooseCaptureSize(CameraManager manager, String id) throws CameraAccessException {
+        StreamConfigurationMap map = manager.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+        Size fallback = new Size(1280, 720);
         if (map == null) {
-            android.util.Log.w("Air3NativeCameraTest", "No StreamConfigurationMap");
-            return;
+            return fallback;
         }
-        android.util.Log.i("Air3NativeCameraTest",
-                "JPEG sizes=" + Arrays.toString(map.getOutputSizes(ImageFormat.JPEG)));
-        android.util.Log.i("Air3NativeCameraTest",
-                "Preview sizes=" + Arrays.toString(map.getOutputSizes(SurfaceTexture.class)));
+        Size[] sizes = map.getOutputSizes(ImageFormat.JPEG);
+        return chooseLargestUnder(sizes, 1920, 1080, fallback);
+    }
+
+    private Size chooseLargestUnder(Size[] sizes, int maxWidth, int maxHeight, Size fallback) {
+        if (sizes == null || sizes.length == 0) {
+            return fallback;
+        }
+        Arrays.sort(sizes, new Comparator<Size>() {
+            @Override
+            public int compare(Size a, Size b) {
+                return Integer.compare(b.getWidth() * b.getHeight(), a.getWidth() * a.getHeight());
+            }
+        });
+        for (Size size : sizes) {
+            if (size.getWidth() <= maxWidth && size.getHeight() <= maxHeight) {
+                return size;
+            }
+        }
+        return sizes[0];
     }
 
     private int readSensorOrientation(CameraManager manager, String id) throws CameraAccessException {
-        CameraCharacteristics c = manager.getCameraCharacteristics(id);
-        Integer orientation = c.get(CameraCharacteristics.SENSOR_ORIENTATION);
+        Integer orientation = manager.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION);
         return orientation == null ? 0 : orientation;
     }
 
-    private void configurePreviewTransform() {
-        if (previewView == null || previewSize == null) {
-            return;
-        }
-        int viewWidth = previewView.getWidth();
-        int viewHeight = previewView.getHeight();
-        if (viewWidth == 0 || viewHeight == 0) {
-            return;
-        }
-
-        float bufferWidth = previewSize.getWidth();
-        float bufferHeight = previewSize.getHeight();
-        Matrix matrix = new Matrix();
-        RectF viewRect = new RectF(0f, 0f, viewWidth, viewHeight);
-        RectF bufferRect = new RectF(0f, 0f, bufferWidth, bufferHeight);
-        float scale = Math.max(viewRect.width() / bufferRect.width(), viewRect.height() / bufferRect.height());
-        float scaledWidth = bufferRect.width() * scale;
-        float scaledHeight = bufferRect.height() * scale;
-        float dx = (viewRect.width() - scaledWidth) / 2f;
-        float dy = (viewRect.height() - scaledHeight) / 2f;
-        matrix.setScale(scale, scale);
-        matrix.postTranslate(dx, dy);
-        int previewRotation = previewRotationDegrees();
-        if (previewRotation != 0) {
-            matrix.postRotate(previewRotation, viewRect.centerX(), viewRect.centerY());
-        }
-        previewView.setTransform(matrix);
-        android.util.Log.i("Air3NativeCameraTest", "Preview transform view="
-                + viewWidth + "x" + viewHeight + " buffer="
-                + previewSize.getWidth() + "x" + previewSize.getHeight()
-                + " sensorOrientation=" + sensorOrientation
-                + " previewRotation=" + previewRotation);
-    }
-
-    private int previewRotationDegrees() {
-        return 0;
-    }
-
     private void createPreviewSession() {
+        if (cameraDevice == null || previewSize == null || !previewView.isAvailable()) {
+            return;
+        }
         try {
             SurfaceTexture texture = previewView.getSurfaceTexture();
-            if (texture == null || cameraDevice == null || imageReader == null) {
-                return;
-            }
             texture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
-            configurePreviewTransform();
             Surface previewSurface = new Surface(texture);
-
-            CaptureRequest.Builder previewRequest =
-                    cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            previewRequest.addTarget(previewSurface);
-            previewRequest.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
-
+            CaptureRequest.Builder request = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            request.addTarget(previewSurface);
             cameraDevice.createCaptureSession(
                     Arrays.asList(previewSurface, imageReader.getSurface()),
                     new CameraCaptureSession.StateCallback() {
@@ -1243,740 +2204,197 @@ public final class MainActivity extends Activity {
                         public void onConfigured(CameraCaptureSession session) {
                             captureSession = session;
                             try {
-                                session.setRepeatingRequest(
-                                        previewRequest.build(),
-                                        null,
-                                        cameraHandler);
-                                if (!restoreLastHudResponse()) {
-                                    showHomeHud();
-                                    setStatus("相机已就绪。请把现场关键画面放入绿色框内，单击开始 AI 反馈。");
-                                }
-                            } catch (CameraAccessException error) {
-                                setResultText("预览失败");
-                                setStatus("相机预览启动失败，请重新进入应用。");
-                                android.util.Log.w("Air3NativeCameraTest", "Preview repeating request failed", error);
+                                session.setRepeatingRequest(request.build(), null, cameraHandler);
+                                configurePreviewTransform(previewView.getWidth(), previewView.getHeight());
+                            } catch (CameraAccessException ignored) {
                             }
                         }
 
                         @Override
                         public void onConfigureFailed(CameraCaptureSession session) {
-                            setResultText("预览失败");
-                            setStatus("相机预览配置失败，请重新进入应用。");
+                            cameraStatusText.setText("预览失败");
                         }
                     },
                     cameraHandler);
         } catch (Exception error) {
-            setResultText("预览失败");
-            setStatus("相机预览启动失败，请重新进入应用。");
-            android.util.Log.w("Air3NativeCameraTest", "Preview failed", error);
+            cameraStatusText.setText("预览失败：" + safeMessage(error));
         }
     }
 
-    private void captureStillImage(String source) {
-        if (captureInFlight || cameraDevice == null || captureSession == null || imageReader == null) {
-            setStatus("相机正在准备或上一张仍在处理，请稍候再试。");
+    private void configurePreviewTransform(int viewWidth, int viewHeight) {
+        if (previewSize == null || viewWidth == 0 || viewHeight == 0) {
             return;
         }
+        int rotation = getWindowManager().getDefaultDisplay().getRotation();
+        boolean swapped = rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270;
+        float bufferWidth = swapped ? previewSize.getHeight() : previewSize.getWidth();
+        float bufferHeight = swapped ? previewSize.getWidth() : previewSize.getHeight();
+        if (bufferWidth <= 0f || bufferHeight <= 0f) {
+            return;
+        }
+        float viewRatio = viewWidth / (float) viewHeight;
+        float bufferRatio = bufferWidth / bufferHeight;
+        float scaleX = 1f;
+        float scaleY = 1f;
+        if (bufferRatio > viewRatio) {
+            scaleX = bufferRatio / viewRatio;
+        } else {
+            scaleY = viewRatio / bufferRatio;
+        }
+        Matrix matrix = new Matrix();
+        matrix.setScale(scaleX, scaleY, viewWidth / 2f, viewHeight / 2f);
+        previewView.setTransform(matrix);
+        Log.i(KEY_LOG_TAG, "Camera preview transform view=" + viewWidth + "x" + viewHeight
+                + " preview=" + previewSize.getWidth() + "x" + previewSize.getHeight()
+                + " scaleX=" + scaleX + " scaleY=" + scaleY);
+    }
 
-        captureGeneration = beginInteraction();
-        final int generation = captureGeneration;
-        captureInFlight = true;
+    private void captureStillImage() {
+        if (captureInFlight || cameraDevice == null || captureSession == null || imageReader == null) {
+            cameraStatusText.setText("相机还没准备好");
+            return;
+        }
         try {
-            CaptureRequest.Builder request =
-                    cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+            captureInFlight = true;
+            cameraStatusText.setText("正在拍照");
+            CaptureRequest.Builder request = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             request.addTarget(imageReader.getSurface());
-            request.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
-            request.set(CaptureRequest.JPEG_ORIENTATION, 0);
-            setResultText("正在采集");
-            hintText.setText("保持画面稳定\n请等待 AI 分析结果");
-            setStatus("正在采集现场画面，请保持稳定。");
-            android.util.Log.i("Air3NativeCameraTest", "Capturing JPEG source=" + source);
+            request.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation());
             captureSession.capture(request.build(), new CameraCaptureSession.CaptureCallback() {
                 @Override
-                public void onCaptureCompleted(
-                        CameraCaptureSession session,
-                        CaptureRequest request,
-                        TotalCaptureResult result) {
-                    if (!isCurrentInteraction(generation)) {
-                        android.util.Log.i("Air3NativeCameraTest",
-                                "Skip stale capture completion generation=" + generation);
-                        return;
-                    }
-                    setStatus("照片已采集，正在读取画面。");
+                public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request, TotalCaptureResult result) {
+                    cameraStatusText.setText("照片处理中");
                 }
             }, cameraHandler);
         } catch (Exception error) {
             captureInFlight = false;
-            setResultText("拍照失败");
-            setStatus("拍照失败，请稍后重试。");
-            android.util.Log.w("Air3NativeCameraTest", "Capture failed", error);
+            cameraStatusText.setText("拍照失败：" + safeMessage(error));
         }
     }
 
-    private void onImageAvailable(ImageReader reader) {
-        try (Image image = reader.acquireLatestImage()) {
-            if (image == null) {
-                captureInFlight = false;
-                setStatus("本次没有读到照片，请重新拍摄。");
-                return;
-            }
+    private int jpegOrientation() {
+        int deviceRotation = getWindowManager().getDefaultDisplay().getRotation();
+        int degrees;
+        switch (deviceRotation) {
+            case Surface.ROTATION_90:
+                degrees = 90;
+                break;
+            case Surface.ROTATION_180:
+                degrees = 180;
+                break;
+            case Surface.ROTATION_270:
+                degrees = 270;
+                break;
+            case Surface.ROTATION_0:
+            default:
+                degrees = 0;
+                break;
+        }
+        return (sensorOrientation + degrees + 360) % 360;
+    }
 
-            ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-            byte[] bytes = new byte[buffer.remaining()];
-            buffer.get(bytes);
-            persistRawCapture(bytes);
-            final int generation = captureGeneration;
-            if (!isCurrentInteraction(generation)) {
-                android.util.Log.i("Air3NativeCameraTest", "Skip stale captured image before UI generation=" + generation);
+    private void handleCapturedImage(ImageReader reader) {
+        Image image = null;
+        try {
+            image = reader.acquireLatestImage();
+            if (image == null) {
                 return;
             }
-            setResultText("AI 分析中");
-            hintText.setText("照片已上传\n正在生成现场反馈");
-            setStatus("正在处理取景框内画面，并上传给 AI 分析。");
-            android.util.Log.i("Air3NativeCameraTest", "JPEG image bytes=" + bytes.length);
-            new Thread(new Runnable() {
+            byte[] bytes = new byte[image.getPlanes()[0].getBuffer().remaining()];
+            image.getPlanes()[0].getBuffer().get(bytes);
+            final byte[] compressed = compressJpeg(bytes);
+            mainHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    uploadImage(bytes, generation);
+                    confirmCapturedPhoto(compressed);
                 }
-            }, "Air3NativeUpload").start();
-        } catch (Exception error) {
-            captureInFlight = false;
-            setResultText("照片读取失败");
-            setStatus("照片读取失败，请重新拍摄。");
-            android.util.Log.w("Air3NativeCameraTest", "Image failed", error);
-        }
-    }
-
-    private void uploadImage(byte[] jpegBytes, int generation) {
-        HttpURLConnection connection = null;
-        try {
-            if (!isCurrentInteraction(generation)) {
-                android.util.Log.i("Air3NativeCameraTest", "Skip stale image upload before network generation=" + generation);
-                return;
-            }
-            UploadImage uploadImage = prepareUploadJpeg(jpegBytes);
-            if (!isCurrentInteraction(generation)) {
-                android.util.Log.i("Air3NativeCameraTest",
-                        "Skip stale image upload after prepare generation=" + generation);
-                return;
-            }
-            String imageBase64 = Base64.encodeToString(uploadImage.bytes, Base64.NO_WRAP);
-            JSONObject payload = new JSONObject();
-            payload.put("sessionId", sessionId);
-            payload.put("taskType", "general_scene_feedback");
-            payload.put("step", currentStep);
-            payload.put("action", actionForCurrentStep());
-            payload.put("imageKind", "field_scene");
-            payload.put("imageBase64", "data:image/jpeg;base64," + imageBase64);
-            payload.put("width", uploadImage.width);
-            payload.put("height", uploadImage.height);
-            payload.put("format", "jpg");
-            payload.put("timestamp", System.currentTimeMillis());
-            payload.put("source", "native-camera2");
-            payload.put("preprocess", uploadImage.preprocess);
-            byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
-
-            if (OPS_GLASSES_API_KEY.length() == 0) {
-                throw new IllegalStateException("OPS_GLASSES_API_KEY missing in APK build.");
-            }
-            persistDebugUpload(uploadImage.bytes);
-            setStatus("真实照片已采集，正在上传给 AI 分析现场画面。");
-            android.util.Log.i("Air3NativeCameraTest",
-                    "Uploading focused JPEG bytes=" + uploadImage.bytes.length
-                            + " size=" + uploadImage.width + "x" + uploadImage.height
-                            + " preprocess=" + uploadImage.preprocess
-                            + " originalBytes=" + jpegBytes.length);
-            connection = (HttpURLConnection) new URL(EVENTS_ENDPOINT).openConnection();
-            connection.setConnectTimeout(8000);
-            connection.setReadTimeout(60000);
-            connection.setRequestMethod("POST");
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            connection.setRequestProperty("x-ops-glasses-key", OPS_GLASSES_API_KEY);
-            connection.setDoOutput(true);
-            try (OutputStream output = connection.getOutputStream()) {
-                output.write(body);
-            }
-
-            int status = connection.getResponseCode();
-            InputStream input = status >= 200 && status < 300
-                    ? connection.getInputStream()
-                    : connection.getErrorStream();
-            String responseText = readAll(input);
-            if (status < 200 || status >= 300) {
-                throw new IOException("image_upload_http_" + status + ": " + responseText);
-            }
-            JSONObject response = new JSONObject(responseText);
-            HudResponse hud = new HudResponse(response, sessionId, currentStep);
-            int imageBytes = response.optInt("imageBytes", uploadImage.bytes.length);
-            applyHudResponseIfCurrent(hud, generation);
-            android.util.Log.i("Air3NativeCameraTest", String.format(Locale.US,
-                    "OK http=%d step=%s session=%s resultType=%s feedbackCode=%s serverImageBytes=%d uploadBytes=%d rawBytes=%d",
-                    status, hud.step, shortSessionId(hud.sessionId), hud.resultType, hud.feedbackCode,
-                    imageBytes, uploadImage.bytes.length, jpegBytes.length));
-        } catch (Exception error) {
-            if (isCurrentInteraction(generation)) {
-                setResultText("网络连接失败");
-                setHintText("暂时连接不到 AI 运维服务\n请确认网络后单击中心重试");
-                setStatus("暂时连接不到 AI 运维服务。请确认网络后单击重试。");
-            }
-            android.util.Log.w("Air3NativeCameraTest", "Upload failed", error);
+            });
+        } catch (final Exception error) {
+            mainHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    cameraStatusText.setText("照片读取失败：" + safeMessage(error));
+                }
+            });
         } finally {
-            if (connection != null) {
-                connection.disconnect();
+            if (image != null) {
+                image.close();
             }
             captureInFlight = false;
         }
     }
 
-    private UploadImage prepareUploadJpeg(byte[] jpegBytes) {
-        Bitmap bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length);
-        if (bitmap == null || bitmap.getWidth() < 640 || bitmap.getHeight() < 360) {
-            return new UploadImage(
-                    jpegBytes,
-                    captureSize.getWidth(),
-                    captureSize.getHeight(),
-                    "raw-camera-jpeg-decode-fallback");
+    private byte[] compressJpeg(byte[] bytes) {
+        Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+        if (bitmap == null) {
+            return bytes;
         }
-
-        Bitmap normalized = normalizeCameraBitmap(bitmap);
-        if (normalized != bitmap) {
+        Bitmap oriented = applyExifOrientation(bitmap, bytes);
+        if (oriented != bitmap) {
             bitmap.recycle();
         }
-
-        if (UPLOAD_FULL_CAMERA_JPEG) {
-            byte[] result = encodeJpeg(normalized, JPEG_QUALITY);
-            int width = normalized.getWidth();
-            int height = normalized.getHeight();
-            normalized.recycle();
-            android.util.Log.i("Air3NativeCameraTest",
-                    "Prepared normalized full camera JPEG size=" + width + "x" + height
-                            + " bytes=" + result.length
-                            + " sensorOrientation=" + sensorOrientation);
-            return new UploadImage(result.length > 0 ? result : jpegBytes,
-                    result.length > 0 ? width : captureSize.getWidth(),
-                    result.length > 0 ? height : captureSize.getHeight(),
-                    result.length > 0 ? "normalized-full-camera-jpeg" : "raw-camera-jpeg-encode-fallback");
-        }
-
-        int width = normalized.getWidth();
-        int height = normalized.getHeight();
-        int cropWidth = Math.max(640, Math.round(width * GUIDE_FRAME_WIDTH_RATIO));
-        int cropHeight = Math.max(360, Math.round(height * GUIDE_FRAME_HEIGHT_RATIO));
-        int left = Math.max(0, Math.round((width - cropWidth) / 2f));
-        int top = Math.max(0, Math.round(height * GUIDE_FRAME_TOP_OFFSET_RATIO));
-        if (left + cropWidth > width) {
-            cropWidth = width - left;
-        }
-        if (top + cropHeight > height) {
-            cropHeight = height - top;
-        }
-
-        Bitmap uploadBitmap = Bitmap.createBitmap(normalized, left, top, cropWidth, cropHeight);
-        byte[] result = encodeJpeg(uploadBitmap, JPEG_QUALITY);
-        android.util.Log.i("Air3NativeCameraTest",
-                "Prepared upload crop source=" + width + "x" + height
-                        + " crop=" + cropWidth + "x" + cropHeight
-                        + " left=" + left + " top=" + top
-                        + " bytes=" + result.length);
-        uploadBitmap.recycle();
-        normalized.recycle();
-        return new UploadImage(
-                result.length > 0 ? result : jpegBytes,
-                result.length > 0 ? cropWidth : captureSize.getWidth(),
-                result.length > 0 ? cropHeight : captureSize.getHeight(),
-                result.length > 0 ? "normalized-center-guide-crop" : "raw-camera-jpeg-encode-fallback");
-    }
-
-    private Bitmap normalizeCameraBitmap(Bitmap source) {
-        int rotation = uploadRotationDegrees();
-        if (rotation == 0) {
-            return source;
-        }
-        Matrix matrix = new Matrix();
-        matrix.postRotate(rotation);
-        Bitmap rotated = Bitmap.createBitmap(source, 0, 0, source.getWidth(), source.getHeight(), matrix, true);
-        android.util.Log.i("Air3NativeCameraTest",
-                "Normalized camera bitmap from=" + source.getWidth() + "x" + source.getHeight()
-                        + " to=" + rotated.getWidth() + "x" + rotated.getHeight()
-                        + " rotation=" + rotation);
-        return rotated;
-    }
-
-    private int uploadRotationDegrees() {
-        if (sensorOrientation == 270) {
-            return 180;
-        }
-        if (sensorOrientation == 90) {
-            return 0;
-        }
-        return 0;
-    }
-
-    private static final class HudResponse {
-        final String rawResponse;
-        final String sessionId;
-        final String step;
-        final String resultType;
-        final String feedbackCode;
-        final String diagnosticCode;
-        final String displayTitle;
-        final String displayText;
-        final String displayHint;
-        final String[] displayPages;
-        final int totalPages;
-        final boolean humanEscalationSuggestion;
-
-        HudResponse(JSONObject response, String fallbackSessionId, String fallbackStep) {
-            rawResponse = response.toString();
-            sessionId = response.optString("sessionId", fallbackSessionId);
-            step = response.optString("step", fallbackStep);
-            resultType = response.optString("resultType", "instruction");
-            feedbackCode = response.optString("feedbackCode", "");
-            diagnosticCode = response.optString("diagnosticCode", "");
-            String legacyText = response.optString("text", "");
-            displayTitle = response.optString("displayTitle", firstInstructionLine(legacyText));
-            displayText = response.optString("displayText", legacyText);
-            displayHint = response.optString("displayHint", "");
-            String fullText = response.optString("fullText", displayText);
-            displayPages = parseDisplayPages(response, fullText);
-            totalPages = displayPages.length;
-            humanEscalationSuggestion = response.optBoolean("humanEscalationSuggestion", false);
-        }
-    }
-
-    private static byte[] encodeJpeg(Bitmap bitmap, int quality) {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output);
-        return output.toByteArray();
-    }
-
-    private static final class UploadImage {
-        final byte[] bytes;
-        final int width;
-        final int height;
-        final String preprocess;
-
-        UploadImage(byte[] bytes, int width, int height, String preprocess) {
-            this.bytes = bytes;
-            this.width = width;
-            this.height = height;
-            this.preprocess = preprocess;
-        }
-    }
-
-    private void persistDebugUpload(byte[] uploadBytes) {
-        try (OutputStream output = openFileOutput("last_upload_crop.jpg", MODE_PRIVATE)) {
-            output.write(uploadBytes);
-        } catch (Exception error) {
-            android.util.Log.w("Air3NativeCameraTest", "Persist upload crop failed", error);
-        }
-        try (OutputStream output = openFileOutput("last_upload_full.jpg", MODE_PRIVATE)) {
-            output.write(uploadBytes);
-        } catch (Exception error) {
-            android.util.Log.w("Air3NativeCameraTest", "Persist upload full failed", error);
-        }
-    }
-
-    private void persistRawCapture(byte[] jpegBytes) {
-        try (OutputStream output = openFileOutput("last_raw_capture.jpg", MODE_PRIVATE)) {
-            output.write(jpegBytes);
-        } catch (Exception error) {
-            android.util.Log.w("Air3NativeCameraTest", "Persist raw capture failed", error);
-        }
-    }
-
-    private void persistVoiceResponse(int status, long audioBytes, String responseText, Exception error) {
-        try {
-            JSONObject diagnostic = new JSONObject();
-            diagnostic.put("status", status);
-            diagnostic.put("audioBytes", audioBytes);
-            diagnostic.put("response", responseText == null ? "" : responseText);
-            diagnostic.put("timestamp", System.currentTimeMillis());
-            if (error != null) {
-                diagnostic.put("errorType", error.getClass().getName());
-                diagnostic.put("errorMessage", error.getMessage() == null ? "" : error.getMessage());
-            }
-            try (OutputStream output = openFileOutput("last_voice_response.json", MODE_PRIVATE)) {
-                output.write(diagnostic.toString().getBytes(StandardCharsets.UTF_8));
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void persistVoiceDiagnostics(long audioBytes, long recordingMs, String audioSource, String stopReason) {
-        try {
-            JSONObject diagnostic = new JSONObject();
-            diagnostic.put("audioBytes", audioBytes);
-            diagnostic.put("recordingMs", recordingMs);
-            diagnostic.put("audioSource", audioSource);
-            diagnostic.put("stopReason", stopReason);
-            diagnostic.put("peakAmplitude", voicePeakAmplitude);
-            diagnostic.put("expectedLanguage", "zh");
-            diagnostic.put("sttPrompt", VOICE_STT_PROMPT);
-            diagnostic.put("timestamp", System.currentTimeMillis());
-            try (OutputStream output = openFileOutput("last_voice_diagnostics.json", MODE_PRIVATE)) {
-                output.write(diagnostic.toString().getBytes(StandardCharsets.UTF_8));
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private String actionForCurrentStep() {
-        if ("run_diagnostic_command".equals(currentStep) || "confirm_diagnostic_output".equals(currentStep)) {
-            return "diagnostic_output_uploaded";
-        }
-        if ("run_recovery_command".equals(currentStep)) {
-            return "recovery_output_uploaded";
-        }
-        return "console_photo_uploaded";
-    }
-
-    private String voiceEndpoint() {
-        return EVENTS_ENDPOINT.replace("/sessions/events", "/sessions/" + sessionId + "/voice");
-    }
-
-    private void persistSession(String nextSessionId, String nextStep) {
-        if (nextSessionId == null) {
-            nextSessionId = "";
-        }
-        if (nextStep == null || nextStep.length() == 0) {
-            nextStep = "locate_server";
-        }
-        sessionId = nextSessionId;
-        currentStep = nextStep;
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                stepText.setText(stepLabel(currentStep));
-            }
-        });
-        getPreferences(MODE_PRIVATE)
-                .edit()
-                .putString(PREF_SESSION_ID, sessionId)
-                .putString(PREF_CURRENT_STEP, currentStep)
-                .apply();
-    }
-
-    private int beginInteraction() {
-        interactionGeneration += 1;
-        android.util.Log.i("Air3NativeCameraTest", "begin interaction generation=" + interactionGeneration);
-        return interactionGeneration;
-    }
-
-    private boolean isCurrentInteraction(int generation) {
-        return generation == interactionGeneration;
-    }
-
-    private void applyHudResponseIfCurrent(final HudResponse hud, int generation) {
-        if (!isCurrentInteraction(generation)) {
-            android.util.Log.i("Air3NativeCameraTest", "Skip stale HUD response generation=" + generation
-                    + " current=" + interactionGeneration);
-            return;
-        }
-        applyHudResponse(hud);
-    }
-
-    private void applyHudResponse(final HudResponse hud) {
-        persistSession(hud.sessionId, hud.step);
-        persistLastResponse(hud.rawResponse);
-        activeHud = hud;
-        activeHudPageIndex = 0;
-        renderHudPage();
-    }
-
-    private void renderHudPage() {
-        final HudResponse hud = activeHud;
-        if (hud == null) {
-            return;
-        }
-        if (activeHudPageIndex < 0) {
-            activeHudPageIndex = 0;
-        }
-        if (activeHudPageIndex >= hud.totalPages) {
-            activeHudPageIndex = Math.max(0, hud.totalPages - 1);
-        }
-        final int pageIndex = activeHudPageIndex;
-        final int totalPages = hud.totalPages;
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                stepText.setText(stepLabel(hud.step));
-                resultText.setText(hud.displayTitle.length() == 0 ? firstInstructionLine(hud.displayText) : hud.displayTitle);
-                String pageText = pageTextForHud(hud, pageIndex);
-                String pageLabel = totalPages > 1
-                        ? "\n第 " + (pageIndex + 1) + "/" + totalPages + " 页"
-                        : "";
-                String hint = hud.displayHint.length() == 0 ? fallbackHint(hud) : hud.displayHint;
-                String diagnostic = diagnosticHint(hud);
-                hintText.setText(pageText + pageLabel + "\n" + hint + diagnostic);
-                statusText.setText(statusForHud(hud));
-            }
-        });
-    }
-
-    private void persistLastResponse(String responseText) {
-        getPreferences(MODE_PRIVATE)
-                .edit()
-                .putString(PREF_LAST_RESPONSE, responseText)
-                .apply();
-        try (OutputStream output = openFileOutput("last_ops_response.json", MODE_PRIVATE)) {
-            output.write(responseText.getBytes(StandardCharsets.UTF_8));
-        } catch (Exception error) {
-            android.util.Log.w("Air3NativeCameraTest", "Persist last response failed", error);
-        }
-    }
-
-    private boolean restoreLastHudResponse() {
-        final String lastResponse = getPreferences(MODE_PRIVATE).getString(PREF_LAST_RESPONSE, "");
-        if (lastResponse == null || lastResponse.trim().length() == 0) {
-            return false;
-        }
-        try {
-            HudResponse hud = new HudResponse(new JSONObject(lastResponse), sessionId, currentStep);
-            applyHudResponse(hud);
-            android.util.Log.i("Air3NativeCameraTest", "Restored last HUD response.");
-            return true;
-        } catch (Exception error) {
-            android.util.Log.w("Air3NativeCameraTest", "Restore last HUD response failed", error);
-            return false;
-        }
-    }
-
-    private static String firstInstructionLine(String text) {
-        if (text == null || text.trim().length() == 0) {
-            return "等待 AI 指导";
-        }
-        String normalized = text.replace('\r', '\n').trim();
-        int newline = normalized.indexOf('\n');
-        String first = newline >= 0 ? normalized.substring(0, newline).trim() : normalized;
-        return first.length() > 32 ? first.substring(0, 32) : first;
-    }
-
-    private static String[] parseDisplayPages(JSONObject response, String fallbackText) {
-        JSONArray pages = response.optJSONArray("displayPages");
-        if (pages == null || pages.length() == 0) {
-            String text = fallbackText == null || fallbackText.trim().length() == 0 ? "请按提示继续。" : fallbackText.trim();
-            return paginateLocalHudText(text);
-        }
-        String[] result = new String[pages.length()];
-        int count = 0;
-        for (int i = 0; i < pages.length(); i++) {
-            String page = pages.optString(i, "").trim();
-            if (page.length() == 0) {
-                continue;
-            }
-            result[count] = page;
-            count += 1;
-        }
-        if (count == 0) {
-            String text = fallbackText == null || fallbackText.trim().length() == 0 ? "请按提示继续。" : fallbackText.trim();
-            return paginateLocalHudText(text);
-        }
-        return Arrays.copyOf(result, count);
-    }
-
-    private static String[] paginateLocalHudText(String text) {
-        String normalized = text == null ? "" : text.trim();
-        if (normalized.length() == 0) {
-            return new String[]{"请按提示继续。"};
-        }
-        if (normalized.length() <= HUD_PAGE_CHAR_LIMIT) {
-            return new String[]{normalized};
-        }
-        int pageCount = (normalized.length() + HUD_PAGE_CHAR_LIMIT - 1) / HUD_PAGE_CHAR_LIMIT;
-        String[] pages = new String[pageCount];
-        int count = 0;
-        for (int index = 0; index < normalized.length(); index += HUD_PAGE_CHAR_LIMIT) {
-            int end = Math.min(normalized.length(), index + HUD_PAGE_CHAR_LIMIT);
-            pages[count] = normalized.substring(index, end).trim();
-            count += 1;
-        }
-        return Arrays.copyOf(pages, count);
-    }
-
-    private static String pageTextForHud(HudResponse hud, int pageIndex) {
-        if (hud.displayPages.length == 0) {
-            return hud.displayText;
-        }
-        int safeIndex = Math.max(0, Math.min(pageIndex, hud.displayPages.length - 1));
-        return hud.displayPages[safeIndex];
-    }
-
-    private static String stepLabel(String step) {
-        if ("run_diagnostic_command".equals(step)) {
-            return "步骤 2/4 诊断";
-        }
-        if ("run_recovery_command".equals(step)) {
-            return "步骤 3/4 恢复";
-        }
-        if ("verify_remote_access".equals(step)) {
-            return "步骤 4/4 复测";
-        }
-        if ("needs_better_photo".equals(step)) {
-            return "需要重拍";
-        }
-        if ("needs_human_expert".equals(step)) {
-            return "人工接管";
-        }
-        if ("completed".equals(step)) {
-            return "已完成";
-        }
-        return "步骤 1/4 定位";
-    }
-
-    private static String fallbackHint(HudResponse hud) {
-        if ("wrong_target".equals(hud.feedbackCode)) {
-            return "请补充你要 AI 判断的目标，或重新拍摄关键现场";
-        }
-        if ("unclear_photo".equals(hud.feedbackCode)) {
-            return "请靠近屏幕，避免反光，把文字放进绿色框后重拍";
-        }
-        if ("insufficient_info".equals(hud.feedbackCode)) {
-            return "请拍摄完整现场，或长按说明你要 AI 判断什么";
-        }
-        if ("voice_unclear".equals(hud.feedbackCode)) {
-            return "请重新长按，说短一点";
-        }
-        if ("human_suggested".equals(hud.resultType) || hud.humanEscalationSuggestion) {
-            return "你可以长按中心选择转人工，也可以重新拍摄补充信息";
-        }
-        return hud.displayText.length() == 0 ? "请按提示继续" : hud.displayText;
-    }
-
-    private static String diagnosticHint(HudResponse hud) {
-        if (!"voice_unclear".equals(hud.feedbackCode) || hud.diagnosticCode.length() == 0) {
-            return "";
-        }
-        if ("custom_stt_timeout".equals(hud.diagnosticCode)) {
-            return "\n诊断：语音转文字服务超时，按钮和录音已正常。";
-        }
-        if ("official_stt_invalid_key".equals(hud.diagnosticCode)) {
-            return "\n诊断：官方语音转写 key 无效。";
-        }
-        if ("main_provider_stt_unsupported".equals(hud.diagnosticCode)) {
-            return "\n诊断：当前主 AI 服务不支持语音转写接口。";
-        }
-        if ("transcript_empty".equals(hud.diagnosticCode)) {
-            return "\n诊断：语音没有转出文字。";
-        }
-        if ("suspicious_transcript".equals(hud.diagnosticCode)) {
-            return "\n诊断：语音识别结果不可信，请靠近麦克风重新说短句。";
-        }
-        return "\n诊断：语音转文字失败。";
-    }
-
-    private static String statusForHud(HudResponse hud) {
-        if ("recognition_problem".equals(hud.resultType)) {
-            return "AI 需要你重新补充现场信息。";
-        }
-        if ("human_suggested".equals(hud.resultType) || hud.humanEscalationSuggestion) {
-            return "AI 建议转人工，是否转人工由你决定。";
-        }
-        if ("completed".equals(hud.resultType)) {
-            return "远程访问已恢复，本次会话完成。";
-        }
-        if ("network_error".equals(hud.resultType)) {
-            return "暂时连接不到 AI 运维服务，请确认网络后重试。";
-        }
-        return "AI 已返回下一步，请按屏幕中央指令继续。";
-    }
-
-    private static String statusForStep(String step) {
-        if ("run_diagnostic_command".equals(step)) {
-            return "AI 已识别控制台，请输入屏幕中央给出的诊断命令。";
-        }
-        if ("run_recovery_command".equals(step)) {
-            return "AI 已读取诊断输出，请输入屏幕中央给出的恢复命令。";
-        }
-        if ("verify_remote_access".equals(step)) {
-            return "恢复命令已确认，后台正在复测远程访问。";
-        }
-        if ("needs_better_photo".equals(step)) {
-            return "照片不够清晰。请靠近目标，把关键内容放进绿色框后重拍。";
-        }
-        if ("needs_human_expert".equals(step)) {
-            return "当前情况需要人工专家接管，请停止继续输入命令。";
-        }
-        if ("completed".equals(step)) {
-            return "远程访问已恢复，本次运维会话完成。";
-        }
-        return "AI 已返回下一步，请按屏幕中央指令继续。";
-    }
-
-    private static String voiceIntentLabel(String intent) {
-        if ("confirm_done".equals(intent)) {
-            return "已确认完成";
-        }
-        if ("retake_photo".equals(intent)) {
-            return "准备重拍";
-        }
-        if ("escalate_human".equals(intent)) {
-            return "转人工";
-        }
-        if ("new_issue".equals(intent)) {
-            return "新问题";
-        }
-        return "语音已收到";
-    }
-
-    private void setHintForStep(String step, String text) {
-        final String hint;
-        if ("run_diagnostic_command".equals(step)) {
-            hint = "请按中间指令输入诊断命令\n执行后单击拍摄完整输出";
-        } else if ("run_recovery_command".equals(step)) {
-            hint = "请只输入 AI 给出的恢复命令\n执行后单击拍摄命令输出";
-        } else if ("verify_remote_access".equals(step)) {
-            hint = "后台正在复测远程访问\n请等待复测结果";
-        } else if ("needs_better_photo".equals(step)) {
-            hint = "请把关键画面放入绿色框\n靠近目标并避免反光后单击重拍";
-        } else if ("needs_human_expert".equals(step)) {
-            hint = "请停止现场操作\n等待运维专家接管";
-        } else if ("completed".equals(step)) {
-            hint = "远程访问已恢复\n本次运维会话完成";
-        } else {
-            hint = text == null || text.length() == 0
-                    ? "请对准需要判断的现场画面\n单击采集现场照片"
-                    : "请按提示继续\n单击采集下一张现场照片";
-        }
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                stepText.setText(stepLabel(step));
-                hintText.setText(hint);
-            }
-        });
-    }
-
-    private static String shortSessionId(String value) {
-        if (value == null || value.length() < 8) {
-            return value == null ? "" : value;
-        }
-        return value.substring(0, 8);
-    }
-
-    private static String readAll(InputStream input) throws Exception {
-        if (input == null) {
-            return "";
+        Bitmap scaled = scaleBitmapToMaxEdge(oriented, UPLOAD_MAX_IMAGE_EDGE);
+        if (scaled != oriented) {
+            oriented.recycle();
         }
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        byte[] buffer = new byte[4096];
-        int read;
-        while ((read = input.read(buffer)) >= 0) {
-            output.write(buffer, 0, read);
-        }
-        return output.toString(StandardCharsets.UTF_8.name());
-    }
-
-    private static byte[] readFileBytes(File file) throws Exception {
-        try (InputStream input = new FileInputStream(file);
-             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[4096];
-            int read;
-            while ((read = input.read(buffer)) >= 0) {
-                output.write(buffer, 0, read);
-            }
+        try {
+            scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output);
             return output.toByteArray();
+        } finally {
+            scaled.recycle();
+        }
+    }
+
+    private Bitmap applyExifOrientation(Bitmap bitmap, byte[] jpegBytes) {
+        int orientation = readExifOrientation(jpegBytes);
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                matrix.setScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_180:
+                matrix.setRotate(180f);
+                break;
+            case ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                matrix.setRotate(180f);
+                matrix.postScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_TRANSPOSE:
+                matrix.setRotate(90f);
+                matrix.postScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_90:
+                matrix.setRotate(90f);
+                break;
+            case ExifInterface.ORIENTATION_TRANSVERSE:
+                matrix.setRotate(-90f);
+                matrix.postScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_270:
+                matrix.setRotate(-90f);
+                break;
+            case ExifInterface.ORIENTATION_NORMAL:
+            case ExifInterface.ORIENTATION_UNDEFINED:
+            default:
+                return bitmap;
+        }
+        try {
+            return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        } catch (Exception ignored) {
+            return bitmap;
+        }
+    }
+
+    private int readExifOrientation(byte[] jpegBytes) {
+        if (jpegBytes == null || jpegBytes.length == 0) {
+            return ExifInterface.ORIENTATION_NORMAL;
+        }
+        try {
+            ExifInterface exif = new ExifInterface(new ByteArrayInputStream(jpegBytes));
+            return exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+        } catch (Exception ignored) {
+            return ExifInterface.ORIENTATION_NORMAL;
         }
     }
 
@@ -1984,46 +2402,1350 @@ public final class MainActivity extends Activity {
         try {
             if (captureSession != null) {
                 captureSession.close();
-                captureSession = null;
-            }
-            if (cameraDevice != null) {
-                cameraDevice.close();
-                cameraDevice = null;
-            }
-            if (imageReader != null) {
-                imageReader.close();
-                imageReader = null;
             }
         } catch (Exception ignored) {
         }
+        captureSession = null;
+        try {
+            if (cameraDevice != null) {
+                cameraDevice.close();
+            }
+        } catch (Exception ignored) {
+        }
+        cameraDevice = null;
+        try {
+            if (imageReader != null) {
+                imageReader.close();
+            }
+        } catch (Exception ignored) {
+        }
+        imageReader = null;
     }
 
-    private void setResultText(String value) {
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                resultText.setText(value);
-            }
-        });
-        android.util.Log.i("Air3NativeCameraTest", "RESULT " + value);
+    private static String safeMessage(Exception error) {
+        String message = error == null ? "" : error.getMessage();
+        if (message == null || message.trim().length() == 0) {
+            return error == null ? "unknown" : error.getClass().getSimpleName();
+        }
+        return message;
     }
 
-    private void setHintText(String value) {
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                hintText.setText(value);
+    private static final class ChatMessage {
+        final String role;
+        final String kind;
+        String text;
+        final String imageId;
+        final String imagePreviewBase64;
+        Bitmap imagePreviewBitmap;
+        boolean streaming;
+
+        ChatMessage(String role, String kind, String text, String imageId, boolean streaming) {
+            this(role, kind, text, imageId, "", streaming);
+        }
+
+        ChatMessage(String role, String kind, String text, String imageId, String imagePreviewBase64, boolean streaming) {
+            this.role = role;
+            this.kind = kind;
+            this.text = text == null ? "" : text;
+            this.imageId = imageId == null ? "" : imageId;
+            this.imagePreviewBase64 = imagePreviewBase64 == null ? "" : imagePreviewBase64;
+            this.streaming = streaming;
+        }
+
+        ChatMessage copy() {
+            return new ChatMessage(role, kind, text, imageId, imagePreviewBase64, streaming);
+        }
+
+        JSONObject toJson() {
+            JSONObject json = new JSONObject();
+            try {
+                json.put("role", role);
+                json.put("kind", kind);
+                json.put("text", text);
+                json.put("image_id", imageId);
+                json.put("image_preview_base64", imagePreviewBase64);
+                json.put("streaming", streaming);
+            } catch (Exception ignored) {
             }
-        });
+            return json;
+        }
+
+        static ChatMessage fromJson(JSONObject json) {
+            return new ChatMessage(
+                    json.optString("role", "assistant"),
+                    json.optString("kind", "text"),
+                    json.optString("text", ""),
+                    json.optString("image_id", ""),
+                    json.optString("image_preview_base64", ""),
+                    json.optBoolean("streaming", false));
+        }
     }
 
-    private void setStatus(String value) {
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                statusText.setText(value);
+    private static final class ChatProject {
+        final String id;
+        String title;
+        long updatedAt;
+        String backendSessionId = "";
+        final ArrayList<ChatMessage> messages = new ArrayList<ChatMessage>();
+
+        ChatProject(String id, String title, long updatedAt) {
+            this.id = id == null || id.length() == 0 ? "project-" + System.currentTimeMillis() : id;
+            this.title = title == null || title.length() == 0 ? "现场诊断" : title;
+            this.updatedAt = updatedAt;
+        }
+
+        JSONObject toJson() {
+            JSONObject json = new JSONObject();
+            JSONArray messageArray = new JSONArray();
+            for (int i = 0; i < messages.size(); i++) {
+                messageArray.put(messages.get(i).toJson());
             }
-        });
-        android.util.Log.i("Air3NativeCameraTest", value);
+            try {
+                json.put("id", id);
+                json.put("title", title);
+                json.put("updated_at", updatedAt);
+                json.put("backend_session_id", backendSessionId);
+                json.put("messages", messageArray);
+            } catch (Exception ignored) {
+            }
+            return json;
+        }
+
+        static ChatProject fromJson(JSONObject json) {
+            ChatProject project = new ChatProject(
+                    json.optString("id", "project-" + System.currentTimeMillis()),
+                    json.optString("title", "现场诊断"),
+                    json.optLong("updated_at", System.currentTimeMillis()));
+            project.backendSessionId = json.optString("backend_session_id", "");
+            JSONArray messageArray = json.optJSONArray("messages");
+            if (messageArray != null) {
+                for (int i = 0; i < messageArray.length(); i++) {
+                    JSONObject messageJson = messageArray.optJSONObject(i);
+                    if (messageJson != null) {
+                        project.messages.add(ChatMessage.fromJson(messageJson));
+                    }
+                }
+            }
+            return project;
+        }
+    }
+
+    private static final class DirectGptClient implements ChatAiClient {
+        private final String baseUrl;
+        private final String model;
+        private final String apiKey;
+
+        DirectGptClient(String baseUrl, String model, String apiKey) {
+            this.baseUrl = trimSlash(baseUrl == null || baseUrl.length() == 0 ? "https://api.openai.com/v1" : baseUrl);
+            this.model = model == null || model.length() == 0 ? "gpt-4.1-mini" : model;
+            this.apiKey = apiKey == null ? "" : apiKey;
+        }
+
+        @Override
+        public void send(final String prompt, final String imageId, final byte[] jpegBytes, final StreamingCallback callback) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    if (apiKey.length() == 0) {
+                        callback.onError(new IllegalStateException("DIRECT_GPT_API_KEY missing"));
+                        return;
+                    }
+                    HttpURLConnection connection = null;
+                    OutputStream output = null;
+                    try {
+                        JSONObject payload = buildChatPayload(prompt, jpegBytes);
+                        connection = (HttpURLConnection) new URL(chatCompletionsUrl(baseUrl)).openConnection();
+                        connection.setRequestMethod("POST");
+                        connection.setConnectTimeout(15000);
+                        connection.setReadTimeout(90000);
+                        connection.setDoOutput(true);
+                        connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+                        connection.setRequestProperty("Content-Type", JSON_CONTENT_TYPE);
+                        output = connection.getOutputStream();
+                        output.write(payload.toString().getBytes(StandardCharsets.UTF_8));
+                        output.close();
+                        output = null;
+                        int status = connection.getResponseCode();
+                        InputStream stream = status >= 200 && status < 300
+                                ? connection.getInputStream()
+                                : connection.getErrorStream();
+                        String body = readAll(stream);
+                        if (status < 200 || status >= 300) {
+                            throw new IOException("direct_gpt_http_" + status + ": " + body);
+                        }
+                        String text = parseChatText(body);
+                        streamText(text, callback);
+                        callback.onComplete();
+                    } catch (Exception error) {
+                        callback.onError(error);
+                    } finally {
+                        if (output != null) {
+                            try {
+                                output.close();
+                            } catch (IOException ignored) {
+                            }
+                        }
+                        if (connection != null) {
+                            connection.disconnect();
+                        }
+                    }
+                }
+            }, "DirectGptClient").start();
+        }
+
+        private static String chatCompletionsUrl(String baseUrl) {
+            String base = trimSlash(baseUrl == null || baseUrl.length() == 0 ? "https://api.openai.com/v1" : baseUrl);
+            if (base.endsWith("/chat/completions")) {
+                return base;
+            }
+            if (base.endsWith("/v1")) {
+                return base + "/chat/completions";
+            }
+            return base + "/v1/chat/completions";
+        }
+
+        private JSONObject buildChatPayload(String prompt, byte[] jpegBytes) throws Exception {
+            JSONObject payload = new JSONObject();
+            payload.put("model", model);
+            JSONArray messages = new JSONArray();
+            JSONObject system = new JSONObject();
+            system.put("role", "system");
+            system.put("content", "你是叮当运维AI，面向现场运维人员。必须结合图片和用户问题给出简洁、可执行的中文建议。当用户询问你是什么模型、由谁研发、哪家公司提供或底层模型信息时，只回答：我是华方智联研发的叮当运维AI模型，专注现场运维场景，可以结合眼镜拍摄的现场画面和语音问题，给出简洁、可执行的排查建议。不要透露底层模型名称、供应商或接口信息。");
+            messages.put(system);
+            JSONObject user = new JSONObject();
+            user.put("role", "user");
+            JSONArray content = new JSONArray();
+            JSONObject text = new JSONObject();
+            text.put("type", "text");
+            text.put("text", prompt);
+            content.put(text);
+            if (jpegBytes != null && jpegBytes.length > 0) {
+                JSONObject image = new JSONObject();
+                image.put("type", "image_url");
+                JSONObject imageUrl = new JSONObject();
+                imageUrl.put("url", "data:image/jpeg;base64," + Base64.encodeToString(jpegBytes, Base64.NO_WRAP));
+                image.put("image_url", imageUrl);
+                content.put(image);
+            }
+            user.put("content", content);
+            messages.put(user);
+            payload.put("messages", messages);
+            payload.put("temperature", 0.2);
+            return payload;
+        }
+
+        private static String parseChatText(String body) throws Exception {
+            JSONObject root = new JSONObject(body);
+            JSONArray choices = root.optJSONArray("choices");
+            if (choices == null || choices.length() == 0) {
+                return body;
+            }
+            JSONObject message = choices.getJSONObject(0).optJSONObject("message");
+            if (message == null) {
+                return body;
+            }
+            Object content = message.opt("content");
+            if (content instanceof String) {
+                return (String) content;
+            }
+            return String.valueOf(content);
+        }
+    }
+
+    private static final class BackendGptClient implements ChatAiClient {
+        interface SessionProvider {
+            String sessionId();
+        }
+
+        private final BackendChatClient backendChatClient;
+        private final SessionProvider sessionProvider;
+
+        BackendGptClient(BackendChatClient backendChatClient, SessionProvider sessionProvider) {
+            this.backendChatClient = backendChatClient;
+            this.sessionProvider = sessionProvider;
+        }
+
+        @Override
+        public void send(String prompt, String imageId, byte[] jpegBytes, StreamingCallback callback) {
+            backendChatClient.sendDiagnosis(sessionProvider.sessionId(), imageId, prompt, callback);
+        }
+    }
+
+    private static final class BackendChatClient implements ChatAiClient, RealtimeAsrClient {
+        interface SessionProvider {
+            String sessionId();
+        }
+
+        private final String baseUrl;
+        private final String apiKey;
+        private SessionProvider sessionProvider;
+        private WebSocketRealtimeAsrSession websocketSession;
+
+        BackendChatClient(String baseUrl, String apiKey) {
+            this.baseUrl = trimSlash(baseUrl == null || baseUrl.length() == 0
+                    ? "https://zasgzaatthvfglhbxpgo.supabase.co/functions/v1/ops-glasses"
+                    : baseUrl);
+            this.apiKey = apiKey == null ? "" : apiKey;
+        }
+
+        BackendChatClient withSessionProvider(SessionProvider provider) {
+            this.sessionProvider = provider;
+            return this;
+        }
+
+        @Override
+        public void send(String prompt, String imageId, byte[] jpegBytes, StreamingCallback callback) {
+            String sessionId = sessionProvider == null ? "" : sessionProvider.sessionId();
+            sendDiagnosis(sessionId, imageId, prompt, callback);
+        }
+
+        void uploadImageForChat(final String sessionId, final byte[] jpegBytes, final BackendImageUploadCallback callback) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    HttpURLConnection connection = null;
+                    OutputStream output = null;
+                    try {
+                        if (baseUrl.length() == 0) {
+                            throw new IllegalStateException("DINGDANG_BACKEND_BASE_URL missing");
+                        }
+                        JSONObject payload = new JSONObject();
+                        payload.put("image_base64", Base64.encodeToString(jpegBytes, Base64.NO_WRAP));
+                        payload.put("image_kind", "field_photo");
+                        payload.put("client_ts", String.valueOf(System.currentTimeMillis()));
+                        connection = openBackendConnection(backendImagesUrl(sessionId), "POST", "application/json; charset=utf-8");
+                        output = connection.getOutputStream();
+                        output.write(payload.toString().getBytes(StandardCharsets.UTF_8));
+                        output.close();
+                        output = null;
+                        int status = connection.getResponseCode();
+                        String body = readAll(status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream());
+                        if (status < 200 || status >= 300) {
+                            throw new IOException("backend_image_http_" + status + ": " + body);
+                        }
+                        JSONObject json = new JSONObject(body);
+                        String uploadedSessionId = json.optString("session_id", sessionId);
+                        String imageId = json.optString("image_id", "");
+                        if (imageId.length() == 0) {
+                            throw new IOException("image_id missing");
+                        }
+                        callback.onUploaded(uploadedSessionId, imageId, json.optInt("image_bytes", jpegBytes.length));
+                    } catch (Exception error) {
+                        callback.onError(error);
+                    } finally {
+                        closeOutput(output);
+                        if (connection != null) {
+                            connection.disconnect();
+                        }
+                    }
+                }
+            }, "BackendImageUpload").start();
+        }
+
+        void sendDiagnosis(final String sessionId, final String imageId, final String finalText, final StreamingCallback callback) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    HttpURLConnection connection = null;
+                    OutputStream output = null;
+                    try {
+                        if (baseUrl.length() == 0) {
+                            throw new IllegalStateException("DINGDANG_BACKEND_BASE_URL missing");
+                        }
+                        JSONObject payload = new JSONObject();
+                        payload.put("image_id", imageId);
+                        payload.put("final_text", finalText);
+                        payload.put("client_context", new JSONObject().put("source", "dingdang-android"));
+                        connection = openBackendConnection(backendDiagnoseStreamUrl(sessionId), "POST", "application/json; charset=utf-8");
+                        connection.setRequestProperty("Accept", "text/event-stream");
+                        output = connection.getOutputStream();
+                        output.write(payload.toString().getBytes(StandardCharsets.UTF_8));
+                        output.close();
+                        output = null;
+                        int status = connection.getResponseCode();
+                        InputStream stream = status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream();
+                        if (status < 200 || status >= 300) {
+                            throw new IOException("backend_diagnose_http_" + status + ": " + readAll(stream));
+                        }
+                        readSseStream(stream, callback);
+                    } catch (Exception error) {
+                        callback.onError(error);
+                    } finally {
+                        closeOutput(output);
+                        if (connection != null) {
+                            connection.disconnect();
+                        }
+                    }
+                }
+            }, "BackendDiagnoseStream").start();
+        }
+
+        @Override
+        public synchronized void start(RealtimeAsrCallback callback) {
+            String sessionId = sessionProvider == null ? "" : sessionProvider.sessionId();
+            websocketSession = new WebSocketRealtimeAsrSession(backendAsrUrl(sessionId), apiKey, "fun-asr-realtime", new BackendRealtimeAsrCallback(callback), true);
+            websocketSession.start();
+        }
+
+        @Override
+        public synchronized void acceptPcm(byte[] pcm, int length) {
+            if (websocketSession != null) {
+                websocketSession.sendPcm(pcm, length);
+            }
+        }
+
+        @Override
+        public synchronized void finish(String stopReason) {
+            if (websocketSession != null) {
+                websocketSession.finish(stopReason);
+                websocketSession = null;
+            }
+        }
+
+        @Override
+        public synchronized void cancel() {
+            if (websocketSession != null) {
+                websocketSession.cancel();
+                websocketSession = null;
+            }
+        }
+
+        private HttpURLConnection openBackendConnection(String url, String method, String contentType) throws IOException {
+            HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+            connection.setRequestMethod(method);
+            connection.setConnectTimeout(12000);
+            connection.setReadTimeout(90000);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", contentType);
+            if (apiKey.length() > 0) {
+                connection.setRequestProperty("x-ops-glasses-key", apiKey);
+                connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+            }
+            return connection;
+        }
+
+        private String backendImagesUrl(String sessionId) {
+            return baseUrl + "/sessions/" + backendSessionPath(sessionId) + "/images";
+        }
+
+        private String backendImagesUrl() {
+            return backendImagesUrl(sessionProvider == null ? "" : sessionProvider.sessionId());
+        }
+
+        private String backendAsrUrl(String sessionId) {
+            return websocketBaseUrl(baseUrl) + "/sessions/" + backendSessionPath(sessionId) + "/asr";
+        }
+
+        private String backendAsrUrl() {
+            return backendAsrUrl(sessionProvider == null ? "" : sessionProvider.sessionId());
+        }
+
+        private String backendDiagnoseStreamUrl(String sessionId) {
+            return baseUrl + "/sessions/" + backendSessionPath(sessionId) + "/diagnose/stream";
+        }
+
+        private String backendDiagnoseStreamUrl() {
+            return backendDiagnoseStreamUrl(sessionProvider == null ? "" : sessionProvider.sessionId());
+        }
+
+        private static String backendSessionPath(String sessionId) {
+            String safe = sessionId == null ? "" : sessionId.trim();
+            return safe.length() == 0 ? "_" : safe;
+        }
+
+        private static String websocketBaseUrl(String httpBaseUrl) {
+            if (httpBaseUrl.startsWith("https://")) {
+                return "wss://" + httpBaseUrl.substring("https://".length());
+            }
+            if (httpBaseUrl.startsWith("http://")) {
+                return "ws://" + httpBaseUrl.substring("http://".length());
+            }
+            return httpBaseUrl;
+        }
+
+        private static void readSseStream(InputStream stream, StreamingCallback callback) throws Exception {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
+            String event = "";
+            StringBuilder data = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.length() == 0) {
+                    String delta = parseSseDelta(event, data.toString());
+                    if (delta.length() > 0) {
+                        callback.onDelta(delta);
+                    }
+                    if ("done".equals(event)) {
+                        callback.onComplete();
+                        return;
+                    }
+                    if ("error".equals(event)) {
+                        throw new IOException(data.toString());
+                    }
+                    event = "";
+                    data.setLength(0);
+                    continue;
+                }
+                if (line.startsWith("event:")) {
+                    event = line.substring(6).trim();
+                } else if (line.startsWith("data:")) {
+                    if (data.length() > 0) {
+                        data.append('\n');
+                    }
+                    data.append(line.substring(5).trim());
+                }
+            }
+            callback.onComplete();
+        }
+
+        private static String parseSseDelta(String event, String data) throws Exception {
+            if (!"delta".equals(event) || data == null || data.trim().length() == 0) {
+                return "";
+            }
+            JSONObject json = new JSONObject(data);
+            return json.optString("text", "");
+        }
+    }
+
+    private static final class BackendRealtimeAsrCallback implements RealtimeAsrCallback {
+        private final RealtimeAsrCallback delegate;
+
+        BackendRealtimeAsrCallback(RealtimeAsrCallback delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void onPartial(String text) {
+            BackendAsrEvent event = parseBackendAsrEvent("partial", text);
+            if (delegate != null && event.text.length() > 0) {
+                delegate.onPartial(event.text);
+            }
+        }
+
+        @Override
+        public void onFinal(String text) {
+            BackendAsrEvent event = parseBackendAsrEvent("final", text);
+            if (delegate == null) {
+                return;
+            }
+            if (event.text.length() > 0) {
+                delegate.onFinal(event.text);
+            } else {
+                delegate.onUnclear("asr_final_empty");
+            }
+        }
+
+        @Override
+        public void onUnclear(String diagnosticCode) {
+            if (delegate != null) {
+                delegate.onUnclear(diagnosticCode);
+            }
+        }
+
+        @Override
+        public void onError(Exception error) {
+            if (delegate != null) {
+                delegate.onError(error);
+            }
+        }
+
+        private static BackendAsrEvent parseBackendAsrEvent(String fallbackType, String rawText) {
+            if (rawText == null) {
+                return new BackendAsrEvent(fallbackType, "");
+            }
+            try {
+                JSONObject json = new JSONObject(rawText);
+                return new BackendAsrEvent(
+                        json.optString("type", fallbackType),
+                        json.optString("text", json.optString("transcript", "")));
+            } catch (Exception ignored) {
+                return new BackendAsrEvent(fallbackType, rawText);
+            }
+        }
+    }
+
+    private static final class BackendAsrEvent {
+        final String type;
+        final String text;
+
+        BackendAsrEvent(String type, String text) {
+            this.type = type == null ? "" : type;
+            this.text = text == null ? "" : text;
+        }
+    }
+
+    private static final class DirectAsrClient implements RealtimeAsrClient {
+        interface AsrCallback {
+            void onText(String text);
+            void onError(Exception error);
+        }
+
+        private final String endpoint;
+        private final String apiKey;
+        private final String model;
+        private RealtimeAsrCallback realtimeCallback;
+        private ByteArrayOutputStream pendingPcm;
+        private WebSocketRealtimeAsrSession websocketSession;
+
+        DirectAsrClient(String endpoint, String apiKey) {
+            this(endpoint, apiKey, "fun-asr-realtime");
+        }
+
+        DirectAsrClient(String endpoint, String apiKey, String model) {
+            this.endpoint = endpoint == null ? "" : endpoint;
+            this.apiKey = apiKey == null ? "" : apiKey;
+            this.model = model == null || model.length() == 0 ? "fun-asr-realtime" : model;
+        }
+
+        @Override
+        public synchronized void start(RealtimeAsrCallback callback) {
+            realtimeCallback = callback;
+            pendingPcm = new ByteArrayOutputStream();
+            if (endpoint.startsWith("wss://") || endpoint.startsWith("ws://")) {
+                websocketSession = new WebSocketRealtimeAsrSession(endpoint, apiKey, model, callback);
+                websocketSession.start();
+            } else if (callback != null) {
+                callback.onPartial("正在听，请继续说");
+            }
+        }
+
+        @Override
+        public synchronized void acceptPcm(byte[] pcm, int length) {
+            if (pcm == null || length <= 0) {
+                return;
+            }
+            if (websocketSession != null) {
+                websocketSession.sendPcm(pcm, length);
+                return;
+            }
+            if (pendingPcm != null) {
+                pendingPcm.write(pcm, 0, length);
+                int seconds = Math.max(1, pendingPcm.size() / (VOICE_SAMPLE_RATE_HZ * 2));
+                if (realtimeCallback != null && pendingPcm.size() % (VOICE_SAMPLE_RATE_HZ * 2) < length) {
+                    realtimeCallback.onPartial("正在听 " + seconds + " 秒");
+                }
+            }
+        }
+
+        @Override
+        public synchronized void finish(String stopReason) {
+            if (websocketSession != null) {
+                websocketSession.finish(stopReason);
+                websocketSession = null;
+                pendingPcm = null;
+                return;
+            }
+            int bytes = pendingPcm == null ? 0 : pendingPcm.size();
+            pendingPcm = null;
+            if (realtimeCallback == null) {
+                return;
+            }
+            if (endpoint.length() == 0) {
+                realtimeCallback.onUnclear("asr_endpoint_missing");
+            } else if (bytes <= VOICE_WAV_HEADER_BYTES) {
+                realtimeCallback.onUnclear("voice_too_short");
+            } else {
+                realtimeCallback.onUnclear("asr_realtime_unavailable");
+            }
+        }
+
+        @Override
+        public synchronized void cancel() {
+            if (websocketSession != null) {
+                websocketSession.cancel();
+                websocketSession = null;
+            }
+            pendingPcm = null;
+        }
+
+        void transcribe(final File wavFile, final AsrCallback callback) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    if (endpoint.length() == 0) {
+                        callback.onText("这个现场有什么问题，下一步怎么处理");
+                        return;
+                    }
+                    HttpURLConnection connection = null;
+                    OutputStream output = null;
+                    try {
+                        String boundary = "----dingdang-asr-" + System.currentTimeMillis();
+                        connection = (HttpURLConnection) new URL(endpoint).openConnection();
+                        connection.setRequestMethod("POST");
+                        connection.setConnectTimeout(15000);
+                        connection.setReadTimeout(60000);
+                        connection.setDoOutput(true);
+                        connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+                        if (apiKey.length() > 0) {
+                            connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+                        }
+                        output = connection.getOutputStream();
+                        writeMultipartFile(output, boundary, "file", "voice.wav", "audio/wav", wavFile);
+                        output.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+                        output.close();
+                        output = null;
+                        int status = connection.getResponseCode();
+                        String body = readAll(status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream());
+                        if (status < 200 || status >= 300) {
+                            throw new IOException("direct_asr_http_" + status + ": " + body);
+                        }
+                        JSONObject json = new JSONObject(body);
+                        callback.onText(json.optString("text", json.optString("transcript", "")));
+                    } catch (Exception error) {
+                        callback.onError(error);
+                    } finally {
+                        if (output != null) {
+                            try {
+                                output.close();
+                            } catch (IOException ignored) {
+                            }
+                        }
+                        if (connection != null) {
+                            connection.disconnect();
+                        }
+                    }
+                }
+            }, "DirectAsrClient").start();
+        }
+    }
+
+    private static final class WebSocketRealtimeAsrSession {
+        private final String endpoint;
+        private final String apiKey;
+        private final String model;
+        private final RealtimeAsrCallback callback;
+        private final boolean backendMode;
+        private final Object lock = new Object();
+        private final ArrayList<byte[]> queuedChunks = new ArrayList<>();
+        private Socket socket;
+        private InputStream input;
+        private OutputStream output;
+        private Thread thread;
+        private boolean connected;
+        private boolean taskStarted;
+        private boolean finishing;
+        private boolean closed;
+        private boolean finalDelivered;
+        private String finalText = "";
+        private String taskId = "";
+
+        WebSocketRealtimeAsrSession(String endpoint, String apiKey, String model, RealtimeAsrCallback callback) {
+            this(endpoint, apiKey, model, callback, false);
+        }
+
+        WebSocketRealtimeAsrSession(String endpoint, String apiKey, String model, RealtimeAsrCallback callback, boolean backendMode) {
+            this.endpoint = endpoint;
+            this.apiKey = apiKey == null ? "" : apiKey;
+            this.model = model == null || model.length() == 0 ? "fun-asr-realtime" : model;
+            this.callback = callback;
+            this.backendMode = backendMode;
+        }
+
+        void start() {
+            thread = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    runSocket();
+                }
+            }, "FunAsrRealtimeWebSocket");
+            thread.start();
+        }
+
+        void sendPcm(byte[] pcm, int length) {
+            if (pcm == null || length <= 0) {
+                return;
+            }
+            byte[] copy = Arrays.copyOf(pcm, length);
+            synchronized (lock) {
+                if (closed) {
+                    return;
+                }
+                if (!connected || output == null || (!backendMode && !taskStarted)) {
+                    queuedChunks.add(copy);
+                    return;
+                }
+            }
+            writeBinary(copy);
+        }
+
+        void finish(String stopReason) {
+            synchronized (lock) {
+                finishing = true;
+            }
+            if (connected) {
+                if (backendMode) {
+                    sendFinishAsync(true);
+                } else if (taskStarted) {
+                    sendFinishAsync(false);
+                }
+            }
+        }
+
+        void cancel() {
+            closeQuietly();
+        }
+
+        private void runSocket() {
+            try {
+                URI uri = URI.create(endpoint);
+                boolean secure = "wss".equalsIgnoreCase(uri.getScheme());
+                int port = uri.getPort() > 0 ? uri.getPort() : (secure ? 443 : 80);
+                socket = secure
+                        ? SSLSocketFactory.getDefault().createSocket(uri.getHost(), port)
+                        : new Socket(uri.getHost(), port);
+                input = new BufferedInputStream(socket.getInputStream());
+                output = new BufferedOutputStream(socket.getOutputStream());
+                writeHandshake(uri);
+                String statusLine = readHttpLine(input);
+                if (statusLine == null || !statusLine.contains("101")) {
+                    throw new IOException("websocket_handshake_failed:" + statusLine);
+                }
+                String line;
+                while ((line = readHttpLine(input)) != null && line.length() > 0) {
+                    // Consume handshake headers.
+                }
+                synchronized (lock) {
+                    connected = true;
+                }
+                if (backendMode) {
+                    sendBackendStart();
+                } else {
+                    sendRunTask();
+                }
+                synchronized (lock) {
+                    if (finishing) {
+                        if (backendMode) {
+                            flushQueuedChunks();
+                            sendBackendFinish();
+                        }
+                    }
+                }
+                readFrames();
+            } catch (Exception error) {
+                if (callback != null) {
+                    callback.onError(error);
+                }
+            } finally {
+                closeQuietly();
+            }
+        }
+
+        private void writeHandshake(URI uri) throws IOException {
+            String path = uri.getRawPath() == null || uri.getRawPath().length() == 0 ? "/" : uri.getRawPath();
+            if (uri.getRawQuery() != null && uri.getRawQuery().length() > 0) {
+                path += "?" + uri.getRawQuery();
+            }
+            String key = Base64.encodeToString(randomBytes(16), Base64.NO_WRAP);
+            StringBuilder request = new StringBuilder();
+            request.append("GET ").append(path).append(" HTTP/1.1\r\n");
+            request.append("Host: ").append(uri.getHost()).append("\r\n");
+            request.append("Upgrade: websocket\r\n");
+            request.append("Connection: Upgrade\r\n");
+            request.append("Sec-WebSocket-Version: 13\r\n");
+            request.append("Sec-WebSocket-Key: ").append(key).append("\r\n");
+            if (apiKey.length() > 0) {
+                request.append("Authorization: Bearer ").append(apiKey).append("\r\n");
+            }
+            request.append("\r\n");
+            output.write(request.toString().getBytes(StandardCharsets.UTF_8));
+            output.flush();
+        }
+
+        private void sendRunTask() {
+            taskId = "dingdang-" + UUID.randomUUID();
+            JSONObject header = new JSONObject();
+            JSONObject payload = new JSONObject();
+            JSONObject parameters = new JSONObject();
+            try {
+                header.put("action", "run-task");
+                header.put("task_id", taskId);
+                header.put("streaming", "duplex");
+                payload.put("task_group", "audio");
+                payload.put("task", "asr");
+                payload.put("function", "recognition");
+                payload.put("model", model);
+                parameters.put("format", "pcm");
+                parameters.put("sample_rate", VOICE_SAMPLE_RATE_HZ);
+                payload.put("parameters", parameters);
+                payload.put("input", new JSONObject());
+                JSONObject event = new JSONObject();
+                event.put("header", header);
+                event.put("payload", payload);
+                writeText(event.toString());
+            } catch (Exception error) {
+                if (callback != null) {
+                    callback.onError(error);
+                }
+            }
+        }
+
+        private void sendBackendStart() {
+            try {
+                JSONObject event = new JSONObject();
+                event.put("type", "start");
+                event.put("sample_rate", VOICE_SAMPLE_RATE_HZ);
+                event.put("format", "pcm");
+                writeText(event.toString());
+            } catch (Exception error) {
+                if (callback != null) {
+                    callback.onError(error);
+                }
+            }
+        }
+
+        private void sendFinishTask() {
+            JSONObject header = new JSONObject();
+            try {
+                header.put("action", "finish-task");
+                header.put("task_id", taskId.length() == 0 ? "dingdang-finish" : taskId);
+                header.put("streaming", "duplex");
+                JSONObject event = new JSONObject();
+                event.put("header", header);
+                JSONObject payload = new JSONObject();
+                payload.put("input", new JSONObject());
+                event.put("payload", payload);
+                writeText(event.toString());
+            } catch (Exception error) {
+                if (callback != null) {
+                    callback.onError(error);
+                }
+            }
+        }
+
+        private void sendFinishAsync(final boolean backendFinish) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    if (backendFinish) {
+                        sendBackendFinish();
+                    } else {
+                        sendFinishTask();
+                    }
+                }
+            }, "FunAsrFinishSender").start();
+        }
+
+        private void sendBackendFinish() {
+            try {
+                JSONObject event = new JSONObject();
+                event.put("type", "finish");
+                writeText(event.toString());
+            } catch (Exception error) {
+                if (callback != null) {
+                    callback.onError(error);
+                }
+            }
+        }
+
+        private void flushQueuedChunks() {
+            ArrayList<byte[]> chunks;
+            synchronized (lock) {
+                chunks = new ArrayList<>(queuedChunks);
+                queuedChunks.clear();
+            }
+            for (int i = 0; i < chunks.size(); i++) {
+                writeBinary(chunks.get(i));
+            }
+        }
+
+        private void readFrames() throws IOException {
+            while (!closed && input != null) {
+                WebSocketFrame frame = readFrame(input);
+                if (frame == null) {
+                    return;
+                }
+                if (frame.opcode == 0x8) {
+                    return;
+                }
+                if (frame.opcode == 0x1) {
+                    handleTextFrame(new String(frame.payload, StandardCharsets.UTF_8));
+                }
+                if (!backendMode && finishing && finalText.length() > 0 && !finalDelivered) {
+                    finalDelivered = true;
+                    if (callback != null) {
+                        callback.onFinal(finalText);
+                    }
+                    return;
+                }
+            }
+        }
+
+        private void handleTextFrame(String text) {
+            try {
+                if (backendMode) {
+                    handleBackendTextFrame(text);
+                    return;
+                }
+                JSONObject event = new JSONObject(text);
+                JSONObject header = event.optJSONObject("header");
+                JSONObject payload = event.optJSONObject("payload");
+                String eventName = header == null ? "" : header.optString("event", header.optString("name", ""));
+                String candidate = extractAsrText(payload);
+                if ("task-started".equals(eventName)) {
+                    synchronized (lock) {
+                        taskStarted = true;
+                    }
+                    flushQueuedChunks();
+                    synchronized (lock) {
+                        if (finishing) {
+                            sendFinishTask();
+                        }
+                    }
+                    return;
+                }
+                if (candidate.length() > 0) {
+                    finalText = candidate;
+                    if (callback != null) {
+                        callback.onPartial(candidate);
+                    }
+                }
+                if ("task-finished".equals(eventName) || "task-failed".equals(eventName)) {
+                    if (callback != null) {
+                        if (finalText.length() > 0 && !finalDelivered) {
+                            finalDelivered = true;
+                            callback.onFinal(finalText);
+                        } else if (finalText.length() == 0) {
+                            callback.onUnclear("asr_" + eventName.replace('-', '_'));
+                        }
+                    }
+                    closeQuietly();
+                }
+            } catch (Exception error) {
+                if (callback != null) {
+                    callback.onError(error);
+                }
+            }
+        }
+
+        private void handleBackendTextFrame(String text) {
+            try {
+                JSONObject event = new JSONObject(text);
+                String type = event.optString("type", "");
+                String candidate = event.optString("text", event.optString("transcript", ""));
+                if ("ready".equals(type)) {
+                    return;
+                }
+                if ("partial".equals(type)) {
+                    if (candidate.length() > 0 && callback != null) {
+                        callback.onPartial(candidate);
+                    }
+                    return;
+                }
+                if ("final".equals(type)) {
+                    if (callback != null) {
+                        if (candidate.length() > 0) {
+                            callback.onFinal(candidate);
+                        } else {
+                            callback.onUnclear("asr_final_empty");
+                        }
+                    }
+                    closeQuietly();
+                    return;
+                }
+                if ("error".equals(type)) {
+                    if (callback != null) {
+                        callback.onError(new IOException(event.optString("code", "asr_error") + ":" + event.optString("message", "")));
+                    }
+                    closeQuietly();
+                }
+            } catch (Exception error) {
+                if (callback != null) {
+                    callback.onError(error);
+                }
+            }
+        }
+
+        private static String extractAsrText(JSONObject payload) {
+            if (payload == null) {
+                return "";
+            }
+            JSONObject output = payload.optJSONObject("output");
+            if (output != null) {
+                JSONObject sentenceObject = output.optJSONObject("sentence");
+                if (sentenceObject != null) {
+                    String sentenceText = cleanAsrText(sentenceObject.optString("text", ""));
+                    if (sentenceText.length() > 0) {
+                        return sentenceText;
+                    }
+                }
+                String sentence = cleanAsrText(output.optString("sentence", ""));
+                if (sentence.length() > 0) {
+                    return sentence;
+                }
+                String outputText = cleanAsrText(output.optString("text", output.optString("transcription", "")));
+                if (outputText.length() > 0) {
+                    return outputText;
+                }
+            }
+            JSONArray sentences = payload.optJSONArray("sentences");
+            if (sentences != null && sentences.length() > 0) {
+                JSONObject last = sentences.optJSONObject(sentences.length() - 1);
+                if (last != null) {
+                    return cleanAsrText(last.optString("text", last.optString("sentence", "")));
+                }
+            }
+            return cleanAsrText(payload.optString("text", payload.optString("transcript", "")));
+        }
+
+        private static String cleanAsrText(String text) {
+            String cleaned = text == null ? "" : text.trim();
+            if ("{}".equals(cleaned) || "[]".equals(cleaned) || "null".equalsIgnoreCase(cleaned)) {
+                return "";
+            }
+            return cleaned;
+        }
+
+        private void writeText(String text) {
+            writeFrame(0x1, text.getBytes(StandardCharsets.UTF_8));
+        }
+
+        private void writeBinary(byte[] bytes) {
+            writeFrame(0x2, bytes);
+        }
+
+        private void writeFrame(int opcode, byte[] payload) {
+            OutputStream out;
+            synchronized (lock) {
+                out = output;
+                if (closed || out == null) {
+                    return;
+                }
+            }
+            try {
+                int length = payload == null ? 0 : payload.length;
+                ByteArrayOutputStream frame = new ByteArrayOutputStream();
+                frame.write(0x80 | opcode);
+                byte[] mask = randomBytes(4);
+                if (length <= 125) {
+                    frame.write(0x80 | length);
+                } else if (length <= 65535) {
+                    frame.write(0x80 | 126);
+                    frame.write((length >> 8) & 0xff);
+                    frame.write(length & 0xff);
+                } else {
+                    frame.write(0x80 | 127);
+                    for (int i = 7; i >= 0; i--) {
+                        frame.write((length >> (8 * i)) & 0xff);
+                    }
+                }
+                frame.write(mask);
+                for (int i = 0; i < length; i++) {
+                    frame.write(payload[i] ^ mask[i % 4]);
+                }
+                out.write(frame.toByteArray());
+                out.flush();
+            } catch (Exception error) {
+                if (callback != null) {
+                    callback.onError(error);
+                }
+                closeQuietly();
+            }
+        }
+
+        private static WebSocketFrame readFrame(InputStream input) throws IOException {
+            int first = input.read();
+            if (first < 0) {
+                return null;
+            }
+            int second = input.read();
+            if (second < 0) {
+                return null;
+            }
+            int opcode = first & 0x0f;
+            boolean masked = (second & 0x80) != 0;
+            long length = second & 0x7f;
+            if (length == 126) {
+                length = (input.read() << 8) | input.read();
+            } else if (length == 127) {
+                length = 0;
+                for (int i = 0; i < 8; i++) {
+                    length = (length << 8) | input.read();
+                }
+            }
+            byte[] mask = null;
+            if (masked) {
+                mask = new byte[4];
+                readFully(input, mask);
+            }
+            if (length > 4 * 1024 * 1024) {
+                throw new IOException("websocket_frame_too_large");
+            }
+            byte[] payload = new byte[(int) length];
+            readFully(input, payload);
+            if (masked && mask != null) {
+                for (int i = 0; i < payload.length; i++) {
+                    payload[i] = (byte) (payload[i] ^ mask[i % 4]);
+                }
+            }
+            return new WebSocketFrame(opcode, payload);
+        }
+
+        private static void readFully(InputStream input, byte[] target) throws IOException {
+            int offset = 0;
+            while (offset < target.length) {
+                int read = input.read(target, offset, target.length - offset);
+                if (read < 0) {
+                    throw new IOException("unexpected_websocket_eof");
+                }
+                offset += read;
+            }
+        }
+
+        private static String readHttpLine(InputStream input) throws IOException {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            int previous = -1;
+            int current;
+            while ((current = input.read()) >= 0) {
+                if (previous == '\r' && current == '\n') {
+                    byte[] bytes = output.toByteArray();
+                    int length = Math.max(0, bytes.length - 1);
+                    return new String(bytes, 0, length, StandardCharsets.UTF_8);
+                }
+                output.write(current);
+                previous = current;
+            }
+            return null;
+        }
+
+        private static byte[] randomBytes(int count) {
+            byte[] bytes = new byte[count];
+            new SecureRandom().nextBytes(bytes);
+            return bytes;
+        }
+
+        private void closeQuietly() {
+            synchronized (lock) {
+                closed = true;
+            }
+            try {
+                if (socket != null) {
+                    socket.close();
+                }
+            } catch (IOException ignored) {
+            }
+        }
+    }
+
+    private static final class WebSocketFrame {
+        final int opcode;
+        final byte[] payload;
+
+        WebSocketFrame(int opcode, byte[] payload) {
+            this.opcode = opcode;
+            this.payload = payload == null ? new byte[0] : payload;
+        }
+    }
+
+    private static final class AudioWaveView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private boolean running;
+        private float phase;
+
+        AudioWaveView(Activity activity) {
+            super(activity);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+        }
+
+        void start() {
+            running = true;
+            postInvalidateOnAnimation();
+        }
+
+        void stop() {
+            running = false;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            int width = getWidth();
+            int height = getHeight();
+            if (width <= 0 || height <= 0) {
+                return;
+            }
+            float centerY = height / 2f;
+            float barWidth = Math.max(6f, width / 52f);
+            float gap = barWidth * 0.85f;
+            paint.setStrokeWidth(barWidth);
+            int count = Math.max(12, (int) (width / (barWidth + gap)));
+            for (int i = 0; i < count; i++) {
+                float t = i / (float) Math.max(1, count - 1);
+                float envelope = (float) Math.sin(Math.PI * t);
+                float wave = running
+                        ? (float) (0.45f + 0.55f * Math.abs(Math.sin(phase + i * 0.72f)))
+                        : 0.28f;
+                float barHeight = Math.max(8f, height * (0.14f + 0.62f * envelope * wave));
+                int green = 180 + Math.round(54 * envelope);
+                int blue = 130 + Math.round(90 * (1f - envelope));
+                paint.setColor(Color.rgb(32, green, blue));
+                float x = (width - (count - 1) * (barWidth + gap)) / 2f + i * (barWidth + gap);
+                canvas.drawLine(x, centerY - barHeight / 2f, x, centerY + barHeight / 2f, paint);
+            }
+            if (running) {
+                phase += 0.28f;
+                postInvalidateDelayed(48L);
+            }
+        }
+    }
+
+    private static void streamText(String text, StreamingCallback callback) throws InterruptedException {
+        String safe = text == null || text.length() == 0 ? "我没有拿到有效回答，请重试。" : text;
+        int index = 0;
+        while (index < safe.length()) {
+            int next = Math.min(safe.length(), index + 8);
+            callback.onDelta(safe.substring(index, next));
+            index = next;
+            Thread.sleep(35L);
+        }
+    }
+
+    private static String trimSlash(String value) {
+        while (value.endsWith("/")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        return value;
+    }
+
+    private static String readAll(InputStream input) throws IOException {
+        if (input == null) {
+            return "";
+        }
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+            output.write(buffer, 0, read);
+        }
+        return new String(output.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    private static void closeOutput(OutputStream output) {
+        if (output == null) {
+            return;
+        }
+        try {
+            output.close();
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void writeMultipartFile(
+            OutputStream output,
+            String boundary,
+            String field,
+            String fileName,
+            String contentType,
+            File file) throws IOException {
+        output.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
+        output.write(("Content-Disposition: form-data; name=\"" + field + "\"; filename=\"" + fileName + "\"\r\n").getBytes(StandardCharsets.UTF_8));
+        output.write(("Content-Type: " + contentType + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        try (InputStream input = new java.io.FileInputStream(file)) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                output.write(buffer, 0, read);
+            }
+        }
+        output.write("\r\n".getBytes(StandardCharsets.UTF_8));
     }
 }

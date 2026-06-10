@@ -34,6 +34,9 @@ https://<project-ref>.supabase.co/functions/v1/ops-glasses
 GET  /health
 POST /sessions/events
 GET  /sessions/:sessionId
+POST /sessions/:sessionId/images
+WS   /sessions/:sessionId/asr
+POST /sessions/:sessionId/diagnose/stream
 POST /sessions/:sessionId/voice
 POST /sessions/:sessionId/probe
 POST /sessions/:sessionId/escalate
@@ -44,6 +47,70 @@ POST /sessions/:sessionId/escalate
 ```http
 x-ops-glasses-key: <OPS_GLASSES_API_KEY>
 ```
+
+## 叮当运维AI 快路径接口
+
+聊天式 App 优先使用下面三段接口，目的是让眼镜端“先看到反馈，再做慢记录”。
+
+```http
+POST /sessions/:sessionId/images
+Content-Type: application/json
+```
+
+```json
+{
+  "image_base64": "data:image/jpeg;base64,...",
+  "image_kind": "field_photo",
+  "client_ts": "2026-06-09T00:00:00.000Z"
+}
+```
+
+返回：
+
+```json
+{
+  "ok": true,
+  "session_id": "session-id",
+  "image_id": "image-id",
+  "image_bytes": 123456
+}
+```
+
+这个接口只存图并返回 `image_id`，不调用 GPT。
+
+```http
+WS /sessions/:sessionId/asr
+```
+
+眼镜端发送 `start`、PCM 音频片段和 `finish`；后端代理 DashScope Fun-ASR realtime。Fun-ASR 只产生 `partial/final transcript`，不产生诊断、不改写意图。
+
+```http
+POST /sessions/:sessionId/diagnose/stream
+Content-Type: application/json
+```
+
+```json
+{
+  "image_id": "image-id",
+  "final_text": "这个设备为什么报警",
+  "client_context": {
+    "source": "voice",
+    "app": "dingdang-ops-ai"
+  }
+}
+```
+
+返回 `text/event-stream`：
+
+```text
+event: delta
+data: {"text":"先看报警灯和压力表，"}
+
+event: done
+data: {"message_id":"..."}
+```
+
+数据库审计和长上下文整理通过 best-effort 异步执行，不阻塞图片返回、语音转写或 GPT 首 token。
 
 ## 眼镜端主接口
 
@@ -142,7 +209,12 @@ SUPABASE_DB_URL=postgresql://postgres.<project-ref>:<password>@aws-xxx.pooler.su
 
 OPENAI_API_KEY=<openai-api-key>
 OPENAI_VISION_MODEL=gpt-4.1-mini
-OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
+OPENAI_TRANSCRIBE_API_KEY=<stt-api-key>
+OPENAI_TRANSCRIBE_BASE_URL=http://36.212.8.104:8000
+OPENAI_TRANSCRIBE_MODEL=paraformer-zh-streaming
+DASHSCOPE_API_KEY=<dashscope-api-key>
+DASHSCOPE_FUNASR_URL=wss://dashscope.aliyuncs.com/api-ws/v1/inference
+DASHSCOPE_FUNASR_MODEL=fun-asr-realtime
 
 DEMO_ASSET_TAG=ASSET-CONSOLE-001
 DEMO_TARGET_HOST=192.168.1.50
@@ -157,6 +229,8 @@ MOCK_SSH_REACHABLE=false
 - `SUPABASE_DB_URL`：数据库连接串，用于执行建表 SQL。没有它，`supabase-js` 只能做 CRUD，不能建表。
 - `SUPABASE_SERVICE_ROLE_KEY`：用于 Edge Function 写表和 Storage。
 - `OPS_GLASSES_API_KEY`：给眼镜端调用 API 用，不要使用 service role key。
+- `DASHSCOPE_API_KEY`：只放在后端 Function Secrets 中，用于代理 Fun-ASR realtime；不要写进 APK。
+- `DASHSCOPE_FUNASR_MODEL`：固定使用接口模型 ID `fun-asr-realtime`，不要写页面中文名。
 
 ## 部署步骤
 
@@ -171,7 +245,12 @@ supabase secrets set AUTO_MIGRATE=true
 supabase secrets set OPS_GLASSES_API_KEY=<random-long-secret>
 supabase secrets set OPENAI_API_KEY=<openai-api-key>
 supabase secrets set OPENAI_VISION_MODEL=gpt-4.1-mini
-supabase secrets set OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
+supabase secrets set OPENAI_TRANSCRIBE_API_KEY=<stt-api-key>
+supabase secrets set OPENAI_TRANSCRIBE_BASE_URL=http://36.212.8.104:8000
+supabase secrets set OPENAI_TRANSCRIBE_MODEL=paraformer-zh-streaming
+supabase secrets set DASHSCOPE_API_KEY=<dashscope-api-key>
+supabase secrets set DASHSCOPE_FUNASR_URL=wss://dashscope.aliyuncs.com/api-ws/v1/inference
+supabase secrets set DASHSCOPE_FUNASR_MODEL=fun-asr-realtime
 supabase secrets set DEMO_ASSET_TAG=ASSET-CONSOLE-001
 supabase secrets set DEMO_TARGET_HOST=192.168.1.50
 supabase secrets set DEMO_TARGET_SSH_PORT=22

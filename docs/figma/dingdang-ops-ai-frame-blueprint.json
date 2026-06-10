@@ -1,0 +1,128 @@
+{
+  "name": "Dingdang Ops AI Figma frame blueprint",
+  "figmaFileKey": "pDX9LEKARKp5GGchwuFLz4",
+  "productName": "叮当运维AI",
+  "brandName": "华方智联",
+  "designContract": {
+    "background": "white",
+    "primaryMode": "chat",
+    "diagnosisSource": "GPT only",
+    "asrRole": "transcript only",
+    "lowOperation": true,
+    "noHudPanels": true
+  },
+  "requiredFrames": [
+    {
+      "id": "chat-main",
+      "title": "01 Chat main screen",
+      "size": {
+        "width": 1440,
+        "height": 900
+      },
+      "mustShow": [
+        "INMO-assistant-style new chat page",
+        "Dingdang branded home",
+        "last conversation card",
+        "bottom photo action",
+        "bottom voice action",
+        "no visible text input"
+      ],
+      "uiText": [
+        "叮当运维AI",
+        "会话记录",
+        "上次对话",
+        "点我拍照",
+        "点我说话",
+        "拍照看现场，语音说问题"
+      ]
+    },
+    {
+      "id": "camera-capture",
+      "title": "02 Camera capture screen",
+      "size": {
+        "width": 1440,
+        "height": 900
+      },
+      "mustShow": [
+        "independent camera page",
+        "full-bleed preview area",
+        "back action",
+        "capture action",
+        "use photo confirmation",
+        "uploading image_id state"
+      ],
+      "uiText": [
+        "拍摄现场图",
+        "返回",
+        "拍照",
+        "使用照片",
+        "正在上传现场图"
+      ]
+    },
+    {
+      "id": "asr-streaming",
+      "title": "03 ASR partial and final state",
+      "size": {
+        "width": 1440,
+        "height": 900
+      },
+      "mustShow": [
+        "voice listening state",
+        "partial transcript user bubble",
+        "final transcript replacement",
+        "auto-send after final",
+        "no diagnostic text from ASR"
+      ],
+      "uiText": [
+        "正在听",
+        "正在转文字",
+        "识别完成",
+        "已自动发送给 GPT"
+      ]
+    },
+    {
+      "id": "gpt-streaming",
+      "title": "04 GPT streaming answer",
+      "size": {
+        "width": 1440,
+        "height": 900
+      },
+      "mustShow": [
+        "GPT answer bubble streaming",
+        "image_id plus final_text context",
+        "fast first delta status",
+        "final answer bubble",
+        "retry affordance on stream interruption"
+      ],
+      "uiText": [
+        "AI 正在分析",
+        "结合现场图片和问题",
+        "先检查",
+        "继续追问",
+        "重新生成"
+      ]
+    },
+    {
+      "id": "shortcut-flow",
+      "title": "05 AR glasses shortcut flow",
+      "size": {
+        "width": 1440,
+        "height": 900
+      },
+      "mustShow": [
+        "ENTER or DPAD_CENTER toggles voice",
+        "FOCUS or F9 opens app camera",
+        "RIGHT or MENU or F12 sends",
+        "BACK or LEFT or F10 returns to chat",
+        "CAMERA and DVR marked system-reserved"
+      ],
+      "uiText": [
+        "低操作快捷键",
+        "语音开始/结束",
+        "打开应用内相机",
+        "发送",
+        "系统相机保留键"
+      ]
+    }
+  ]
+}

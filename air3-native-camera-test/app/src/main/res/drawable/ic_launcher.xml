@@ -10,14 +10,18 @@
     <path
         android:fillColor="#12B7EE"
         android:pathData="M18,3 L90,3 Q105,3 105,18 L105,90 Q105,105 90,105 L18,105 Q3,105 3,90 L3,18 Q3,3 18,3 Z" />
-    <path
-        android:fillColor="#00FFFFFF"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="7.5"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M35,76 C20,76 10,66 10,54 C10,42 20,32 34,34 C38,22 48,14 61,14 C74,14 84,23 87,36 C98,37 105,45 105,56 C105,68 96,77 84,77 C80,88 69,95 57,94 C48,93 41,88 37,80 C36,78 35,77 35,76 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M59,33 L82,33 L64,50 L79,50 L45,78 L57,57 L36,57 Z" />
+    <group
+        android:translateX="-3"
+        android:translateY="5">
+        <path
+            android:fillColor="#00FFFFFF"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="7.5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M30,76 C19,76 12,68 12,58 C12,47 21,39 34,40 C38,28 48,20 60,20 C73,20 83,29 85,41 C95,42 102,50 102,60 C102,71 94,79 82,79 L31,79 C30,78 30,77 30,76 Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M54,30 L76,30 L60,49 L73,49 L43,78 L53,57 L34,57 Z" />
+    </group>
 </vector>

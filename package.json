@@ -8,7 +8,15 @@
     "validate:supabase": "node scripts/validate-supabase-assets.mjs && node scripts/validate-ai-brain-flow.mjs && node scripts/check-text-balance.mjs",
     "validate:ai-brain": "node scripts/validate-ai-brain-flow.mjs",
     "validate:native-hud": "node scripts/validate-native-hud-flow.mjs",
-    "validate:native-build": "node scripts/validate-native-build-versioning.mjs"
+    "validate:native-build": "node scripts/validate-native-build-versioning.mjs",
+    "verify:air3-delivery": "node scripts/verify-air3-delivery-final.mjs",
+    "audit:dingdang-goal": "node scripts/audit-dingdang-goal-readiness.mjs",
+    "audit:dingdang-supabase": "node scripts/audit-dingdang-supabase-live-readiness.mjs",
+    "validate:figma-blueprint": "node scripts/validate-dingdang-figma-blueprint.mjs",
+    "validate:figma-frames-evidence": "node scripts/validate-dingdang-figma-frames-evidence.mjs",
+    "validate:figma-write-script": "node scripts/validate-dingdang-figma-write-script.mjs",
+    "validate:mock-smoke-latency": "node scripts/validate-dingdang-mock-smoke-latency.mjs",
+    "validate:real-smoke-summary": "node scripts/validate-dingdang-real-smoke-summary.mjs"
   },
   "engines": {
     "node": ">=20"

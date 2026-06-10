@@ -5,79 +5,52 @@ const root = process.cwd();
 const source = fs.readFileSync(path.join(root, "app", "index.tsx"), "utf8");
 
 const requiredSnippets = [
-  'type ResultType =',
-  'type FeedbackCode =',
-  'type HudState =',
-  'type TextOverflowMode =',
-  'fullText?: string;',
-  'displayPages?: string[];',
-  'textOverflowMode?: TextOverflowMode;',
-  'resultType: "ready"',
-  'resultType: "uploading"',
-  'resultType: "recording_voice"',
-  'resultType: "transcribing_voice"',
-  'resultType: "ai_analyzing"',
-  'resultType: "instruction"',
-  'safeCommandKey: "ssh_status"',
-  'safeCommandKey: "ssh_start"',
-  'id: "instruction-long-guidance"',
-  'textOverflowMode: "paged"',
-  '中心点击先翻页，最后一页再拍照。',
-  '第 ${currentPageIndex + 1}/${displayPages.length} 页',
-  'feedbackCode: "wrong_target"',
-  'feedbackCode: "unclear_photo"',
-  'feedbackCode: "insufficient_info"',
-  'feedbackCode: "voice_unclear"',
-  'resultType: "network_error"',
-  'resultType: "remote_probe"',
-  'resultType: "completed"',
-  'resultType: "human_suggested"',
-  "叮当X AI 运维眼镜",
-  "服务器 SSH 恢复",
-  "把服务器控制台文字放入绿色框内",
-  "调试信息仅写入日志，不显示给现场人员",
-  "中心点击",
-  "拍照 / 下一步",
-  "长按中心",
-  "语音确认 / 补充说明",
-  "返回键",
-  "重拍 / 返回上一步",
+  "type ChatMessage =",
+  "type ProjectThread =",
+  "type VoiceState =",
+  '"idle" | "listening" | "partial" | "final" | "analyzing"',
+  "叮当运维AI",
+  "会话记录",
+  "新建项目",
+  "现场诊断",
+  "照片已在输入框",
+  "正在听",
+  "实时转写",
+  "已听清，自动发送",
+  "AI 正在生成",
+  "handleCameraPress",
+  "handleVoicePress",
+  "handleSend",
+  "simulatePartialTranscript",
+  "autoSendFinalTranscript",
+  "backgroundColor: \"#ffffff\"",
+  "accessibilityLabel=\"发送\"",
+  "accessibilityLabel=\"拍照\"",
+  "accessibilityLabel=\"语音\"",
 ];
 
 const forbiddenSnippets = [
-  "诊断命令",
+  "叮当X AI 运维眼镜",
+  "服务器 SSH 恢复",
+  "对准服务器本地控制台",
+  "把服务器控制台文字放入绿色框内",
+  "调试信息仅写入日志",
+  "拍照 / 下一步",
+  "长按中心",
   "复测分诊",
-  "人工介入",
-  "No local STT",
-  "HTTP",
-  "bytes",
-  "session=",
-  "Exception",
-  "debug",
+  "诊断命令",
+  "HudState",
+  "GuideFrame",
 ];
 
-const stateCount = (source.match(/resultType: "/g) || []).length;
-const pageCount = (source.match(/displayPages:/g) || []).length;
-const uniqueResultTypes = new Set(
-  [...source.matchAll(/resultType: "([^"]+)"/g)].map((match) => match[1]),
-);
 const missing = requiredSnippets.filter((snippet) => !source.includes(snippet));
 const forbidden = forbiddenSnippets.filter((snippet) => source.includes(snippet));
 
-if (
-  stateCount < 16 ||
-  pageCount < 1 ||
-  uniqueResultTypes.size !== 11 ||
-  missing.length ||
-  forbidden.length
-) {
+if (missing.length || forbidden.length) {
   console.error(
     JSON.stringify(
       {
         ok: false,
-        stateCount,
-        pageCount,
-        uniqueResultTypeCount: uniqueResultTypes.size,
         missing,
         forbidden,
       },
@@ -90,12 +63,11 @@ if (
 
 console.log(
   JSON.stringify(
-      {
-        ok: true,
-        stateCount,
-        pageCount,
-        uniqueResultTypeCount: uniqueResultTypes.size,
-      },
+    {
+      ok: true,
+      chatPrototype: true,
+      lowOperationVoiceFlow: true,
+    },
     null,
     2,
   ),

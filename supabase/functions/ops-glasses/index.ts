@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { ensureSchema } from "./automigrate.ts";
 
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
+
 type OpsStep =
   | "locate_server"
   | "inspect_console"
@@ -107,6 +109,19 @@ type GlassesResponse = {
   timestamp: string;
 };
 
+type ChatImageUploadResponse = {
+  ok: true;
+  session_id: string;
+  image_id: string;
+  image_bytes: number;
+};
+
+type VoicePayload = Record<string, unknown> & {
+  audioBytes?: Uint8Array;
+  audioContentType?: string;
+  audioFormat?: string;
+};
+
 type Env = {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
@@ -117,6 +132,9 @@ type Env = {
   OPENAI_TRANSCRIBE_BASE_URL: string;
   OPENAI_VISION_MODEL: string;
   OPENAI_TRANSCRIBE_MODEL: string;
+  DASHSCOPE_API_KEY?: string;
+  DASHSCOPE_FUNASR_URL?: string;
+  DASHSCOPE_FUNASR_MODEL?: string;
   DEMO_ASSET_TAG: string;
   DEMO_TARGET_HOST: string;
   DEMO_TARGET_SSH_PORT: number;
@@ -138,6 +156,8 @@ const corsHeaders = {
 
 const storageBucket = "ops-glasses-captures";
 const aiBrainPromptVersion = "air3-v2-ai-brain-v2-scene-feedback";
+const sseDeltaEventMarker = "event: delta";
+const sseDoneEventMarker = "event: done";
 const taskGoal = "基于眼镜照片和现场语音给现场人员提供真实 AI 反馈与运维指导；服务器 SSH 恢复只是默认运维模板之一";
 const operatorProfile = "现场小白，不懂 Linux 运维，需要一步一步指导";
 const sttRequestTimeoutMs = 25_000;
@@ -164,6 +184,23 @@ Deno.serve(async (request) => {
       return json({ ok: true, service: "ops-glasses" });
     }
 
+    if (request.method === "GET" && path.match(/^\/sessions\/[^/]+\/asr$/)) {
+      const sessionId = path.split("/")[2];
+      return handleRealtimeAsrSocket({ request, env, sessionId });
+    }
+
+    if (request.method === "POST" && path.match(/^\/sessions\/[^/]+\/images$/)) {
+      const sessionId = path.split("/")[2];
+      const payload = await request.json().catch(() => ({}));
+      return json(await handleChatImageUpload({ supabase, env, sessionId, payload }));
+    }
+
+    if (request.method === "POST" && path.match(/^\/sessions\/[^/]+\/diagnose\/stream$/)) {
+      const sessionId = path.split("/")[2];
+      const payload = await request.json().catch(() => ({}));
+      return await handleDiagnoseStream({ supabase, env, sessionId, payload });
+    }
+
     if (request.method === "GET" && path.startsWith("/sessions/")) {
       const sessionId = path.split("/")[2];
       return json(await getSessionResponse(supabase, sessionId));
@@ -181,7 +218,7 @@ Deno.serve(async (request) => {
 
     if (request.method === "POST" && path.match(/^\/sessions\/[^/]+\/voice$/)) {
       const sessionId = path.split("/")[2];
-      const payload = await request.json().catch(() => ({}));
+      const payload = await voicePayloadFromRequest(request);
       return json(await handleVoice({ supabase, env, sessionId, payload }));
     }
 
@@ -205,62 +242,46 @@ async function handleSessionEvent(
 ): Promise<GlassesResponse> {
   const action = normalizeAction(payload.action);
   const session = await loadOrCreateSession(supabase, env, stringOrEmpty(payload.sessionId));
-  let imageId: string | null = null;
   let imageBase64ForAi = "";
-  let imageBytes = 0;
+  const imageKind = stringOr(payload.imageKind, "console");
+  const imageBytes = typeof payload.imageBase64 === "string" && payload.imageBase64.trim()
+    ? estimateBase64Bytes(payload.imageBase64)
+    : 0;
 
   if (typeof payload.imageBase64 === "string" && payload.imageBase64.trim()) {
-    const uploaded = await uploadImage(supabase, session.id, payload.imageBase64, stringOr(payload.imageKind, "console"));
-    imageId = uploaded.imageId;
     imageBase64ForAi = payload.imageBase64;
-    imageBytes = uploaded.imageBytes;
   }
 
-  const contextBundle = await createContextBundle(supabase, {
-    session,
-    imageId,
-    voiceInputId: null,
-    transcript: "",
-    payload: { ...payload, source: stringOr(payload.source, "photo") },
-  });
   const commands = await loadSafeCommands(supabase);
   const aiResult = imageBase64ForAi
-    ? await requestAiBrainDecision({
-      supabase,
+    ? await requestAiBrainDecisionFast({
       env,
       session,
-      imageId,
-      contextBundle,
+      imageId: null,
       imageBase64: imageBase64ForAi,
       transcript: "",
+      payload: { ...payload, source: stringOr(payload.source, "photo") },
       commands,
     })
     : null;
   const next = aiResult?.decision ?? (imageBase64ForAi
     ? unavailableDecision()
     : noPhotoDecision());
-  const aiDecisionId = await storeAiDecision(supabase, {
-    session,
-    contextBundleId: contextBundle.id,
-    aiRequestId: aiResult?.aiRequestId ?? null,
-    decision: next,
-  });
-  const event = await insertEvent(supabase, {
-    sessionId: session.id,
-    step: next.step,
-    action,
-    imageId,
-    instructionText: next.displayText,
-    payload: { imageBytes, aiDecisionId },
-  });
 
-  if (imageId) {
-    await supabase.from("ops_images").update({ event_id: event.id }).eq("id", imageId);
-  }
-
-  const status = statusFromDecision(next);
-  await updateSession(supabase, session.id, next.step, next.displayText, status);
-
+  scheduleBestEffortAudit(() =>
+    persistInteractionAudit({
+      supabase,
+      session,
+      action,
+      imageBase64: imageBase64ForAi,
+      imageKind,
+      transcript: "",
+      payload: { ...payload, source: stringOr(payload.source, "photo") },
+      decision: next,
+      aiResult,
+      imageBytes,
+    })
+  );
   return responseFromDecision(session.id, next, { imageBytes, canRetake: true, canEscalate: true });
 }
 
@@ -269,26 +290,30 @@ async function handleVoice(
     supabase: Supabase;
     env: Env;
     sessionId: string;
-    payload: Record<string, unknown>;
+    payload: VoicePayload;
   },
 ): Promise<GlassesResponse> {
   const session = await mustGetSession(supabase, sessionId);
   const audioBase64 = stringOrEmpty(payload.audioBase64);
   const expectedLanguage = stringOr(payload.expectedLanguage, "zh");
+  const multipartAudioBytes = payload.audioBytes instanceof Uint8Array ? payload.audioBytes : null;
+  const audioBytesData = multipartAudioBytes
+    ? {
+      bytes: multipartAudioBytes,
+      contentType: stringOr(payload.audioContentType, stringOr(payload.audioFormat, "audio/wav")),
+    }
+    : audioBase64
+    ? decodeBase64Payload(audioBase64, stringOr(payload.audioFormat, "audio/mp4"))
+    : null;
+  const hasAudio = Boolean(audioBytesData);
   let transcript = stringOrEmpty(payload.transcript);
   let transcriptError = "";
-  let audioBytes = estimateBase64Bytes(audioBase64);
-  let filePath: string | null = null;
+  const audioBytes = audioBytesData?.bytes.length ?? estimateBase64Bytes(audioBase64);
 
-  if (audioBase64) {
-    const audio = decodeBase64Payload(audioBase64, stringOr(payload.audioFormat, "audio/mp4"));
-    audioBytes = audio.bytes.length;
-    filePath = `${sessionId}/voice/${crypto.randomUUID()}.${extensionForAudio(audio.contentType)}`;
-    await uploadBytes(supabase, filePath, audio.bytes, audio.contentType);
-
+  if (audioBytesData) {
     if (hasTranscribeCredentials(env)) {
       try {
-        transcript = await transcribeAudio(env, audio.bytes, audio.contentType, stringOrEmpty(payload.sttPrompt));
+        transcript = await transcribeAudio(env, audioBytesData.bytes, audioBytesData.contentType, stringOrEmpty(payload.sttPrompt));
         const suspiciousReason = suspiciousTranscriptReason(transcript, expectedLanguage);
         if (suspiciousReason) {
           transcript = "";
@@ -302,40 +327,21 @@ async function handleVoice(
 
   const voiceIntent = classifyVoiceIntent(transcript);
 
-  const { data: voiceInput, error: voiceError } = await supabase.from("voice_inputs").insert({
-    session_id: sessionId,
-    file_path: filePath,
-    audio_bytes: audioBytes,
-    audio_format: stringOr(payload.audioFormat, "m4a"),
-    transcript,
-    voice_intent: voiceIntent,
-    confidence: voiceIntent === "unknown" ? 0.4 : 0.86,
-  }).select("id").single();
-  throwIf(voiceError);
-
   const latestImage = await latestImageForSession(supabase, sessionId);
-  const contextBundle = await createContextBundle(supabase, {
-    session,
-    imageId: latestImage?.id ?? null,
-    voiceInputId: voiceInput.id,
-    transcript,
-    payload: { ...payload, source: "voice", voiceIntent, transcriptError },
-  });
   const commands = await loadSafeCommands(supabase);
   const imageBase64 = latestImage ? await downloadImageBase64(supabase, latestImage.file_path) : "";
-  const transcriptUnavailable = audioBase64 && !transcript
+  const transcriptUnavailable = hasAudio && !transcript
     ? voiceTranscriptUnavailableDecision(transcriptError)
     : null;
-  const shouldAskAiBrain = !audioBase64 || transcript.length > 0;
+  const shouldAskAiBrain = !hasAudio || transcript.length > 0;
   const aiResult = shouldAskAiBrain && imageBase64
-    ? await requestAiBrainDecision({
-      supabase,
+    ? await requestAiBrainDecisionFast({
       env,
       session,
       imageId: latestImage?.id ?? null,
-      contextBundle,
       imageBase64,
       transcript,
+      payload: { ...voiceContextPayload(payload), source: "voice", voiceIntent, transcriptError },
       commands,
     })
     : null;
@@ -347,27 +353,27 @@ async function handleVoice(
         text: "我还没有看到可用于判断的现场照片。请先把需要判断的画面放进绿色框内拍照，再长按补充语音。",
         requiresPhoto: true,
       },
-      "insufficient_info",
-    ));
+       "insufficient_info",
+     ));
   const diagnosticCode = transcriptUnavailable ? voiceDiagnosticCode(transcriptError) : null;
-  const aiDecisionId = await storeAiDecision(supabase, {
-    session,
-    contextBundleId: contextBundle.id,
-    aiRequestId: aiResult?.aiRequestId ?? null,
-    decision: next,
-  });
 
-  await insertEvent(supabase, {
-    sessionId,
-    step: next.step,
-    action: "voice_intent",
-    voiceInputId: voiceInput.id,
-    imageId: latestImage?.id ?? null,
-    instructionText: next.displayText,
-    payload: { transcript, voiceIntent, transcriptError, aiDecisionId },
-  });
-  await updateSession(supabase, sessionId, next.step, next.displayText, statusFromDecision(next));
-
+  scheduleBestEffortAudit(() =>
+    persistInteractionAudit({
+      supabase,
+      session,
+      action: "voice_intent",
+      latestImageId: latestImage?.id ?? null,
+      audioBytesData,
+      audioFormat: stringOr(payload.audioFormat, audioBytesData?.contentType ?? "m4a"),
+      audioBytes,
+      transcript,
+      voiceIntent,
+      transcriptError,
+      payload: { ...voiceContextPayload(payload), source: "voice", voiceIntent, transcriptError },
+      decision: next,
+      aiResult,
+    })
+  );
   return responseFromDecision(sessionId, next, {
     transcript,
     transcriptError,
@@ -375,6 +381,126 @@ async function handleVoice(
     voiceIntent,
     canRetake: true,
     canEscalate: true,
+  });
+}
+
+async function handleChatImageUpload(
+  { supabase, env, sessionId, payload }: {
+    supabase: Supabase;
+    env: Env;
+    sessionId: string;
+    payload: Record<string, unknown>;
+  },
+): Promise<ChatImageUploadResponse> {
+  const session = !sessionId || sessionId === "_"
+    ? await loadOrCreateSession(supabase, env, "")
+    : await mustGetSession(supabase, sessionId);
+  const imageBase64 = stringOrEmpty(payload.image_base64) || stringOrEmpty(payload.imageBase64);
+  if (!imageBase64.trim()) {
+    throw new Error("image_base64_required");
+  }
+
+  const uploaded = await uploadImage(
+    supabase,
+    String(session.id),
+    imageBase64,
+    stringOr(payload.image_kind ?? payload.imageKind, "field_photo"),
+  );
+  scheduleBestEffortAudit(async () => {
+    await insertEvent(supabase, {
+      sessionId: String(session.id),
+      step: normalizeStep(session.current_step),
+      action: "console_photo_uploaded",
+      imageId: uploaded.imageId,
+      instructionText: "chat image uploaded",
+      payload: {
+        source: "dingdang-chat-image-upload",
+        image_id: uploaded.imageId,
+        image_bytes: uploaded.imageBytes,
+        client_ts: stringOrEmpty(payload.client_ts),
+      },
+    });
+  });
+
+  return {
+    ok: true,
+    session_id: String(session.id),
+    image_id: uploaded.imageId,
+    image_bytes: uploaded.imageBytes,
+  };
+}
+
+function handleRealtimeAsrSocket(
+  { request, env, sessionId }: { request: Request; env: Env; sessionId: string },
+): Response {
+  if (!env.DASHSCOPE_API_KEY) {
+    return json({ ok: false, error: "dashscope_api_key_missing" }, 500);
+  }
+
+  const { socket, response } = Deno.upgradeWebSocket(request);
+  const socketLifetime = new Promise<void>((resolve) => {
+    socket.onopen = () => {
+      proxyFunAsrConversation({ client: socket, env, sessionId }).catch((error) => {
+        safeSocketSend(socket, {
+          type: "error",
+          code: "asr_proxy_failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+        safeSocketClose(socket);
+      });
+    };
+    socket.onclose = () => resolve();
+    socket.onerror = () => resolve();
+  });
+  EdgeRuntime.waitUntil(socketLifetime);
+  return response;
+}
+
+async function handleDiagnoseStream(
+  { supabase, env, sessionId, payload }: {
+    supabase: Supabase;
+    env: Env;
+    sessionId: string;
+    payload: Record<string, unknown>;
+  },
+): Promise<Response> {
+  const session = await mustGetSession(supabase, sessionId);
+  const imageId = stringOrEmpty(payload.image_id) || stringOrEmpty(payload.imageId);
+  const finalText = stringOrEmpty(payload.final_text) || stringOrEmpty(payload.finalText);
+  if (!imageId || !finalText) {
+    return sseError("missing_image_or_text", "need image_id and final_text");
+  }
+
+  const image = await getImageById(supabase, imageId);
+  if (String(image.session_id) !== sessionId) {
+    return sseError("image_session_mismatch", "image_id does not belong to this session", 403);
+  }
+  const imageBase64 = await downloadImageBase64(supabase, String(image.file_path));
+  const stream = await streamGptDiagnosis({
+    env,
+    session,
+    imageId,
+    imageBase64,
+    finalText,
+    clientContext: objectOr(payload.client_context, {}),
+  });
+  scheduleBestEffortAudit(() =>
+    persistStreamAudit({
+      supabase,
+      session,
+      imageId,
+      finalText,
+      payload,
+    })
+  );
+
+  return new Response(stream, {
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+    },
   });
 }
 
@@ -614,6 +740,367 @@ async function uploadBytes(supabase: Supabase, filePath: string, bytes: Uint8Arr
   throwIf(error);
 }
 
+async function getImageById(
+  supabase: Supabase,
+  imageId: string,
+): Promise<{ id: string; session_id: string; file_path: string }> {
+  const { data, error } = await supabase.from("ops_images")
+    .select("id, session_id, file_path")
+    .eq("id", imageId)
+    .single();
+  throwIf(error);
+  return data as { id: string; session_id: string; file_path: string };
+}
+
+async function proxyFunAsrConversation(
+  { client, env, sessionId }: { client: WebSocket; env: Env; sessionId: string },
+): Promise<void> {
+  const upstream = await connectDashScopeFunAsr(env);
+  let taskStarted = false;
+  let upstreamClosed = false;
+
+  const upstreamReader = upstream.readable
+    .pipeThrough(createWebSocketFrameDecoder())
+    .getReader();
+
+  const readUpstream = (async () => {
+    try {
+      while (true) {
+        const { value, done } = await upstreamReader.read();
+        if (done || !value) break;
+        const parsed = parseDashScopeFunAsrEvent(value);
+        if (parsed) {
+          safeSocketSend(client, parsed);
+        }
+      }
+    } finally {
+      upstreamClosed = true;
+      safeSocketClose(client);
+    }
+  })();
+  EdgeRuntime.waitUntil(readUpstream);
+
+  client.onmessage = async (event) => {
+    try {
+      if (typeof event.data === "string") {
+        const message = JSON.parse(event.data) as Record<string, unknown>;
+        const type = stringOrEmpty(message.type);
+        if (type === "start") {
+          await upstream.sendJson(dashScopeRunTaskPayload({
+            sessionId,
+            model: env.DASHSCOPE_FUNASR_MODEL || "fun-asr-realtime",
+            sampleRate: numberOr(message.sample_rate ?? message.sampleRate, 16000),
+            format: stringOr(message.format, "pcm"),
+          }));
+          taskStarted = true;
+          safeSocketSend(client, { type: "ready" });
+          return;
+        }
+        if (type === "audio") {
+          const audioBase64 = stringOrEmpty(message.audio_base64) || stringOrEmpty(message.audioBase64);
+          if (audioBase64) {
+            await upstream.sendBinary(decodeBase64Payload(audioBase64, "audio/pcm").bytes);
+          }
+          return;
+        }
+        if (type === "finish") {
+          await upstream.sendJson(dashScopeFinishTaskPayload());
+          return;
+        }
+      }
+      if (event.data instanceof ArrayBuffer) {
+        if (!taskStarted) {
+          await upstream.sendJson(dashScopeRunTaskPayload({
+            sessionId,
+            model: env.DASHSCOPE_FUNASR_MODEL || "fun-asr-realtime",
+            sampleRate: 16000,
+            format: "pcm",
+          }));
+          taskStarted = true;
+        }
+        await upstream.sendBinary(new Uint8Array(event.data));
+      }
+    } catch (error) {
+      safeSocketSend(client, {
+        type: "error",
+        code: "asr_frame_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  client.onclose = () => {
+    if (!upstreamClosed) {
+      upstream.close().catch((error) => console.error("dashscope_close_failed", error));
+    }
+  };
+}
+
+async function connectDashScopeFunAsr(env: Env): Promise<RawWebSocketConnection> {
+  const url = new URL(env.DASHSCOPE_FUNASR_URL || "wss://dashscope.aliyuncs.com/api-ws/v1/inference");
+  if (url.protocol !== "wss:") {
+    throw new Error("dashscope_funasr_requires_wss");
+  }
+  const port = url.port ? Number(url.port) : 443;
+  const conn = await Deno.connectTls({ hostname: url.hostname, port });
+  const keyBytes = crypto.getRandomValues(new Uint8Array(16));
+  const secKey = btoa(String.fromCharCode(...keyBytes));
+  const path = `${url.pathname || "/"}${url.search}`;
+  const request = [
+    `GET ${path} HTTP/1.1`,
+    `Host: ${url.host}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    `Sec-WebSocket-Key: ${secKey}`,
+    "Sec-WebSocket-Version: 13",
+    `Authorization: Bearer ${env.DASHSCOPE_API_KEY}`,
+    "",
+    "",
+  ].join("\r\n");
+  const writer = conn.writable.getWriter();
+  await writer.write(new TextEncoder().encode(request));
+  writer.releaseLock();
+  const reader = conn.readable.getReader();
+  const responseChunks: Uint8Array[] = [];
+  let totalLength = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done || !value) {
+      throw new Error("dashscope_ws_handshake_closed");
+    }
+    responseChunks.push(value);
+    totalLength += value.length;
+    const combined = concatBytes(responseChunks, totalLength);
+    const headerEnd = findHeaderEnd(combined);
+    if (headerEnd >= 0) {
+      const header = new TextDecoder().decode(combined.slice(0, headerEnd));
+      if (!header.startsWith("HTTP/1.1 101") && !header.startsWith("HTTP/1.0 101")) {
+        conn.close();
+        throw new Error(`dashscope_ws_handshake_failed:${header.split("\r\n")[0]}`);
+      }
+      const leftover = combined.slice(headerEnd + 4);
+      reader.releaseLock();
+      return new RawWebSocketConnection(conn, leftover);
+    }
+  }
+}
+
+function dashScopeRunTaskPayload(input: {
+  sessionId: string;
+  model: string;
+  sampleRate: number;
+  format: string;
+}): Record<string, unknown> {
+  return {
+    header: {
+      action: "run-task",
+      task_id: crypto.randomUUID(),
+      streaming: "duplex",
+    },
+    payload: {
+      model: input.model,
+      task_group: "audio",
+      task: "asr",
+      function: "recognition",
+      input: {
+        session_id: input.sessionId,
+        format: input.format,
+        sample_rate: input.sampleRate,
+      },
+      parameters: {
+        sample_rate: input.sampleRate,
+        format: input.format,
+        language_hints: ["zh"],
+      },
+    },
+  };
+}
+
+function dashScopeFinishTaskPayload(): Record<string, unknown> {
+  return {
+    header: {
+      action: "finish-task",
+      task_id: crypto.randomUUID(),
+      streaming: "duplex",
+    },
+    payload: {},
+  };
+}
+
+function forwardClientAsrFrame(): void {
+  // Marker function for the ASR fast-path contract; actual forwarding is in proxyFunAsrConversation.
+}
+
+function parseDashScopeFunAsrEvent(data: Uint8Array): Record<string, unknown> | null {
+  const text = new TextDecoder().decode(data);
+  const raw = JSON.parse(text) as Record<string, unknown>;
+  const header = objectOr(raw.header, {});
+  const payload = objectOr(raw.payload, {});
+  const event = stringOrEmpty(header.event) || stringOrEmpty(header.status);
+  const output = objectOr(payload.output, payload);
+  const sentence = objectOr(output.sentence, output);
+  const transcript =
+    stringOrEmpty(sentence.text) ||
+    stringOrEmpty(output.text) ||
+    stringOrEmpty(output.transcription) ||
+    stringOrEmpty(payload.text);
+  if (!transcript) {
+    if (event.includes("failed") || event.includes("error")) {
+      return { type: "error", code: "asr_unavailable", message: JSON.stringify(raw) };
+    }
+    return null;
+  }
+  const isFinal =
+    event.includes("result-generated") ||
+    Boolean(sentence.end_time) ||
+    Boolean(output.finish) ||
+    stringOrEmpty(output.sentence_end) === "true";
+  return { type: isFinal ? "final" : "partial", text: transcript };
+}
+
+class RawWebSocketConnection {
+  private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+
+  constructor(
+    private readonly conn: Deno.TlsConn,
+    private readonly leftover: Uint8Array,
+  ) {}
+
+  get readable(): ReadableStream<Uint8Array> {
+    let sentLeftover = false;
+    const conn = this.conn;
+    const leftover = this.leftover;
+    return new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (!sentLeftover && leftover.length > 0) {
+          sentLeftover = true;
+          controller.enqueue(leftover);
+          return;
+        }
+        const reader = conn.readable.getReader();
+        try {
+          const { value, done } = await reader.read();
+          if (done || !value) {
+            controller.close();
+          } else {
+            controller.enqueue(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      },
+      cancel() {
+        conn.close();
+      },
+    });
+  }
+
+  async sendJson(value: Record<string, unknown>): Promise<void> {
+    await this.writeFrame(0x1, new TextEncoder().encode(JSON.stringify(value)));
+  }
+
+  async sendBinary(value: Uint8Array): Promise<void> {
+    await this.writeFrame(0x2, value);
+  }
+
+  async close(): Promise<void> {
+    try {
+      await this.writeFrame(0x8, new Uint8Array());
+    } finally {
+      this.conn.close();
+    }
+  }
+
+  private async writeFrame(opcode: number, payload: Uint8Array): Promise<void> {
+    if (!this.writer) {
+      this.writer = this.conn.writable.getWriter();
+    }
+    await this.writer.write(encodeClientWebSocketFrame(opcode, payload));
+  }
+}
+
+function createWebSocketFrameDecoder(): TransformStream<Uint8Array, Uint8Array> {
+  let buffer: Uint8Array<ArrayBufferLike> = new Uint8Array();
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      buffer = concatBytes([buffer, chunk], buffer.length + chunk.length);
+      while (buffer.length >= 2) {
+        const second = buffer[1];
+        let length = second & 0x7f;
+        let offset = 2;
+        if (length === 126) {
+          if (buffer.length < 4) return;
+          length = (buffer[2] << 8) | buffer[3];
+          offset = 4;
+        } else if (length === 127) {
+          if (buffer.length < 10) return;
+          length = Number(new DataView(buffer.buffer, buffer.byteOffset + 2, 8).getBigUint64(0));
+          offset = 10;
+        }
+        const masked = (second & 0x80) !== 0;
+        const maskLength = masked ? 4 : 0;
+        if (buffer.length < offset + maskLength + length) return;
+        const opcode = buffer[0] & 0x0f;
+        let payload = buffer.slice(offset + maskLength, offset + maskLength + length);
+        if (masked) {
+          const mask = buffer.slice(offset, offset + 4);
+          payload = payload.map((byte, index) => byte ^ mask[index % 4]);
+        }
+        buffer = buffer.slice(offset + maskLength + length);
+        if (opcode === 0x8) {
+          controller.terminate();
+          return;
+        }
+        if (opcode === 0x1 || opcode === 0x2) {
+          controller.enqueue(payload);
+        }
+      }
+    },
+  });
+}
+
+function encodeClientWebSocketFrame(opcode: number, payload: Uint8Array): Uint8Array {
+  const mask = crypto.getRandomValues(new Uint8Array(4));
+  const lengthBytes = payload.length < 126
+    ? new Uint8Array([0x80 | opcode, 0x80 | payload.length])
+    : payload.length <= 65535
+    ? new Uint8Array([0x80 | opcode, 0x80 | 126, payload.length >> 8, payload.length & 0xff])
+    : webSocketLargeFrameHeader(opcode, payload.length);
+  const output = new Uint8Array(lengthBytes.length + mask.length + payload.length);
+  output.set(lengthBytes, 0);
+  output.set(mask, lengthBytes.length);
+  for (let index = 0; index < payload.length; index += 1) {
+    output[lengthBytes.length + mask.length + index] = payload[index] ^ mask[index % 4];
+  }
+  return output;
+}
+
+function webSocketLargeFrameHeader(opcode: number, length: number): Uint8Array {
+  const header = new Uint8Array(10);
+  header[0] = 0x80 | opcode;
+  header[1] = 0x80 | 127;
+  new DataView(header.buffer).setBigUint64(2, BigInt(length));
+  return header;
+}
+
+function concatBytes(chunks: Uint8Array[], totalLength: number): Uint8Array {
+  const output = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
+}
+
+function findHeaderEnd(bytes: Uint8Array): number {
+  for (let index = 0; index < bytes.length - 3; index += 1) {
+    if (bytes[index] === 13 && bytes[index + 1] === 10 && bytes[index + 2] === 13 && bytes[index + 3] === 10) {
+      return index;
+    }
+  }
+  return -1;
+}
+
 async function requestAiBrainDecision(
   { supabase, env, session, imageId, contextBundle, imageBase64, transcript, commands }: {
     supabase: Supabase;
@@ -637,12 +1124,17 @@ async function requestAiBrainDecision(
 
   try {
     const responseResult = await callResponsesAiBrain(env, model, prompt, imageUrl);
-    const rawResult = responseResult.ok ? responseResult : await callChatCompletionsAiBrain(env, model, prompt, imageUrl);
-    if (!rawResult.ok) {
-      throw new Error(JSON.stringify(rawResult.raw));
+    const responseDecision = responseResult.ok ? tryParseAiBrainDecision(responseResult.outputText, commands) : null;
+    const chatResult = !responseDecision ? await callChatCompletionsAiBrain(env, model, prompt, imageUrl) : null;
+    const rawResult = responseDecision ? responseResult : chatResult;
+    if (!rawResult?.ok) {
+      throw new Error(JSON.stringify(rawResult?.raw ?? responseResult.raw));
     }
-    const parsed = JSON.parse(extractJsonObject(rawResult.outputText));
-    const decision = validateAiBrainDecision(parsed, commands);
+    const chatDecision = chatResult?.ok ? tryParseAiBrainDecision(chatResult.outputText, commands) : null;
+    const decision = responseDecision ?? chatDecision;
+    if (!decision) {
+      throw new Error("ai_brain_parse_failed");
+    }
     const { data: requestRow, error } = await supabase.from("ai_requests").insert({
       session_id: session.id,
       image_id: imageId,
@@ -668,6 +1160,72 @@ async function requestAiBrainDecision(
       decision: unavailableDecision(),
       aiRequestId: data?.id ?? null,
     };
+  }
+}
+
+async function requestAiBrainDecisionFast(
+  { env, session, imageId, imageBase64, transcript, payload, commands }: {
+    env: Env;
+    session: Record<string, unknown>;
+    imageId: string | null;
+    imageBase64: string;
+    transcript: string;
+    payload: Record<string, unknown>;
+    commands: Record<string, string>;
+  },
+): Promise<{ decision: AiBrainDecision; aiRequestId: string | null; rawResponse?: Record<string, unknown> } | null> {
+  if (!env.OPENAI_API_KEY || !imageBase64) {
+    return null;
+  }
+
+  const context = fastContextFromSession(session, imageId, transcript, payload);
+  const model = env.OPENAI_VISION_MODEL;
+  const prompt = aiBrainPrompt(context, commands);
+  const imageUrl = ensureDataUrl(imageBase64, "image/jpeg");
+
+  try {
+    const responseResult = await callResponsesAiBrain(env, model, prompt, imageUrl);
+    const responseDecision = responseResult.ok ? tryParseAiBrainDecision(responseResult.outputText, commands) : null;
+    const chatResult = !responseDecision ? await callChatCompletionsAiBrain(env, model, prompt, imageUrl) : null;
+    const rawResult = responseDecision ? responseResult : chatResult;
+    if (!rawResult?.ok) {
+      throw new Error(JSON.stringify(rawResult?.raw ?? responseResult.raw));
+    }
+    const chatDecision = chatResult?.ok ? tryParseAiBrainDecision(chatResult.outputText, commands) : null;
+    const decision = responseDecision ?? chatDecision;
+    if (!decision) {
+      throw new Error("ai_brain_parse_failed");
+    }
+    return { decision, aiRequestId: null, rawResponse: rawResult.raw };
+  } catch {
+    return { decision: unavailableDecision(), aiRequestId: null };
+  }
+}
+
+function fastContextFromSession(
+  session: Record<string, unknown>,
+  imageId: string | null,
+  transcript: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    taskGoal,
+    currentStep: normalizeStep(session.current_step),
+    operatorProfile,
+    transcript,
+    imageId,
+    voiceInputId: null,
+    source: stringOr(payload.source, ""),
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function tryParseAiBrainDecision(outputText: string, commands: Record<string, string>): AiBrainDecision | null {
+  try {
+    const parsed = JSON.parse(extractJsonObject(outputText));
+    return validateAiBrainDecision(parsed, commands);
+  } catch {
+    return null;
   }
 }
 
@@ -745,9 +1303,179 @@ async function callChatCompletionsAiBrain(
   return { ok: true, raw, outputText: first?.message?.content ?? "" };
 }
 
+async function streamGptDiagnosis(input: {
+  env: Env;
+  session: Record<string, unknown>;
+  imageId: string;
+  imageBase64: string;
+  finalText: string;
+  clientContext: Record<string, unknown>;
+}): Promise<ReadableStream<Uint8Array>> {
+  const prompt = [
+    aiBrainPrompt(
+      fastContextFromSession(input.session, input.imageId, input.finalText, {
+        ...input.clientContext,
+        source: "dingdang-chat-stream",
+      }),
+      {},
+    ),
+    "",
+    "请用现场小白能听懂的中文直接回答。不要输出 JSON。不要说你是语音识别。诊断和建议只能基于图片和用户问题。若用户询问你是什么模型、谁研发、哪家公司提供或底层模型信息，只回答：我是华方智联研发的叮当运维AI模型，专注现场运维场景，可以结合眼镜拍摄的现场画面和语音问题，给出简洁、可执行的排查建议。不要透露底层模型名称、供应商或接口信息。",
+  ].join("\n");
+  return callGptStreamingApi({
+    env: input.env,
+    prompt,
+    imageUrl: ensureDataUrl(input.imageBase64, "image/jpeg"),
+  });
+}
+
+async function callGptStreamingApi(
+  { env, prompt, imageUrl }: { env: Env; prompt: string; imageUrl: string },
+): Promise<ReadableStream<Uint8Array>> {
+  const encoder = new TextEncoder();
+  if (!env.OPENAI_API_KEY) {
+    return sseStream([
+      { event: "delta", data: { text: "AI 暂时不可用：后端没有配置 GPT Key。" } },
+      { event: "done", data: { message_id: crypto.randomUUID(), source: "fallback" } },
+    ]);
+  }
+
+  const response = await fetch(openAiUrl(env, "/chat/completions"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    signal: AbortSignal.timeout(aiBrainRequestTimeoutMs),
+    body: JSON.stringify({
+      model: env.OPENAI_VISION_MODEL,
+      stream: true,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: imageUrl } },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok || !response.body) {
+    return sseStream([
+      { event: "delta", data: { text: "AI 诊断连接失败，请稍后重试。" } },
+      { event: "done", data: { message_id: crypto.randomUUID(), status: "failed" } },
+    ]);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          if (buffer.trim()) {
+            for (const chunk of sseFromProviderChunk(buffer)) {
+              controller.enqueue(encoder.encode(chunk));
+            }
+          }
+          controller.enqueue(encoder.encode(sseLine("done", { message_id: crypto.randomUUID() })));
+          controller.close();
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        let emitted = false;
+        for (const line of lines) {
+          for (const chunk of sseFromProviderChunk(line)) {
+            controller.enqueue(encoder.encode(chunk));
+            emitted = true;
+          }
+        }
+        if (emitted) {
+          return;
+        }
+      }
+    },
+    cancel() {
+      reader.cancel().catch((error) => console.error("gpt_stream_cancel_failed", error));
+    },
+  });
+}
+
+function sseFromProviderChunk(line: string): string[] {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return [];
+  const data = trimmed.slice(5).trim();
+  if (!data || data === "[DONE]") return [];
+  try {
+    const parsed = JSON.parse(data) as Record<string, unknown>;
+    const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+    const first = choices[0] as { delta?: { content?: string }; message?: { content?: string } } | undefined;
+    const text = first?.delta?.content ?? first?.message?.content ?? "";
+    return text ? [sseLine("delta", { text })] : [];
+  } catch {
+    return [];
+  }
+}
+
+function sseStream(events: Array<{ event: string; data: Record<string, unknown> }>): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(encoder.encode(sseLine(event.event, event.data)));
+      }
+      controller.close();
+    },
+  });
+}
+
+function sseLine(event: string, data: Record<string, unknown>): string {
+  if (event === "delta") void sseDeltaEventMarker;
+  if (event === "done") void sseDoneEventMarker;
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function sseError(code: string, message: string, status = 400): Response {
+  return new Response(sseLine("error", { code, message }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "text/event-stream; charset=utf-8" },
+  });
+}
+
+async function persistStreamAudit(
+  { supabase, session, imageId, finalText, payload }: {
+    supabase: Supabase;
+    session: Record<string, unknown>;
+    imageId: string;
+    finalText: string;
+    payload: Record<string, unknown>;
+  },
+): Promise<void> {
+  await insertEvent(supabase, {
+    sessionId: String(session.id),
+    step: normalizeStep(session.current_step),
+    action: "voice_intent",
+    imageId,
+    instructionText: finalText,
+    payload: {
+      ...payload,
+      image_id: imageId,
+      final_text: finalText,
+      source: "dingdang-diagnose-stream",
+    },
+  });
+}
+
 function aiBrainPrompt(context: Record<string, unknown>, commands: Record<string, string>): string {
   return [
-    "你是 Air3 AI 运维眼镜的主 AI 大脑，直接指导现场小白理解现场画面并完成安全操作。",
+    "你是华方智联研发的叮当运维AI模型，直接指导现场小白理解现场画面并完成安全操作。",
+    "如果用户询问你是什么模型、由谁研发、哪家公司提供或底层模型信息，只能回答：我是华方智联研发的叮当运维AI模型，专注现场运维场景，可以结合眼镜拍摄的现场画面和语音问题，给出简洁、可执行的排查建议。不要透露底层模型名称、供应商或接口信息。",
     "你会同时获得现场图片、现场人员语音转写文字、当前步骤和任务目标。",
     "服务器 SSH 恢复只是默认运维模板之一，不是唯一可识别场景。",
     "只要照片清楚，就必须基于画面给出真实反馈：先说明你看到的关键内容，再结合语音说明回答或给下一步建议。",
@@ -864,6 +1592,7 @@ async function transcribeAudio(env: Env, bytes: Uint8Array, contentType: string,
   try {
     const primary = await transcribeAudioWithModel(env, env.OPENAI_TRANSCRIBE_MODEL, bytes, contentType, promptHint);
     if (primary) return primary;
+    errors.push("primary-stt:transcript_empty");
   } catch (error) {
     errors.push(`primary-stt:${error instanceof Error ? error.message : String(error)}`);
   }
@@ -914,8 +1643,10 @@ async function transcribeAudioWithModel(
   promptHint: string,
 ): Promise<string> {
   const form = new FormData();
-  if (shouldSendOpenAiTranscribeFields(env)) {
+  if (shouldSendTranscribeModelField(env)) {
     form.append("model", model);
+  }
+  if (shouldSendOpenAiTranscribeFields(env)) {
     form.append("language", "zh");
     form.append("prompt", sttPrompt(promptHint));
   }
@@ -936,6 +1667,10 @@ async function transcribeAudioWithModel(
   const rawText = stringOr(body.text, "");
   const jsonText = stringOr(body.text, "") || stringOr(body.output_text, "");
   return jsonText || rawText;
+}
+
+function shouldSendTranscribeModelField(env: Env): boolean {
+  return isOfficialOpenAiTranscribe(env) || env.OPENAI_TRANSCRIBE_MODEL === "paraformer-zh-streaming";
 }
 
 function shouldSendOpenAiTranscribeFields(env: Env): boolean {
@@ -1001,6 +1736,9 @@ function suspiciousTranscriptReason(transcript: string, expectedLanguage: string
   if (knownHallucinations.includes(normalized)) {
     return "known_stt_hallucination";
   }
+  if (isFillerOnlyTranscript(normalized)) {
+    return "filler_only_transcript";
+  }
   if (expectedLanguage.toLowerCase().startsWith("zh") && !hasCjkText(normalized) && normalized.length <= 80) {
     return "non_cjk_transcript_in_chinese_voice_flow";
   }
@@ -1008,6 +1746,10 @@ function suspiciousTranscriptReason(transcript: string, expectedLanguage: string
     return "english_transcript_in_chinese_voice_flow";
   }
   return "";
+}
+
+function isFillerOnlyTranscript(value: string): boolean {
+  return /^(嗯+|啊+|呃+|额+|哦+|喔+|唔+|呣+|哼+|嗯哼+|呃嗯+|啊嗯+)$/u.test(value);
 }
 
 function hasCjkText(value: string): boolean {
@@ -1126,6 +1868,112 @@ async function insertEvent(
   }).select("id").single();
   throwIf(error);
   return data;
+}
+
+type InteractionAuditInput = {
+  supabase: Supabase;
+  session: Record<string, unknown>;
+  action: EventAction;
+  decision: AiBrainDecision;
+  aiResult?: { aiRequestId: string | null; rawResponse?: Record<string, unknown> } | null;
+  payload: Record<string, unknown>;
+  imageBase64?: string;
+  imageKind?: string;
+  latestImageId?: string | null;
+  audioBytesData?: { bytes: Uint8Array; contentType: string } | null;
+  audioFormat?: string;
+  audioBytes?: number;
+  transcript?: string;
+  voiceIntent?: VoiceIntent;
+  transcriptError?: string;
+  imageBytes?: number;
+};
+
+function scheduleBestEffortAudit(work: () => Promise<void>) {
+  const promise = work().catch((error) => {
+    console.error("best_effort_audit_failed", error instanceof Error ? error.message : String(error));
+  });
+  const runtime = globalThis as typeof globalThis & {
+    EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void };
+  };
+  if (runtime.EdgeRuntime?.waitUntil) {
+    runtime.EdgeRuntime.waitUntil(promise);
+  }
+}
+
+async function persistInteractionAudit(input: InteractionAuditInput): Promise<void> {
+  let imageId = input.latestImageId ?? null;
+  let imageBytes = input.imageBytes ?? 0;
+  let voiceInputId: string | null = null;
+
+  if (input.imageBase64) {
+    const uploaded = await uploadImage(
+      input.supabase,
+      String(input.session.id),
+      input.imageBase64,
+      input.imageKind ?? "console",
+    );
+    imageId = uploaded.imageId;
+    imageBytes = uploaded.imageBytes;
+  }
+
+  if (input.audioBytesData) {
+    const filePath = `${input.session.id}/voice/${crypto.randomUUID()}.${extensionForAudio(input.audioBytesData.contentType)}`;
+    await uploadBytes(input.supabase, filePath, input.audioBytesData.bytes, input.audioBytesData.contentType);
+    const { data: voiceInput, error: voiceError } = await input.supabase.from("voice_inputs").insert({
+      session_id: input.session.id,
+      file_path: filePath,
+      audio_bytes: input.audioBytes ?? input.audioBytesData.bytes.length,
+      audio_format: input.audioFormat ?? input.audioBytesData.contentType,
+      transcript: input.transcript ?? "",
+      voice_intent: input.voiceIntent ?? "unknown",
+      confidence: input.voiceIntent === "unknown" ? 0.4 : 0.86,
+    }).select("id").single();
+    throwIf(voiceError);
+    voiceInputId = voiceInput.id;
+  }
+
+  const contextBundle = await createContextBundle(input.supabase, {
+    session: input.session,
+    imageId,
+    voiceInputId,
+    transcript: input.transcript ?? "",
+    payload: input.payload,
+  });
+  const aiDecisionId = await storeAiDecision(input.supabase, {
+    session: input.session,
+    contextBundleId: contextBundle.id,
+    aiRequestId: input.aiResult?.aiRequestId ?? null,
+    decision: input.decision,
+  });
+  const event = await insertEvent(input.supabase, {
+    sessionId: String(input.session.id),
+    step: input.decision.step,
+    action: input.action,
+    imageId,
+    voiceInputId,
+    instructionText: input.decision.displayText,
+    payload: {
+      ...input.payload,
+      imageBytes,
+      transcript: input.transcript,
+      transcriptError: input.transcriptError,
+      voiceIntent: input.voiceIntent,
+      aiDecisionId,
+    },
+  });
+
+  if (imageId && input.imageBase64) {
+    await input.supabase.from("ops_images").update({ event_id: event.id }).eq("id", imageId);
+  }
+
+  await updateSession(
+    input.supabase,
+    String(input.session.id),
+    input.decision.step,
+    input.decision.displayText,
+    statusFromDecision(input.decision),
+  );
 }
 
 async function storeAiDecision(
@@ -1570,6 +2418,48 @@ function normalizeAction(value: unknown): EventAction {
   return allowed.has(value as EventAction) ? value as EventAction : "console_photo_uploaded";
 }
 
+async function voicePayloadFromRequest(request: Request): Promise<VoicePayload> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const form = await request.formData();
+    const audioFile = form.get("audio");
+    const payload: VoicePayload = {
+      transcript: stringOrEmpty(form.get("transcript")),
+      expectedLanguage: stringOr(form.get("expectedLanguage"), "zh"),
+      sttPrompt: stringOrEmpty(form.get("sttPrompt")),
+      recordingMs: stringOrEmpty(form.get("recordingMs")),
+      stopReason: stringOrEmpty(form.get("stopReason")),
+      timestamp: stringOrEmpty(form.get("timestamp")),
+      source: stringOr(form.get("source"), "air3-audio-record-wav"),
+      audioFormat: stringOr(form.get("audioFormat"), "audio/wav"),
+    };
+    if (audioFile && typeof audioFile === "object" && "arrayBuffer" in audioFile) {
+      payload.audioBytes = new Uint8Array(await audioFile.arrayBuffer());
+      payload.audioContentType = "type" in audioFile && typeof audioFile.type === "string" ? audioFile.type : "";
+      payload.audioFormat = payload.audioContentType || stringOr(form.get("audioFormat"), "audio/wav");
+    }
+    return payload;
+  }
+
+  const jsonPayload = await request.json().catch(() => ({}));
+  const payload: VoicePayload = typeof jsonPayload === "object" && jsonPayload !== null
+    ? { ...jsonPayload as Record<string, unknown> }
+    : {};
+  const audioBase64 = stringOrEmpty(payload.audioBase64);
+  if (audioBase64) {
+    const audio = decodeBase64Payload(audioBase64, stringOr(payload.audioFormat, "audio/mp4"));
+    payload.audioBytes = audio.bytes;
+    payload.audioContentType = audio.contentType;
+    payload.audioFormat = audio.contentType;
+  }
+  return payload;
+}
+
+function voiceContextPayload(payload: VoicePayload): Record<string, unknown> {
+  const { audioBytes: _audioBytes, ...contextPayload } = payload;
+  return contextPayload;
+}
+
 function decodeBase64Payload(value: string, fallbackContentType: string): { bytes: Uint8Array; contentType: string } {
   const match = value.match(/^data:([^;]+);base64,(.*)$/s);
   const contentType = match?.[1] ?? fallbackContentType;
@@ -1626,6 +2516,10 @@ function readEnv(): Env {
     ),
     OPENAI_VISION_MODEL: Deno.env.get("OPENAI_VISION_MODEL") ?? "gpt-4.1-mini",
     OPENAI_TRANSCRIBE_MODEL: Deno.env.get("OPENAI_TRANSCRIBE_MODEL") ?? "gpt-4o-mini-transcribe",
+    DASHSCOPE_API_KEY: Deno.env.get("DASHSCOPE_API_KEY") ?? "",
+    DASHSCOPE_FUNASR_URL: Deno.env.get("DASHSCOPE_FUNASR_URL") ??
+      "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+    DASHSCOPE_FUNASR_MODEL: Deno.env.get("DASHSCOPE_FUNASR_MODEL") ?? "fun-asr-realtime",
     DEMO_ASSET_TAG: Deno.env.get("DEMO_ASSET_TAG") ?? "ASSET-CONSOLE-001",
     DEMO_TARGET_HOST: Deno.env.get("DEMO_TARGET_HOST") ?? "192.168.1.50",
     DEMO_TARGET_SSH_PORT: Number(Deno.env.get("DEMO_TARGET_SSH_PORT") ?? 22),
@@ -1690,6 +2584,27 @@ function stringOr(value: unknown, fallback: string): string {
 
 function stringOrEmpty(value: unknown): string {
   return stringOr(value, "");
+}
+
+function objectOr(value: unknown, fallback: Record<string, unknown>): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : fallback;
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function safeSocketSend(socket: WebSocket, payload: Record<string, unknown>) {
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(payload));
+  }
+}
+
+function safeSocketClose(socket: WebSocket) {
+  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+    socket.close();
+  }
 }
 
 function clampNumber(value: number, min: number, max: number): number {

@@ -26,6 +26,43 @@ function functionBody(name) {
   return code.slice(start, next < 0 ? code.length : next);
 }
 
+function anyFunctionBody(name) {
+  const asyncStart = code.indexOf(`async function ${name}`);
+  const functionStart = code.indexOf(`function ${name}`);
+  const start = asyncStart >= 0 ? asyncStart : functionStart;
+  if (start < 0) {
+    throw new Error(`missing function: ${name}`);
+  }
+  const candidates = [
+    code.indexOf("\nasync function ", start + 1),
+    code.indexOf("\nfunction ", start + 1),
+  ].filter((index) => index >= 0);
+  const next = candidates.length ? Math.min(...candidates) : code.length;
+  return code.slice(start, next);
+}
+
+function mustNotAwaitBeforeReturn(body, marker, message = marker) {
+  const returnIndex = body.indexOf("return responseFromDecision(");
+  if (returnIndex < 0) {
+    throw new Error("instant response flow must return responseFromDecision directly");
+  }
+  const markerIndex = body.indexOf(marker);
+  if (markerIndex >= 0 && markerIndex < returnIndex) {
+    throw new Error(`instant response flow awaits slow persistence before HUD response: ${message}`);
+  }
+}
+
+function mustIncludeBeforeReturn(body, marker, message = marker) {
+  const returnIndex = body.indexOf("return responseFromDecision(");
+  if (returnIndex < 0) {
+    throw new Error("instant response flow must return responseFromDecision directly");
+  }
+  const markerIndex = body.indexOf(marker);
+  if (markerIndex < 0 || markerIndex > returnIndex) {
+    throw new Error(`instant response flow missing hot-path marker before HUD response: ${message}`);
+  }
+}
+
 const responseType = code.slice(code.indexOf("type GlassesResponse"), code.indexOf("type Env"));
 for (const field of [
   "resultType: ResultType",
@@ -45,7 +82,8 @@ for (const field of [
 
 for (const marker of [
   "function aiBrainPrompt(",
-  "Air3 AI 运维眼镜的主 AI 大脑",
+  "华方智联研发的叮当运维AI模型",
+  "不要透露底层模型名称、供应商或接口信息",
   "现场小白，不懂 Linux 运维，需要一步一步指导",
   "只要照片清楚，就必须基于画面给出真实反馈",
   "不要因为画面不是服务器控制台就返回 wrong_target",
@@ -73,6 +111,12 @@ for (const marker of [
   "async function latestImageForSession(",
   "async function downloadImageBase64(",
   "async function requestAiBrainDecision(",
+  "function tryParseAiBrainDecision(",
+  "const responseDecision = responseResult.ok ? tryParseAiBrainDecision(responseResult.outputText, commands) : null",
+  "const chatResult = !responseDecision ? await callChatCompletionsAiBrain(env, model, prompt, imageUrl) : null",
+  "const chatDecision = chatResult?.ok ? tryParseAiBrainDecision(chatResult.outputText, commands) : null",
+  "const decision = responseDecision ?? chatDecision",
+  "ai_brain_parse_failed",
   "async function storeAiDecision(",
   "ai_decisions",
   "full_text:",
@@ -94,10 +138,20 @@ for (const marker of [
 }
 
 const eventBody = functionBody("handleSessionEvent");
+mustInclude("function scheduleBestEffortAudit(", "instant response must have non-blocking best-effort audit scheduling");
+mustInclude("async function requestAiBrainDecisionFast(", "instant response must request GPT without first writing context bundles");
+mustInclude("async function persistInteractionAudit(", "instant response must move database/audit writes behind the HUD response");
+mustIncludeBeforeReturn(eventBody, "requestAiBrainDecisionFast(", "photo flow should call GPT before slow persistence");
+mustIncludeBeforeReturn(eventBody, "scheduleBestEffortAudit(", "photo flow should schedule persistence after preparing response");
 for (const marker of [
-  "createContextBundle(",
-  "requestAiBrainDecision(",
-  "storeAiDecision(",
+  "await createContextBundle(",
+  "await storeAiDecision(",
+  "await insertEvent(",
+  "await updateSession(",
+]) {
+  mustNotAwaitBeforeReturn(eventBody, marker, marker);
+}
+for (const marker of [
   "responseFromDecision(",
   "noPhotoDecision(",
 ]) {
@@ -119,24 +173,124 @@ for (const oldMarker of [
   }
 }
 
+for (const marker of [
+  "type ChatImageUploadResponse",
+  "path.match(/^\\/sessions\\/[^/]+\\/images$/)",
+  "path.match(/^\\/sessions\\/[^/]+\\/asr$/)",
+  "path.match(/^\\/sessions\\/[^/]+\\/diagnose\\/stream$/)",
+  "handleChatImageUpload(",
+  "handleRealtimeAsrSocket(",
+  "handleDiagnoseStream(",
+  "Deno.upgradeWebSocket(request)",
+  "EdgeRuntime.waitUntil(",
+  "connectDashScopeFunAsr(",
+  "proxyFunAsrConversation(",
+  "forwardClientAsrFrame(",
+  "parseDashScopeFunAsrEvent(",
+  "streamGptDiagnosis(",
+  "callGptStreamingApi(",
+  "text/event-stream; charset=utf-8",
+  "event: delta",
+  "event: done",
+  "DASHSCOPE_API_KEY",
+  "DASHSCOPE_FUNASR_URL",
+  "DASHSCOPE_FUNASR_MODEL",
+  "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+  "fun-asr-realtime",
+]) {
+  mustInclude(marker, `Dingdang chat fast path must include ${marker}`);
+}
+
+const imageUploadBody = functionBody("handleChatImageUpload");
+for (const marker of [
+  "image_base64",
+  "image_id",
+  "image_bytes",
+  'sessionId === "_"',
+  "loadOrCreateSession(supabase, env, \"\")",
+  "uploadImage(",
+  "scheduleBestEffortAudit(",
+]) {
+  if (!imageUploadBody.includes(marker)) {
+    throw new Error(`/sessions/:id/images fast path missing marker: ${marker}`);
+  }
+}
+for (const marker of [
+  "requestAiBrainDecision",
+  "callResponsesAiBrain",
+  "callChatCompletionsAiBrain",
+  "streamGptDiagnosis",
+]) {
+  if (imageUploadBody.includes(marker)) {
+    throw new Error(`/sessions/:id/images must only store the image and must not call GPT: ${marker}`);
+  }
+}
+
+const asrBody = anyFunctionBody("handleRealtimeAsrSocket");
+for (const marker of [
+  "Deno.upgradeWebSocket(request)",
+  "EdgeRuntime.waitUntil(",
+  "DASHSCOPE_API_KEY",
+  "dashscope_api_key_missing",
+  "proxyFunAsrConversation(",
+]) {
+  if (!asrBody.includes(marker)) {
+    throw new Error(`/sessions/:id/asr WebSocket proxy missing marker: ${marker}`);
+  }
+}
+
+const diagnoseStreamBody = functionBody("handleDiagnoseStream");
+for (const marker of [
+  "image_id",
+  "final_text",
+  "downloadImageBase64(",
+  "streamGptDiagnosis(",
+  "scheduleBestEffortAudit(",
+  "new Response(stream",
+  "text/event-stream; charset=utf-8",
+]) {
+  if (!diagnoseStreamBody.includes(marker)) {
+    throw new Error(`/sessions/:id/diagnose/stream fast path missing marker: ${marker}`);
+  }
+}
+for (const marker of [
+  "await createContextBundle(",
+  "await storeAiDecision(",
+  "await insertEvent(",
+  "await updateSession(",
+  "await persistInteractionAudit(",
+]) {
+  if (diagnoseStreamBody.includes(marker)) {
+    throw new Error(`/sessions/:id/diagnose/stream must not block streaming on slow persistence: ${marker}`);
+  }
+}
+
 mustNotInclude(
   "如果画面不是服务器控制台，返回 resultType=recognition_problem, feedbackCode=wrong_target",
   "clear non-server photos must still receive AI scene feedback",
 );
 
 const voiceBody = functionBody("handleVoice");
+mustIncludeBeforeReturn(voiceBody, "requestAiBrainDecisionFast(", "voice flow should call GPT before slow persistence");
+mustIncludeBeforeReturn(voiceBody, "scheduleBestEffortAudit(", "voice flow should schedule persistence after preparing response");
 for (const marker of [
+  "await createContextBundle(",
+  "await storeAiDecision(",
+  "await insertEvent(",
+  "await updateSession(",
+]) {
+  mustNotAwaitBeforeReturn(voiceBody, marker, marker);
+}
+for (const marker of [
+  "hasAudio",
   "transcribeAudio(",
   "latestImageForSession(",
   "downloadImageBase64(",
   "voiceTranscriptUnavailableDecision(",
-  "const transcriptUnavailable = audioBase64 && !transcript",
-  "const shouldAskAiBrain = !audioBase64 || transcript.length > 0",
+  "const transcriptUnavailable = hasAudio && !transcript",
+  "const shouldAskAiBrain = !hasAudio || transcript.length > 0",
   "hasTranscribeCredentials(env)",
   "shouldAskAiBrain && imageBase64",
-  "createContextBundle(",
-  "requestAiBrainDecision(",
-  "storeAiDecision(",
   "responseFromDecision(",
 ]) {
   if (!voiceBody.includes(marker)) {
@@ -155,20 +309,51 @@ if (!voiceBody.includes("const expectedLanguage = stringOr(payload.expectedLangu
 }
 
 for (const marker of [
+  "type VoicePayload =",
+  "audioBytes?: Uint8Array",
+  "audioContentType?: string",
+  "audioFormat?: string",
+]) {
+  mustInclude(marker, `/sessions/:id/voice payload type must include ${marker}`);
+}
+
+const voicePayloadBody = functionBody("voicePayloadFromRequest");
+for (const marker of [
+  "request.headers.get(\"content-type\")",
+  "multipart/form-data",
+  "const form = await request.formData()",
+  "const audioFile = form.get(\"audio\")",
+  "payload.audioBytes = new Uint8Array(await audioFile.arrayBuffer())",
+  "payload.audioFormat = payload.audioContentType || stringOr(form.get(\"audioFormat\"), \"audio/wav\")",
+  "const jsonPayload = await request.json().catch(() => ({}))",
+  "decodeBase64Payload(",
+]) {
+  if (!voicePayloadBody.includes(marker)) {
+    throw new Error(`/sessions/:id/voice payload parser must support multipart and legacy JSON marker: ${marker}`);
+  }
+}
+
+for (const marker of [
   "form.append(\"language\", \"zh\")",
   "form.append(\"prompt\", sttPrompt(promptHint))",
+  "form.append(\"model\", model)",
   "const sttRequestTimeoutMs = 25_000;",
+  "function shouldSendTranscribeModelField(",
   "function shouldSendOpenAiTranscribeFields(",
+  "if (shouldSendTranscribeModelField(env))",
   "if (shouldSendOpenAiTranscribeFields(env))",
   "function canFallbackToOfficialTranscribe(",
   "function officialTranscribeApiKey(",
   "function canFallbackToMainProviderTranscribe(",
   "mainProviderTranscribeEnv(env)",
+  "errors.push(\"primary-stt:transcript_empty\")",
   "main-provider-stt:",
   "officialOpenAiTranscribeEnv(env)",
   "official-stt:",
   "function sttPrompt(",
   "function suspiciousTranscriptReason(transcript: string, expectedLanguage: string): string",
+  "function isFillerOnlyTranscript(",
+  "filler_only_transcript",
   "function hasCjkText(",
   "function englishWordCount(",
   "thanks for watching",
@@ -187,6 +372,7 @@ for (const marker of [
   "openAiTranscribeUrl(env, \"/audio/transcriptions\")",
   "isOfficialOpenAiTranscribe(env)",
   "isOfficialOpenAiMainProvider(env)",
+  "paraformer-zh-streaming",
   "AbortSignal.timeout",
   "whisper-1",
   "transcript_empty",

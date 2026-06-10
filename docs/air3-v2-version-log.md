@@ -2,12 +2,38 @@
 
 This document records APK version separation rules and GitHub storage checkpoints. APK binaries are build artifacts and must not be committed; code, scripts, docs, commits, and tags are the traceable source of truth.
 
+## Local Streaming ASR Experiment Checkpoint
+
+| Field | Value |
+| --- | --- |
+| Date | `2026-06-09` |
+| Formal delivery touched | No |
+| Official APK package | `com.k2fsa.sherpa.onnx` |
+| Official APK version | `20260508 / 1.13.1` |
+| Official APK label | `ASR` |
+| Planned experimental package | `com.codex.air3nativecamera.localvoice` |
+| Planned experimental label | `叮当保AI-本地语音测试` |
+| Planned experimental version | `401 / 4.0.1-local-voice` |
+| Purpose | Validate and then integrate local streaming ASR with VAD, partial result, final result, and immediate final-text-plus-image AI dispatch |
+
+Validation evidence so far:
+
+- Official APK downloaded from the sherpa-onnx Android APK listing mirror: `tmp/sherpa-onnx/sherpa-onnx-1.13.1-arm64-v8a-asr-zh-small_zipformer_14M_2023_02_23.apk`.
+- SHA256: `6490310531BB235F47DACCEBD6BDC7D2C9CD522EA6C97554EBCA11F9C604983C`.
+- Air3 `YM00FCF3NW0031` installed the official APK successfully and retained the original, fast, and delivery packages.
+- Official APK `RECORD_AUDIO` permission was granted.
+- Evidence files under `tmp/sherpa-onnx/air3-sherpa-tts-*.xml` show text changing while recording, so the official APK demonstrates streaming partial UI updates on Air3.
+- This is not yet an accuracy pass: the sample contained background/nearby speech and produced noisy Chinese text. A clean human short-sentence test is still required before integrating sherpa-onnx into our APK.
+- Backend realtime STT gate added for DashScope Fun-ASR realtime: endpoint `wss://dashscope.aliyuncs.com/api-ws/v1/inference`, model `fun-asr-realtime`, and secret source `DASHSCOPE_API_KEY` or ignored `tmp/dashscope_api_key.local`. Android must not contain the DashScope API key.
+
 ## Versioning Rules
 
 - `versionName` uses a human-readable version, for example `2.0.12`.
 - `versionCode` uses an increasing integer, for example `212` for `2.0.12`.
 - Formal checkpoint tags use `v<versionName>-<purpose>`, for example `v2.0.12-voice-stt-timeout-ux`.
 - APK output files must include version and Git short SHA: `Air3NativeCameraTest-v<versionName>-<gitSha>.apk`.
+- Delivery APK output files must include version and Git short SHA: `Air3NativeCameraDelivery-v<versionName>-<gitSha>.apk`.
+- Instant chat APK output files must include version and Git short SHA: `Air3NativeCameraInstantChat-v<versionName>-<gitSha>.apk`.
 - The base artifact remains `Air3NativeCameraTest.apk` for the current build/install flow.
 - `air3-native-camera-test/build/` and `*.apk` must stay ignored. Do not commit APKs, signing intermediates, generated source, or local secrets.
 - Temporary version overrides use `AIR3_APK_VERSION_CODE` and `AIR3_APK_VERSION_NAME`; formal checkpoints must update this file and the Git tag.
@@ -30,6 +56,44 @@ This document records APK version separation rules and GitHub storage checkpoint
 | APK versionName | `2.0.15` |
 | APK naming rule | `Air3NativeCameraTest-v<versionName>-<gitSha>.apk` |
 | Purpose | Guard against suspicious STT transcripts so hallucinated text cannot mislead the main AI brain |
+
+## Delivery APK 3.0.0 Checkpoint
+
+| Field | Value |
+| --- | --- |
+| Checkpoint | `v3.0.0-delivery` |
+| Date | `2026-06-08` |
+| Package | `com.codex.air3nativecamera.delivery` |
+| App label | `叮当保AI` |
+| Version | `3.0.0-delivery` / `300` |
+| APK naming rule | `Air3NativeCameraDelivery-v<versionName>-<gitSha>.apk` |
+| Purpose | Create a delivery-grade package that installs beside the original and fast APKs, keeps the Android 14 WAV voice path, uses multipart voice upload, maps Air3 hardware keys, and centers the launcher icon |
+
+Validation gates:
+
+- Build with `scripts/build-air3-delivery-apk.ps1`.
+- Install and verify with `scripts/install-and-verify-air3-delivery.ps1`.
+- Confirm all three package identities coexist: `com.codex.air3nativecamera`, `com.codex.air3nativecamera.fast`, and `com.codex.air3nativecamera.delivery`.
+- Confirm delivery package reports `versionCode=300`, `versionName=3.0.0-delivery`, and launcher label `叮当保AI`.
+
+## Instant Voice Chat APK 5.0.1 Checkpoint
+
+| Field | Value |
+| --- | --- |
+| Checkpoint | `v5.0.1-instant-chat` |
+| Date | `2026-06-09` |
+| Package | `com.codex.air3nativecamera.instantchat` |
+| App label | `叮当保AI-即时对话测试` |
+| Version | `5.0.1-instant-chat` / `501` |
+| APK naming rule | `Air3NativeCameraInstantChat-v<versionName>-<gitSha>.apk` |
+| Purpose | Build a coexistable test package for the conversation-first operations HUD: voice dialogue is primary, photo capture remains as field evidence/context |
+
+Validation gates:
+
+- Build with `scripts/build-air3-instant-chat-apk.ps1`.
+- Install and verify with `scripts/install-and-verify-air3-instant-chat.ps1`.
+- Confirm the test package coexists with `com.codex.air3nativecamera`, `com.codex.air3nativecamera.fast`, and `com.codex.air3nativecamera.delivery`.
+- Confirm instant chat package reports `versionCode=501`, `versionName=5.0.1-instant-chat`, and launcher label `叮当保AI-即时对话测试`.
 
 ## Included Local Commits
 
@@ -145,3 +209,19 @@ Validation evidence:
 - `supabase secrets list` showed no `OPENAI_OFFICIAL_TRANSCRIBE_API_KEY` configured.
 - Live voice request returned `diagnosticCode=custom_stt_timeout`.
 - `transcriptError` contained `primary-stt:Signal timed out.` and `main-provider-stt:404 page not found`, and no longer contained `official-stt:invalid_api_key`.
+## Dingdang Ops AI Direct GPT Chat Checkpoint
+
+| Field | Value |
+| --- | --- |
+| Package | `com.codex.air3nativecamera.dingdangops` |
+| Label | `叮当运维AI` |
+| Version | `6.1.0-asr-final-autostop` / `610` |
+| Artifact | `DingdangOpsAi-v<versionName>-<gitSha>.apk` |
+| Scope | Internal test package for INMO-assistant-style new chat entry, Dingdang branding, no-input voice console without duplicate idle home controls, default blue focus outlines, or plus/play symbols, ASR partial shown live in chat bubbles, ASR final auto-stopping the recording wave before GPT, aspect-correct camera preview, voice-only auto-send, `点我拍照` / `点我说话` actions, direct GPT local image fallback, and ASR service diagnostics |
+
+Validation gates:
+
+- Build with `scripts/build-dingdang-ops-ai-apk.ps1`.
+- Install and verify with `scripts/install-and-verify-dingdang-ops-ai.ps1`.
+- Direct GPT key must come from `DIRECT_GPT_API_KEY` or ignored `tmp/direct_gpt_api_key.local`.
+- The UI must show white chat background, composer attachment state, no text input box, `点我拍照`, `点我说话`, and the recording wave state.
