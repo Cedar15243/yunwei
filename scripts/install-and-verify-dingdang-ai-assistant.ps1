@@ -1,14 +1,19 @@
 param(
   [string]$Serial = "YM00FCF3NW0031",
-  [string]$Package = "com.codex.air3nativecamera.dingdangassistant",
+  [string]$Package = "com.codex.air3nativecamera.dingdangexpert",
   [string]$OldPackage = "com.codex.air3nativecamera.dingdangops",
+  [string]$PreviousAssistantPackage = "com.codex.air3nativecamera.dingdangassistant",
   [string]$Activity = "com.codex.air3nativecamera.MainActivity",
-  [string]$ApkPath = "air3-native-camera-test\build\DingdangAiAssistant.apk",
-  [int]$ExpectedVersionCode = 620,
-  [string]$ExpectedVersionName = "6.2.0-assistant-ui-autostop",
-  [string]$ExpectedLabel = (-join @([char]0x53EE, [char]0x5F53, "ai", [char]0x52A9, [char]0x624B)),
+  [string]$ApkPath = "air3-native-camera-test\build\DingdangAiOpsExpert.apk",
+  [int]$ExpectedVersionCode = 621,
+  [string]$ExpectedVersionName = "6.2.1-ai-ops-expert",
+  [string]$ExpectedLabel = (-join @(
+    [char]0x53EE, [char]0x5F53, "AI",
+    [char]0x8FD0, [char]0x7EF4,
+    [char]0x4E13, [char]0x5BB6
+  )),
   [int]$WaitSeconds = 120,
-  [string]$EvidencePrefix = "tmp\dingdang-ai-assistant-620"
+  [string]$EvidencePrefix = "tmp\dingdang-ai-ops-expert-621"
 )
 
 $ErrorActionPreference = "Stop"
@@ -73,7 +78,7 @@ if ($LASTEXITCODE -ne 0) {
 & $adb -s $Serial shell pm grant $Package android.permission.RECORD_AUDIO 2>$null
 
 $packages = (& $adb -s $Serial shell pm list packages com.codex.air3nativecamera) -join "`n"
-foreach ($requiredPackage in @($OldPackage, $Package)) {
+foreach ($requiredPackage in @($OldPackage, $PreviousAssistantPackage, $Package)) {
   if ($packages -notmatch [regex]::Escape("package:$requiredPackage")) {
     throw "Expected package missing after assistant install: $requiredPackage"
   }
@@ -113,6 +118,7 @@ foreach ($marker in @($ExpectedLabel, $photoMarker, $voiceMarker)) {
 
 Write-Output "Installed and verified $Package $ExpectedVersionCode/$ExpectedVersionName label=$ExpectedLabel"
 Write-Output "Old package still present: $OldPackage"
+Write-Output "Previous assistant package still present: $PreviousAssistantPackage"
 Write-Output "Evidence:"
 Write-Output "  $uiPath"
 Write-Output "  $pngPath"

@@ -226,15 +226,15 @@ Validation gates:
 - Direct GPT key must come from `DIRECT_GPT_API_KEY` or ignored `tmp/direct_gpt_api_key.local`.
 - The UI must show white chat background, composer attachment state, no text input box, `点我拍照`, `点我说话`, and the recording wave state.
 
-## Dingdang AI Assistant Parallel APK
+## Dingdang AI Ops Expert Parallel APK
 
 | Field | Value |
 | --- | --- |
-| Package | `com.codex.air3nativecamera.dingdangassistant` |
-| Label | `叮当ai助手` |
-| Version | `6.2.0-assistant-ui-autostop` / `620` |
-| Artifact | `DingdangAiAssistant-v<versionName>-<gitSha>.apk` |
-| Scope | Parallel-install assistant package that keeps the previous `叮当运维AI` package installed, moves the secondary menu to the same right side as the menu button, maps Air3/SDK up and down touchpad keys to chat context scrolling, keeps right/menu keys on the same-side options flow, and adds local silence auto-stop after tap-to-start voice recording. |
+| Package | `com.codex.air3nativecamera.dingdangexpert` |
+| Label | `叮当AI运维专家` |
+| Version | `6.2.1-ai-ops-expert` / `621` |
+| Artifact | `DingdangAiOpsExpert-v<versionName>-<gitSha>.apk` |
+| Scope | Parallel-install expert package named `叮当AI运维专家` that keeps the previous `叮当运维AI` and `叮当ai助手` packages installed, moves the secondary menu to the same right side as the menu button, maps Air3/SDK up and down touchpad keys to chat context scrolling, keeps right/menu keys on the same-side options flow, and adds local silence auto-stop after tap-to-start voice recording. |
 
 Validation gates:
 
