@@ -139,6 +139,7 @@ public final class MainActivity extends Activity {
     private static final String CHAT_PROJECT_PREFS = "dingdang_chat_projects";
     private static final String CHAT_PROJECTS_JSON = "projects_json";
     private static final String CURRENT_PROJECT_INDEX = "current_project_index";
+    private static final String HOME_WELCOME_MESSAGE = "先点我拍照记录现场，再点我说话描述问题。我会结合画面和语音，给出现场排查建议。";
     private static final String AI_IDENTITY_RESPONSE = "我是华方智联研发的" + APP_LABEL
             + "模型，专注现场运维场景。你可以通过眼镜拍摄现场画面，再用语音说明问题，我会结合图片和问题给出简洁、可执行的排查建议。";
 
@@ -824,6 +825,7 @@ public final class MainActivity extends Activity {
                 currentProjectIndex = 0;
             }
         }
+        boolean migratedWelcomeMessage = migrateHomeWelcomeMessages();
         if (chatProjects.isEmpty()) {
             ChatProject project = new ChatProject(
                     "project-" + System.currentTimeMillis(),
@@ -832,16 +834,47 @@ public final class MainActivity extends Activity {
             project.messages.add(new ChatMessage(
                     "assistant",
                     "text",
-                    "先点我拍照记录现场，再点我说话描述问题。语音转成文字后会自动发送给 GPT。",
+                    HOME_WELCOME_MESSAGE,
                     "",
                     false));
             chatProjects.add(project);
             currentProjectIndex = 0;
+            migratedWelcomeMessage = true;
         }
         if (currentProjectIndex < 0 || currentProjectIndex >= chatProjects.size()) {
             currentProjectIndex = 0;
         }
         loadCurrentProjectMessages();
+        if (migratedWelcomeMessage) {
+            persistChatProjects();
+        }
+    }
+
+    private boolean migrateHomeWelcomeMessages() {
+        boolean changed = false;
+        for (int i = 0; i < chatProjects.size(); i++) {
+            ChatProject project = chatProjects.get(i);
+            for (int j = 0; j < project.messages.size(); j++) {
+                ChatMessage message = project.messages.get(j);
+                if ("assistant".equals(message.role)
+                        && "text".equals(message.kind)
+                        && isLegacyHomeWelcomeMessage(message.text)) {
+                    message.text = HOME_WELCOME_MESSAGE;
+                    changed = true;
+                }
+            }
+        }
+        return changed;
+    }
+
+    private boolean isLegacyHomeWelcomeMessage(String text) {
+        if (text == null) {
+            return false;
+        }
+        return text.contains("先点我拍照记录现场")
+                && text.contains("再点我说话描述问题")
+                && text.contains("语音转成文字")
+                && text.contains("GPT");
     }
 
     private void persistChatProjects() {

@@ -232,9 +232,9 @@ Validation gates:
 | --- | --- |
 | Package | `com.codex.air3nativecamera.dingdangexpert` |
 | Label | `叮当AI运维专家` |
-| Version | `6.2.1-ai-ops-expert` / `621` |
+| Version | `6.2.2-home-copy` / `622` |
 | Artifact | `DingdangAiOpsExpert-v<versionName>-<gitSha>.apk` |
-| Scope | Parallel-install expert package named `叮当AI运维专家` that keeps the previous `叮当运维AI` and `叮当ai助手` packages installed, moves the secondary menu to the same right side as the menu button, maps Air3/SDK up and down touchpad keys to chat context scrolling, keeps right/menu keys on the same-side options flow, and adds local silence auto-stop after tap-to-start voice recording. |
+| Scope | Parallel-install expert package named `叮当AI运维专家` that keeps the previous `叮当运维AI` and `叮当ai助手` packages installed, removes the homepage wording that says voice text is automatically sent to GPT, moves the secondary menu to the same right side as the menu button, maps Air3/SDK up and down touchpad keys to chat context scrolling, keeps right/menu keys on the same-side options flow, and adds local silence auto-stop after tap-to-start voice recording. |
 
 Validation gates:
 

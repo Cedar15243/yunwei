@@ -177,6 +177,9 @@ for (const marker of [
   "shouldShowHomeActions()",
   "shouldShowComposerPanel()",
   "if (shouldShowHomeActions())",
+  "HOME_WELCOME_MESSAGE",
+  "migrateHomeWelcomeMessages()",
+  "isLegacyHomeWelcomeMessage(",
   "composerPanel.setVisibility(showComposerPanel ? View.VISIBLE : View.GONE)",
   "transcriptDraftText.setVisibility(View.GONE)",
   "!\"点我说话\".equals(composerTranscript.trim())",
@@ -233,10 +236,13 @@ for (const marker of [
   "已添加到输入框",
   "点一下结束录音",
   "最后点发送",
+  "语音转成文字后会自动发送给 GPT",
   "山东华方",
 ]) {
   mustNotInclude(marker);
 }
+
+mustInclude("我会结合画面和语音，给出现场排查建议。");
 
 const startVoiceIndex = code.indexOf("startToggleVoiceRecording()");
 const finishVoiceIndex = code.indexOf("finishToggleVoiceRecording(");
