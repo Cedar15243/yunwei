@@ -5,15 +5,15 @@ param(
   [string]$PreviousAssistantPackage = "com.codex.air3nativecamera.dingdangassistant",
   [string]$Activity = "com.codex.air3nativecamera.MainActivity",
   [string]$ApkPath = "air3-native-camera-test\build\DingdangAiOpsExpert.apk",
-  [int]$ExpectedVersionCode = 622,
-  [string]$ExpectedVersionName = "6.2.2-home-copy",
+  [int]$ExpectedVersionCode = 623,
+  [string]$ExpectedVersionName = "6.2.3-asr-json-guard",
   [string]$ExpectedLabel = (-join @(
     [char]0x53EE, [char]0x5F53, "AI",
     [char]0x8FD0, [char]0x7EF4,
     [char]0x4E13, [char]0x5BB6
   )),
   [int]$WaitSeconds = 120,
-  [string]$EvidencePrefix = "tmp\dingdang-ai-ops-expert-622"
+  [string]$EvidencePrefix = "tmp\dingdang-ai-ops-expert-623"
 )
 
 $ErrorActionPreference = "Stop"

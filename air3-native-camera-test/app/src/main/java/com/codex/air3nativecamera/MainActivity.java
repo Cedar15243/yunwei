@@ -826,6 +826,7 @@ public final class MainActivity extends Activity {
             }
         }
         boolean migratedWelcomeMessage = migrateHomeWelcomeMessages();
+        boolean migratedProtocolAsrMessages = migrateProtocolAsrMessages();
         if (chatProjects.isEmpty()) {
             ChatProject project = new ChatProject(
                     "project-" + System.currentTimeMillis(),
@@ -845,7 +846,7 @@ public final class MainActivity extends Activity {
             currentProjectIndex = 0;
         }
         loadCurrentProjectMessages();
-        if (migratedWelcomeMessage) {
+        if (migratedWelcomeMessage || migratedProtocolAsrMessages) {
             persistChatProjects();
         }
     }
@@ -860,6 +861,28 @@ public final class MainActivity extends Activity {
                         && "text".equals(message.kind)
                         && isLegacyHomeWelcomeMessage(message.text)) {
                     message.text = HOME_WELCOME_MESSAGE;
+                    changed = true;
+                }
+            }
+        }
+        return changed;
+    }
+
+    private boolean migrateProtocolAsrMessages() {
+        boolean changed = false;
+        for (int i = 0; i < chatProjects.size(); i++) {
+            ChatProject project = chatProjects.get(i);
+            for (int j = project.messages.size() - 1; j >= 0; j--) {
+                ChatMessage message = project.messages.get(j);
+                if (!"text".equals(message.kind)) {
+                    continue;
+                }
+                String cleaned = sanitizeTranscriptForDisplay(message.text);
+                if (cleaned.length() == 0 && looksLikeAsrProtocolJson(message.text)) {
+                    project.messages.remove(j);
+                    changed = true;
+                } else if (!cleaned.equals(message.text)) {
+                    message.text = cleaned;
                     changed = true;
                 }
             }
@@ -1500,7 +1523,11 @@ public final class MainActivity extends Activity {
     }
 
     private void appendUserTranscriptMessage(String text) {
-        chatMessages.add(new ChatMessage("user", "text", text, "", false));
+        String safeText = sanitizeTranscriptForDisplay(text);
+        if (safeText.length() == 0) {
+            return;
+        }
+        chatMessages.add(new ChatMessage("user", "text", safeText, "", false));
         scrollChatToBottom = true;
         renderChatScreen();
     }
@@ -1513,7 +1540,7 @@ public final class MainActivity extends Activity {
     }
 
     private void updateLiveTranscriptMessage(String text, boolean finalText) {
-        String safeText = text == null ? "" : text.trim();
+        String safeText = sanitizeTranscriptForDisplay(text);
         if (safeText.length() == 0) {
             return;
         }
@@ -2062,7 +2089,7 @@ public final class MainActivity extends Activity {
     }
 
     private void onAsrPartial(final String text) {
-        final String partial = text == null ? "" : text.trim();
+        final String partial = sanitizeTranscriptForDisplay(text);
         if (partial.length() == 0) {
             return;
         }
@@ -2084,7 +2111,7 @@ public final class MainActivity extends Activity {
     }
 
     private void onAsrFinal(final String text) {
-        final String finalText = text == null ? "" : text.trim();
+        final String finalText = sanitizeTranscriptForDisplay(text);
         Log.i(KEY_LOG_TAG, "Realtime ASR final text=" + finalText);
         mainHandler.post(new Runnable() {
             @Override
@@ -2582,6 +2609,155 @@ public final class MainActivity extends Activity {
             return error == null ? "unknown" : error.getClass().getSimpleName();
         }
         return message;
+    }
+
+    private static String sanitizeTranscriptForDisplay(String text) {
+        String cleaned = text == null ? "" : text.trim();
+        if (cleaned.length() == 0
+                || "{}".equals(cleaned)
+                || "[]".equals(cleaned)
+                || "null".equalsIgnoreCase(cleaned)) {
+            return "";
+        }
+        if (cleaned.startsWith("{") || cleaned.startsWith("[")) {
+            String extracted = extractTranscriptFromJson(cleaned);
+            if (extracted.length() > 0) {
+                return extracted;
+            }
+            if (looksLikeAsrProtocolJson(cleaned)) {
+                return "";
+            }
+        }
+        return cleaned;
+    }
+
+    private static boolean looksLikeAsrProtocolJson(String text) {
+        String cleaned = text == null ? "" : text.trim();
+        if (!(cleaned.startsWith("{") || cleaned.startsWith("["))) {
+            return false;
+        }
+        try {
+            if (cleaned.startsWith("{")) {
+                return hasAsrProtocolKeys(new JSONObject(cleaned));
+            }
+            JSONArray array = new JSONArray(cleaned);
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.optJSONObject(i);
+                if (item != null && hasAsrProtocolKeys(item)) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
+    private static boolean hasAsrProtocolKeys(JSONObject json) {
+        if (json == null) {
+            return false;
+        }
+        if (json.has("sentence_id") || json.has("channel_id") || json.has("sentence_end")
+                || json.has("sentence_begin") || json.has("begin_time") || json.has("end_time")
+                || json.has("speaker_id") || json.has("words")) {
+            return true;
+        }
+        JSONObject payload = json.optJSONObject("payload");
+        if (payload != null && hasAsrProtocolKeys(payload)) {
+            return true;
+        }
+        JSONObject output = json.optJSONObject("output");
+        if (output != null && hasAsrProtocolKeys(output)) {
+            return true;
+        }
+        JSONObject sentence = json.optJSONObject("sentence");
+        if (sentence != null && hasAsrProtocolKeys(sentence)) {
+            return true;
+        }
+        JSONArray sentences = json.optJSONArray("sentences");
+        if (sentences != null) {
+            for (int i = 0; i < sentences.length(); i++) {
+                JSONObject item = sentences.optJSONObject(i);
+                if (item != null && hasAsrProtocolKeys(item)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static String extractTranscriptFromJson(String rawJson) {
+        try {
+            String cleaned = rawJson == null ? "" : rawJson.trim();
+            if (cleaned.startsWith("{")) {
+                return extractTranscriptFromJsonObject(new JSONObject(cleaned));
+            }
+            if (cleaned.startsWith("[")) {
+                JSONArray array = new JSONArray(cleaned);
+                for (int i = array.length() - 1; i >= 0; i--) {
+                    JSONObject item = array.optJSONObject(i);
+                    if (item != null) {
+                        String text = extractTranscriptFromJsonObject(item);
+                        if (text.length() > 0) {
+                            return text;
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
+    private static String extractTranscriptFromJsonObject(JSONObject json) {
+        if (json == null) {
+            return "";
+        }
+        JSONObject payload = json.optJSONObject("payload");
+        if (payload != null) {
+            String text = extractTranscriptFromJsonObject(payload);
+            if (text.length() > 0) {
+                return text;
+            }
+        }
+        JSONObject output = json.optJSONObject("output");
+        if (output != null) {
+            String text = extractTranscriptFromJsonObject(output);
+            if (text.length() > 0) {
+                return text;
+            }
+        }
+        JSONObject sentenceObject = json.optJSONObject("sentence");
+        if (sentenceObject != null) {
+            String text = extractTranscriptFromJsonObject(sentenceObject);
+            if (text.length() > 0) {
+                return text;
+            }
+        }
+        JSONArray sentences = json.optJSONArray("sentences");
+        if (sentences != null) {
+            for (int i = sentences.length() - 1; i >= 0; i--) {
+                JSONObject item = sentences.optJSONObject(i);
+                if (item != null) {
+                    String text = extractTranscriptFromJsonObject(item);
+                    if (text.length() > 0) {
+                        return text;
+                    }
+                }
+            }
+        }
+        return cleanTranscriptLeaf(json.optString("text", json.optString("transcript", "")));
+    }
+
+    private static String cleanTranscriptLeaf(String text) {
+        String cleaned = text == null ? "" : text.trim();
+        if (cleaned.length() == 0
+                || "{}".equals(cleaned)
+                || "[]".equals(cleaned)
+                || "null".equalsIgnoreCase(cleaned)
+                || looksLikeAsrProtocolJson(cleaned)) {
+            return "";
+        }
+        return cleaned;
     }
 
     private static final class ChatMessage {
@@ -3108,11 +3284,15 @@ public final class MainActivity extends Activity {
             }
             try {
                 JSONObject json = new JSONObject(rawText);
+                String eventText = sanitizeTranscriptForDisplay(json.optString("text", json.optString("transcript", "")));
+                if (eventText.length() == 0) {
+                    eventText = extractTranscriptFromJson(rawText);
+                }
                 return new BackendAsrEvent(
                         json.optString("type", fallbackType),
-                        json.optString("text", json.optString("transcript", "")));
+                        eventText);
             } catch (Exception ignored) {
-                return new BackendAsrEvent(fallbackType, rawText);
+                return new BackendAsrEvent(fallbackType, sanitizeTranscriptForDisplay(rawText));
             }
         }
     }
@@ -3534,6 +3714,9 @@ public final class MainActivity extends Activity {
                 JSONObject payload = event.optJSONObject("payload");
                 String eventName = header == null ? "" : header.optString("event", header.optString("name", ""));
                 String candidate = extractAsrText(payload);
+                if (candidate.length() == 0) {
+                    candidate = extractTranscriptFromJson(text);
+                }
                 if ("task-started".equals(eventName)) {
                     synchronized (lock) {
                         taskStarted = true;
@@ -3574,7 +3757,10 @@ public final class MainActivity extends Activity {
             try {
                 JSONObject event = new JSONObject(text);
                 String type = event.optString("type", "");
-                String candidate = event.optString("text", event.optString("transcript", ""));
+                String candidate = sanitizeTranscriptForDisplay(event.optString("text", event.optString("transcript", "")));
+                if (candidate.length() == 0) {
+                    candidate = extractTranscriptFromJson(text);
+                }
                 if ("ready".equals(type)) {
                     return;
                 }
@@ -3641,11 +3827,7 @@ public final class MainActivity extends Activity {
         }
 
         private static String cleanAsrText(String text) {
-            String cleaned = text == null ? "" : text.trim();
-            if ("{}".equals(cleaned) || "[]".equals(cleaned) || "null".equalsIgnoreCase(cleaned)) {
-                return "";
-            }
-            return cleaned;
+            return sanitizeTranscriptForDisplay(text);
         }
 
         private void writeText(String text) {

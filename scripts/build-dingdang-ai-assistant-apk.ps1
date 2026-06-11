@@ -11,8 +11,8 @@ $assistantLabel = -join @(
 $env:AIR3_APK_APP_ID = "com.codex.air3nativecamera.dingdangexpert"
 $env:AIR3_APK_APP_LABEL = $assistantLabel
 $env:AIR3_APK_OUTPUT_NAME = "DingdangAiOpsExpert"
-$env:AIR3_APK_VERSION_CODE = "622"
-$env:AIR3_APK_VERSION_NAME = "6.2.2-home-copy"
+$env:AIR3_APK_VERSION_CODE = "623"
+$env:AIR3_APK_VERSION_NAME = "6.2.3-asr-json-guard"
 $env:AIR3_APK_FAST_UPLOAD = "1"
 if (-not $env:AIR3_APK_DIRECT_GPT) {
   $env:AIR3_APK_DIRECT_GPT = "0"
