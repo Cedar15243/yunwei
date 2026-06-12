@@ -232,7 +232,7 @@ Validation gates:
 | --- | --- |
 | Package | `com.codex.air3nativecamera.dingdangexpert` |
 | Label | `叮当AI运维专家` |
-| Version | `6.2.3-asr-json-guard` / `623` |
+| Version | `6.2.4-asr-auto-send` / `624` |
 | Artifact | `DingdangAiOpsExpert-v<versionName>-<gitSha>.apk` |
 | Scope | Parallel-install expert package named `叮当AI运维专家` that keeps the previous `叮当运维AI` and `叮当ai助手` packages installed, removes the homepage wording that says voice text is automatically sent to GPT, moves the secondary menu to the same right side as the menu button, maps Air3/SDK up and down touchpad keys to chat context scrolling, keeps right/menu keys on the same-side options flow, and adds local silence auto-stop after tap-to-start voice recording. |
 
@@ -241,4 +241,5 @@ Validation gates:
 - Build with `scripts/build-dingdang-ai-assistant-apk.ps1`.
 - Direct AI build/install with `scripts/build-install-dingdang-ai-assistant-direct-apk.ps1`.
 - Install and coexistence verify with `scripts/install-and-verify-dingdang-ai-assistant.ps1`.
+- Voice must auto-send after stable realtime ASR transcript without requiring the user to tap end.
 - The old package `com.codex.air3nativecamera.dingdangops` must remain installed when this assistant package is installed.

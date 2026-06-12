@@ -131,6 +131,7 @@ public final class MainActivity extends Activity {
     private static final long VOICE_RECORDING_MS = 30000L;
     private static final long VOICE_AUTO_STOP_MIN_RECORDING_MS = 900L;
     private static final long VOICE_AUTO_STOP_SILENCE_MS = 1300L;
+    private static final long VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 1500L;
     private static final int VOICE_SILENCE_RMS_THRESHOLD = 520;
     private static final int VOICE_SAMPLE_RATE_HZ = 16000;
     private static final int VOICE_WAV_CHANNEL_COUNT = 1;
@@ -191,8 +192,10 @@ public final class MainActivity extends Activity {
     private boolean realtimeAsrFinished;
     private long voiceRecordingStartedAtMs;
     private long voiceLastSpeechAtMs;
+    private long voiceLastTranscriptAtMs;
     private boolean voiceSpeechStarted;
     private boolean voiceAutoStopRequested;
+    private Runnable voiceTranscriptStableStopRunnable;
 
     private byte[] composerImageBytes;
     private String composerImageId = "";
@@ -1871,6 +1874,7 @@ public final class MainActivity extends Activity {
             recordingVoice = true;
             voiceRecordingStartedAtMs = SystemClock.elapsedRealtime();
             voiceLastSpeechAtMs = voiceRecordingStartedAtMs;
+            voiceLastTranscriptAtMs = voiceRecordingStartedAtMs;
             voiceSpeechStarted = false;
             voiceAutoStopRequested = false;
             composerTranscript = "";
@@ -1964,6 +1968,41 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private void scheduleTranscriptStableAutoStop(String transcript) {
+        if (!recordingVoice || voiceAutoStopRequested) {
+            return;
+        }
+        String cleaned = sanitizeTranscriptForDisplay(transcript);
+        if (cleaned.length() == 0) {
+            return;
+        }
+        voiceSpeechStarted = true;
+        voiceLastTranscriptAtMs = SystemClock.elapsedRealtime();
+        if (voiceTranscriptStableStopRunnable != null) {
+            mainHandler.removeCallbacks(voiceTranscriptStableStopRunnable);
+        }
+        final long transcriptAtMs = voiceLastTranscriptAtMs;
+        voiceTranscriptStableStopRunnable = new Runnable() {
+            @Override
+            public void run() {
+                long now = SystemClock.elapsedRealtime();
+                if (!recordingVoice || voiceAutoStopRequested || realtimeAsrFinished) {
+                    return;
+                }
+                if (voiceLastTranscriptAtMs != transcriptAtMs) {
+                    return;
+                }
+                if (now - transcriptAtMs < VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS) {
+                    return;
+                }
+                voiceAutoStopRequested = true;
+                Log.i(KEY_LOG_TAG, "Voice auto stop by transcript stable stableMs=" + (now - transcriptAtMs));
+                finishToggleVoiceRecording("transcript_stable_auto_stop");
+            }
+        };
+        mainHandler.postDelayed(voiceTranscriptStableStopRunnable, VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS);
+    }
+
     private int pcm16Rms(byte[] buffer, int read) {
         int samples = read / 2;
         if (samples <= 0) {
@@ -2035,6 +2074,10 @@ public final class MainActivity extends Activity {
             mainHandler.removeCallbacks(voiceStopRunnable);
             voiceStopRunnable = null;
         }
+        if (voiceTranscriptStableStopRunnable != null) {
+            mainHandler.removeCallbacks(voiceTranscriptStableStopRunnable);
+            voiceTranscriptStableStopRunnable = null;
+        }
         recordingVoice = false;
         voiceAutoStopRequested = false;
         AudioRecord recorder = voiceRecorder;
@@ -2072,6 +2115,10 @@ public final class MainActivity extends Activity {
             mainHandler.removeCallbacks(voiceStopRunnable);
             voiceStopRunnable = null;
         }
+        if (voiceTranscriptStableStopRunnable != null) {
+            mainHandler.removeCallbacks(voiceTranscriptStableStopRunnable);
+            voiceTranscriptStableStopRunnable = null;
+        }
         recordingVoice = false;
         voiceAutoStopRequested = false;
         AudioRecord recorder = voiceRecorder;
@@ -2105,6 +2152,7 @@ public final class MainActivity extends Activity {
                 composerTranscript = partial;
                 stateText.setText("正在听");
                 updateLiveTranscriptMessage(partial, false);
+                scheduleTranscriptStableAutoStop(partial);
                 renderComposer();
             }
         });
