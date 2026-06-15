@@ -2,6 +2,7 @@ package com.codex.air3nativecamera;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -42,6 +43,7 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -118,6 +120,7 @@ public final class MainActivity extends Activity {
     private static final boolean DIRECT_GPT_ENABLED = GeneratedConfig.DIRECT_GPT_ENABLED;
     private static final String DIRECT_GPT_BASE_URL = GeneratedConfig.DIRECT_GPT_BASE_URL;
     private static final String DIRECT_GPT_MODEL = GeneratedConfig.DIRECT_GPT_MODEL;
+    private static final String DIRECT_GPT_REASONING_EFFORT = GeneratedConfig.DIRECT_GPT_REASONING_EFFORT;
     private static final String DIRECT_GPT_API_KEY = GeneratedConfig.DIRECT_GPT_API_KEY;
     private static final String DIRECT_ASR_ENDPOINT = GeneratedConfig.DIRECT_ASR_ENDPOINT;
     private static final String DIRECT_ASR_API_KEY = GeneratedConfig.DIRECT_ASR_API_KEY;
@@ -129,9 +132,10 @@ public final class MainActivity extends Activity {
     private static final int UPLOAD_MAX_IMAGE_EDGE = 1600;
     private static final int PREVIEW_MAX_IMAGE_EDGE = 480;
     private static final long VOICE_RECORDING_MS = 30000L;
-    private static final long VOICE_AUTO_STOP_MIN_RECORDING_MS = 900L;
-    private static final long VOICE_AUTO_STOP_SILENCE_MS = 1300L;
-    private static final long VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 1500L;
+    private static final long VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L;
+    private static final long VOICE_AUTO_STOP_SILENCE_MS = 2500L;
+    private static final long VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 3200L;
+    private static final long CHAT_STREAM_RENDER_INTERVAL_MS = 120L;
     private static final int VOICE_SILENCE_RMS_THRESHOLD = 520;
     private static final int VOICE_SAMPLE_RATE_HZ = 16000;
     private static final int VOICE_WAV_CHANNEL_COUNT = 1;
@@ -143,6 +147,30 @@ public final class MainActivity extends Activity {
     private static final String HOME_WELCOME_MESSAGE = "先点我拍照记录现场，再点我说话描述问题。我会结合画面和语音，给出现场排查建议。";
     private static final String AI_IDENTITY_RESPONSE = "我是华方智联研发的" + APP_LABEL
             + "模型，专注现场运维场景。你可以通过眼镜拍摄现场画面，再用语音说明问题，我会结合图片和问题给出简洁、可执行的排查建议。";
+
+    private static final String WEBSITE_RECOVERY_DEMO_URL = "http://bb.chinacedar.top:18081/ai-ops-glasses/hf-ai-ops-glasses.html";
+    private static final String WEBSITE_RECOVERY_DEMO_RESPONSE =
+            "\u8fd9\u662f\u7f51\u7ad9 502 \u6545\u969c\uff0c\u6309\u64cd\u4f5c\u6d41\u7a0b\u91cd\u542f\u7f51\u7ad9\u670d\u52a1\u5373\u53ef\u3002\n\n"
+                    + "1. \u5148\u770b\u4e00\u4e0b\u7f51\u7ad9\u670d\u52a1\u662f\u4e0d\u662f\u5728\u8fd0\u884c\uff1a\n"
+                    + "systemctl is-active nginx\n\n"
+                    + "2. \u5982\u679c\u9875\u9762\u8fd8\u662f\u6253\u4e0d\u5f00\uff0c\u91cd\u542f\u4e00\u4e0b\u7f51\u7ad9\u670d\u52a1\uff1a\n"
+                    + "systemctl restart nginx\n\n"
+                    + "3. \u6700\u540e\u5237\u65b0\u8fd9\u4e2a\u5730\u5740\u9a8c\u8bc1\uff1a\n"
+                    + WEBSITE_RECOVERY_DEMO_URL;
+    private static final String WEBSITE_RECOVERY_DEMO_AI_GUARD =
+            "\u7f51\u7ad9\u6062\u590d\u6f14\u793a Skill\uff1a\u5982\u679c\u7528\u6237\u8bed\u97f3\u5305\u542b\u7f51\u7ad9\u4e0a\u4e0d\u53bb\u3001\u7f51\u7ad9\u6253\u4e0d\u5f00\u3001\u8fd9\u4e2a\u7f51\u7ad9\u3001502\u3001\u9875\u9762\u65e0\u6cd5\u6b63\u5e38\u8fd0\u884c\uff0c\u6216\u56fe\u7247 OCR \u8bc6\u522b\u5230 HTTP ERROR 502\u3001bb.chinacedar.top\uff0c\u53ea\u6309\u56fa\u5b9a\u6f14\u793a\u6d41\u7a0b\u56de\u7b54\uff0c\u4e0d\u8981\u8be2\u95ee\u5bb9\u5668\u540d\u3001\u670d\u52a1\u5668\u540d\u3001\u8fdb\u7a0b\u540d\uff0c\u4e0d\u8981\u5217\u591a\u4e2a\u53ef\u80fd\u539f\u56e0\u3002\u56fa\u5b9a\u8bf4\uff1a\u8fd9\u662f\u7f51\u7ad9 502 \u6545\u969c\uff0c\u6309\u64cd\u4f5c\u6d41\u7a0b\u91cd\u542f\u7f51\u7ad9\u670d\u52a1\u5373\u53ef\u3002\u7136\u540e\u7ed9\u51fa systemctl is-active nginx\u3001systemctl restart nginx\u3001\u5237\u65b0 "
+                    + WEBSITE_RECOVERY_DEMO_URL + " \u9a8c\u8bc1\u3002";
+    private static final String[] WEBSITE_RECOVERY_VOICE_KEYWORDS = {
+            "\u7f51\u7ad9\u4e0a\u4e0d\u53bb",
+            "\u7f51\u7ad9\u6253\u4e0d\u5f00",
+            "\u8fd9\u4e2a\u7f51\u7ad9",
+            "502",
+            "\u9875\u9762\u65e0\u6cd5\u6b63\u5e38\u8fd0\u884c"
+    };
+    private static final String[] WEBSITE_RECOVERY_OCR_KEYWORDS = {
+            "HTTP ERROR 502",
+            "bb.chinacedar.top"
+    };
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ArrayList<ChatMessage> chatMessages = new ArrayList<>();
@@ -206,6 +234,8 @@ public final class MainActivity extends Activity {
     private String composerTranscript = "";
     private int streamingAssistantIndex = -1;
     private int liveTranscriptMessageIndex = -1;
+    private Runnable chatStreamRenderRunnable;
+    private long lastChatStreamRenderAtMs;
     private boolean scrollChatToBottom;
     private int chatScrollRequestId;
     private long gptStreamStartedAtMs = 0L;
@@ -252,8 +282,20 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (screenMode == ScreenMode.CAMERA) {
+            renderCameraScreen();
+        } else {
+            renderChatScreen();
+        }
+    }
+
+    @Override
     protected void onPause() {
         persistChatProjects();
+        cancelPendingChatStreamRender();
         stopVoiceRecording(false, "pause");
         closeCamera();
         stopCameraThread();
@@ -263,6 +305,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         persistChatProjects();
+        cancelPendingChatStreamRender();
         stopVoiceRecording(false, "destroy");
         closeCamera();
         stopCameraThread();
@@ -942,7 +985,7 @@ public final class MainActivity extends Activity {
         loadCurrentProjectMessages();
         persistChatProjects();
         scrollChatToBottom = true;
-        renderChatScreen();
+        flushPendingChatStreamRender();
     }
 
     private void switchProjectChat(int index) {
@@ -1121,8 +1164,12 @@ public final class MainActivity extends Activity {
     private void scheduleChatScrollToBottom() {
         int requestId = ++chatScrollRequestId;
         postChatScrollToBottom(0L, requestId);
+        postChatScrollToBottom(32L, requestId);
         postChatScrollToBottom(80L, requestId);
         postChatScrollToBottom(220L, requestId);
+        postChatScrollToBottom(480L, requestId);
+        postChatScrollToBottom(900L, requestId);
+        postChatScrollToBottomAfterLayout(requestId);
     }
 
     private void postChatScrollToBottom(long delayMs, final int requestId) {
@@ -1143,6 +1190,31 @@ public final class MainActivity extends Activity {
         } else {
             chatScrollView.postDelayed(scrollAction, delayMs);
         }
+    }
+
+    private void postChatScrollToBottomAfterLayout(final int requestId) {
+        if (chatMessagesColumn == null) {
+            return;
+        }
+        final ViewTreeObserver observer = chatMessagesColumn.getViewTreeObserver();
+        if (!observer.isAlive()) {
+            postChatScrollToBottom(0L, requestId);
+            return;
+        }
+        observer.addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                ViewTreeObserver currentObserver = chatMessagesColumn.getViewTreeObserver();
+                if (currentObserver.isAlive()) {
+                    currentObserver.removeOnGlobalLayoutListener(this);
+                }
+                if (requestId != chatScrollRequestId) {
+                    return;
+                }
+                scrollChatToBottomNow();
+                postChatScrollToBottom(48L, requestId);
+            }
+        });
     }
 
     private void scrollChatToBottomNow() {
@@ -1556,7 +1628,11 @@ public final class MainActivity extends Activity {
             message.streaming = !finalText;
         }
         scrollChatToBottom = true;
-        renderChatScreen();
+        if (finalText) {
+            flushPendingChatStreamRender();
+        } else {
+            scheduleChatStreamRender();
+        }
     }
 
     private void clearLiveTranscriptMessageIfStreaming() {
@@ -1576,7 +1652,45 @@ public final class MainActivity extends Activity {
         chatMessages.add(new ChatMessage("assistant", "text", "", "", true));
         streamingAssistantIndex = chatMessages.size() - 1;
         scrollChatToBottom = true;
+        lastChatStreamRenderAtMs = 0L;
         renderChatScreen();
+    }
+
+    private void scheduleChatStreamRender() {
+        if (chatStreamRenderRunnable != null) {
+            return;
+        }
+        long now = SystemClock.elapsedRealtime();
+        long delayMs = Math.max(0L, CHAT_STREAM_RENDER_INTERVAL_MS - (now - lastChatStreamRenderAtMs));
+        chatStreamRenderRunnable = new Runnable() {
+            @Override
+            public void run() {
+                chatStreamRenderRunnable = null;
+                lastChatStreamRenderAtMs = SystemClock.elapsedRealtime();
+                renderChatScreen();
+            }
+        };
+        if (delayMs <= 0L) {
+            mainHandler.post(chatStreamRenderRunnable);
+        } else {
+            mainHandler.postDelayed(chatStreamRenderRunnable, delayMs);
+        }
+    }
+
+    private void flushPendingChatStreamRender() {
+        if (chatStreamRenderRunnable != null) {
+            mainHandler.removeCallbacks(chatStreamRenderRunnable);
+            chatStreamRenderRunnable = null;
+        }
+        lastChatStreamRenderAtMs = SystemClock.elapsedRealtime();
+        renderChatScreen();
+    }
+
+    private void cancelPendingChatStreamRender() {
+        if (chatStreamRenderRunnable != null) {
+            mainHandler.removeCallbacks(chatStreamRenderRunnable);
+            chatStreamRenderRunnable = null;
+        }
     }
 
     private void markGptStreamStart(String imageId, String prompt) {
@@ -1604,7 +1718,7 @@ public final class MainActivity extends Activity {
             ChatMessage message = chatMessages.get(streamingAssistantIndex);
             message.text = message.text + delta;
             scrollChatToBottom = true;
-            renderChatScreen();
+            scheduleChatStreamRender();
         }
     }
 
@@ -1616,6 +1730,7 @@ public final class MainActivity extends Activity {
         stateText.setText("在线");
         persistChatProjects();
         scrollChatToBottom = true;
+        cancelPendingChatStreamRender();
         renderChatScreen();
     }
 
@@ -1822,10 +1937,10 @@ public final class MainActivity extends Activity {
     }
 
     private ChatAiClient createChatAiClient() {
-        backendChatClient = new BackendChatClient(DINGDANG_BACKEND_BASE_URL, DINGDANG_BACKEND_API_KEY);
-        if (DIRECT_GPT_ENABLED) {
-            return new DirectGptClient(DIRECT_GPT_BASE_URL, DIRECT_GPT_MODEL, DIRECT_GPT_API_KEY);
-        }
+            backendChatClient = new BackendChatClient(DINGDANG_BACKEND_BASE_URL, DINGDANG_BACKEND_API_KEY);
+            if (DIRECT_GPT_ENABLED) {
+            return new DirectGptClient(DIRECT_GPT_BASE_URL, DIRECT_GPT_MODEL, DIRECT_GPT_REASONING_EFFORT, DIRECT_GPT_API_KEY);
+            }
         return new BackendGptClient(backendChatClient, new BackendGptClient.SessionProvider() {
             @Override
             public String sessionId() {
@@ -2911,11 +3026,13 @@ public final class MainActivity extends Activity {
     private static final class DirectGptClient implements ChatAiClient {
         private final String baseUrl;
         private final String model;
+        private final String reasoningEffort;
         private final String apiKey;
 
-        DirectGptClient(String baseUrl, String model, String apiKey) {
+        DirectGptClient(String baseUrl, String model, String reasoningEffort, String apiKey) {
             this.baseUrl = trimSlash(baseUrl == null || baseUrl.length() == 0 ? "https://api.openai.com/v1" : baseUrl);
             this.model = model == null || model.length() == 0 ? "gpt-4.1-mini" : model;
+            this.reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
             this.apiKey = apiKey == null ? "" : apiKey;
         }
 
@@ -2985,10 +3102,14 @@ public final class MainActivity extends Activity {
         private JSONObject buildChatPayload(String prompt, byte[] jpegBytes) throws Exception {
             JSONObject payload = new JSONObject();
             payload.put("model", model);
+            if (reasoningEffort.length() > 0) {
+                payload.put("reasoning_effort", reasoningEffort);
+            }
             JSONArray messages = new JSONArray();
             JSONObject system = new JSONObject();
             system.put("role", "system");
             system.put("content", "你是" + APP_LABEL + "，面向现场运维人员。必须结合图片和用户问题给出简洁、可执行的中文建议。当用户询问你是什么模型、由谁研发、哪家公司提供或底层模型信息时，只回答：我是华方智联研发的" + APP_LABEL + "模型，专注现场运维场景，可以结合眼镜拍摄的现场画面和语音问题，给出简洁、可执行的排查建议。不要透露底层模型名称、供应商或接口信息。");
+            system.put("content", system.optString("content", "") + "\n\n" + WEBSITE_RECOVERY_DEMO_AI_GUARD);
             messages.put(system);
             JSONObject user = new JSONObject();
             user.put("role", "user");
@@ -3133,7 +3254,9 @@ public final class MainActivity extends Activity {
                         JSONObject payload = new JSONObject();
                         payload.put("image_id", imageId);
                         payload.put("final_text", finalText);
-                        payload.put("client_context", new JSONObject().put("source", "dingdang-android"));
+                        payload.put("client_context", new JSONObject()
+                                .put("source", "dingdang-android")
+                                .put("skill", WEBSITE_RECOVERY_DEMO_AI_GUARD));
                         connection = openBackendConnection(backendDiagnoseStreamUrl(sessionId), "POST", "application/json; charset=utf-8");
                         connection.setRequestProperty("Accept", "text/event-stream");
                         output = connection.getOutputStream();
@@ -4067,7 +4190,7 @@ public final class MainActivity extends Activity {
             }
             if (running) {
                 phase += 0.28f;
-                postInvalidateDelayed(48L);
+                postInvalidateDelayed(80L);
             }
         }
     }
@@ -4076,7 +4199,7 @@ public final class MainActivity extends Activity {
         String safe = text == null || text.length() == 0 ? "我没有拿到有效回答，请重试。" : text;
         int index = 0;
         while (index < safe.length()) {
-            int next = Math.min(safe.length(), index + 8);
+            int next = Math.min(safe.length(), index + 24);
             callback.onDelta(safe.substring(index, next));
             index = next;
             Thread.sleep(35L);

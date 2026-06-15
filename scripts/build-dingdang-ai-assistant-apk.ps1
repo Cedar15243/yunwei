@@ -11,8 +11,8 @@ $assistantLabel = -join @(
 $env:AIR3_APK_APP_ID = "com.codex.air3nativecamera.dingdangexpert"
 $env:AIR3_APK_APP_LABEL = $assistantLabel
 $env:AIR3_APK_OUTPUT_NAME = "DingdangAiOpsExpert"
-$env:AIR3_APK_VERSION_CODE = "624"
-$env:AIR3_APK_VERSION_NAME = "6.2.4-asr-auto-send"
+$env:AIR3_APK_VERSION_CODE = "625"
+$env:AIR3_APK_VERSION_NAME = "6.2.5-chat-autoscroll"
 $env:AIR3_APK_FAST_UPLOAD = "1"
 if (-not $env:AIR3_APK_DIRECT_GPT) {
   $env:AIR3_APK_DIRECT_GPT = "0"

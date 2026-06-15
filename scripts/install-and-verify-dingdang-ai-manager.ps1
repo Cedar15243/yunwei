@@ -1,19 +1,20 @@
 param(
   [string]$Serial = "YM00FCF3NW0031",
-  [string]$Package = "com.codex.air3nativecamera.dingdangexpert",
-  [string]$OldPackage = "com.codex.air3nativecamera.dingdangops",
-  [string]$PreviousAssistantPackage = "com.codex.air3nativecamera.dingdangassistant",
+  [string]$Package = "com.codex.air3nativecamera.dingdangmanager",
+  [string[]]$CoexistPackages = @(
+    "com.codex.air3nativecamera.dingdangexpert"
+  ),
   [string]$Activity = "com.codex.air3nativecamera.MainActivity",
-  [string]$ApkPath = "air3-native-camera-test\build\DingdangAiOpsExpert.apk",
-  [int]$ExpectedVersionCode = 625,
-  [string]$ExpectedVersionName = "6.2.5-chat-autoscroll",
+  [string]$ApkPath = "air3-native-camera-test\build\DingdangAiOpsManager.apk",
+  [int]$ExpectedVersionCode = 706,
+  [string]$ExpectedVersionName = "7.0.6-voice-smoother",
   [string]$ExpectedLabel = (-join @(
     [char]0x53EE, [char]0x5F53, "AI",
     [char]0x8FD0, [char]0x7EF4,
-    [char]0x4E13, [char]0x5BB6
+    [char]0x7BA1, [char]0x5BB6
   )),
   [int]$WaitSeconds = 120,
-  [string]$EvidencePrefix = "tmp\dingdang-ai-ops-expert-625"
+  [string]$EvidencePrefix = "tmp\dingdang-ai-ops-manager-706"
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,16 +42,16 @@ New-Item -ItemType Directory -Force -Path (Join-Path $root "tmp") | Out-Null
 
 $badging = (& $aapt2 dump badging $apk) -join "`n"
 if ($badging -notmatch [regex]::Escape("package: name='$Package'")) {
-  throw "assistant package id mismatch in APK badging"
+  throw "manager package id mismatch in APK badging"
 }
 if ($badging -notmatch "versionCode='$ExpectedVersionCode'") {
-  throw "assistant versionCode mismatch in APK badging"
+  throw "manager versionCode mismatch in APK badging"
 }
 if ($badging -notmatch [regex]::Escape("versionName='$ExpectedVersionName'")) {
-  throw "assistant versionName mismatch in APK badging"
+  throw "manager versionName mismatch in APK badging"
 }
 if ($badging -notmatch [regex]::Escape("application-label:'$ExpectedLabel'")) {
-  throw "assistant app label mismatch in APK badging"
+  throw "manager app label mismatch in APK badging"
 }
 
 Write-Output "Waiting for Air3 device serial=$Serial timeout=${WaitSeconds}s"
@@ -69,7 +70,7 @@ if (-not $deviceFound) {
   throw "Air3 device not found by adb: $Serial"
 }
 
-Write-Output "Installing $apk without uninstalling existing Dingdang package"
+Write-Output "Installing $apk without uninstalling existing Dingdang packages"
 & $adb -s $Serial install -r $apk
 if ($LASTEXITCODE -ne 0) {
   throw "adb install failed"
@@ -78,23 +79,23 @@ if ($LASTEXITCODE -ne 0) {
 & $adb -s $Serial shell pm grant $Package android.permission.RECORD_AUDIO 2>$null
 
 $packages = (& $adb -s $Serial shell pm list packages com.codex.air3nativecamera) -join "`n"
-foreach ($requiredPackage in @($OldPackage, $PreviousAssistantPackage, $Package)) {
+foreach ($requiredPackage in @($CoexistPackages + $Package)) {
   if ($packages -notmatch [regex]::Escape("package:$requiredPackage")) {
-    throw "Expected package missing after assistant install: $requiredPackage"
+    throw "Expected coexist package missing after manager install: $requiredPackage"
   }
 }
 
 $dump = (& $adb -s $Serial shell dumpsys package $Package) -join "`n"
 if ($dump -notmatch "versionCode=$ExpectedVersionCode") {
-  throw "Assistant package versionCode mismatch; expected $ExpectedVersionCode"
+  throw "Manager package versionCode mismatch; expected $ExpectedVersionCode"
 }
 if ($dump -notmatch "versionName=$([regex]::Escape($ExpectedVersionName))") {
-  throw "Assistant package versionName mismatch; expected $ExpectedVersionName"
+  throw "Manager package versionName mismatch; expected $ExpectedVersionName"
 }
 
 $resolved = (& $adb -s $Serial shell cmd package resolve-activity --brief $Package) -join "`n"
 if ($resolved -notmatch [regex]::Escape("$Package/$Activity")) {
-  throw "Assistant package activity did not resolve: $resolved"
+  throw "Manager package activity did not resolve: $resolved"
 }
 
 Write-Output "Launching $Package/$Activity"
@@ -117,8 +118,9 @@ foreach ($marker in @($ExpectedLabel, $photoMarker, $voiceMarker)) {
 }
 
 Write-Output "Installed and verified $Package $ExpectedVersionCode/$ExpectedVersionName label=$ExpectedLabel"
-Write-Output "Old package still present: $OldPackage"
-Write-Output "Previous assistant package still present: $PreviousAssistantPackage"
+foreach ($coexistPackage in $CoexistPackages) {
+  Write-Output "Coexist package still present: $coexistPackage"
+}
 Write-Output "Evidence:"
 Write-Output "  $uiPath"
 Write-Output "  $pngPath"

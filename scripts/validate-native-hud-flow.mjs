@@ -6,7 +6,12 @@ const activityPath = path.join(
   root,
   "air3-native-camera-test/app/src/main/java/com/codex/air3nativecamera/MainActivity.java",
 );
+const manifestPath = path.join(
+  root,
+  "air3-native-camera-test/app/src/main/AndroidManifest.xml",
+);
 const code = fs.readFileSync(activityPath, "utf8");
+const manifest = fs.readFileSync(manifestPath, "utf8");
 
 function mustInclude(marker, message = marker) {
   if (!code.includes(marker)) {
@@ -17,6 +22,12 @@ function mustInclude(marker, message = marker) {
 function mustNotInclude(marker, message = marker) {
   if (code.includes(marker)) {
     throw new Error(`native chat flow keeps forbidden marker: ${message}`);
+  }
+}
+
+function mustIncludeManifest(marker, message = marker) {
+  if (!manifest.includes(marker)) {
+    throw new Error(`native manifest missing marker: ${message}`);
   }
 }
 
@@ -142,6 +153,9 @@ for (const marker of [
   "KeyEvent.KEYCODE_DPAD_UP",
   "KeyEvent.KEYCODE_DPAD_DOWN",
   "smoothScrollTo(0, target)",
+  "postChatScrollToBottomAfterLayout(requestId)",
+  "ViewTreeObserver.OnGlobalLayoutListener",
+  "postChatScrollToBottom(900L, requestId)",
   "KeyEvent.KEYCODE_VOLUME_UP",
   "KeyEvent.KEYCODE_VOLUME_DOWN",
   "enterCameraScreen(\"hardware-key\")",
@@ -152,6 +166,8 @@ for (const marker of [
   "DIRECT_GPT_API_KEY",
   "DIRECT_GPT_BASE_URL",
   "DIRECT_GPT_MODEL",
+  "DIRECT_GPT_REASONING_EFFORT",
+  "reasoning_effort",
   "DIRECT_ASR_ENDPOINT",
   "import android.widget.ImageView;",
   "attachmentPreviewImage.setScaleType(ImageView.ScaleType.FIT_CENTER)",
@@ -213,13 +229,38 @@ for (const marker of [
   "bufferRatio",
   "照片已添加",
   "点我说话",
-  "postInvalidateDelayed(48L)",
+  "VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L",
+  "VOICE_AUTO_STOP_SILENCE_MS = 2500L",
+  "VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 3200L",
+  "postInvalidateDelayed(80L)",
+  "android.content.Intent",
+  "protected void onNewIntent(Intent intent)",
+  "CHAT_STREAM_RENDER_INTERVAL_MS",
+  "scheduleChatStreamRender()",
+  "flushPendingChatStreamRender()",
+  "cancelPendingChatStreamRender()",
+  "mainHandler.postDelayed(chatStreamRenderRunnable, delayMs)",
+  "index + 24",
+  "WEBSITE_RECOVERY_DEMO_AI_GUARD",
+  "WEBSITE_RECOVERY_VOICE_KEYWORDS",
+  "WEBSITE_RECOVERY_OCR_KEYWORDS",
+  "WEBSITE_RECOVERY_DEMO_URL",
+  "HTTP ERROR 502",
+  "bb.chinacedar.top",
+  "systemctl is-active nginx",
+  "systemctl restart nginx",
+  "client_context",
+  ".put(\"skill\", WEBSITE_RECOVERY_DEMO_AI_GUARD)",
+  "chatAiClient.send(prompt, effectiveImageId, image",
   "新建项目",
   "会话记录",
   "当前项目",
 ]) {
   mustInclude(marker);
 }
+
+mustIncludeManifest('android:launchMode="singleTask"', "main activity must be singleTask to avoid duplicate Air3 launcher stacks");
+mustNotInclude("sudo systemctl restart nginx", "website recovery Skill nginx restart must not use sudo");
 
 for (const marker of [
   "private TextView evidenceText;",

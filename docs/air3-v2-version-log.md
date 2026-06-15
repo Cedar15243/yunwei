@@ -232,7 +232,7 @@ Validation gates:
 | --- | --- |
 | Package | `com.codex.air3nativecamera.dingdangexpert` |
 | Label | `叮当AI运维专家` |
-| Version | `6.2.4-asr-auto-send` / `624` |
+| Version | `6.2.5-chat-autoscroll` / `625` |
 | Artifact | `DingdangAiOpsExpert-v<versionName>-<gitSha>.apk` |
 | Scope | Parallel-install expert package named `叮当AI运维专家` that keeps the previous `叮当运维AI` and `叮当ai助手` packages installed, removes the homepage wording that says voice text is automatically sent to GPT, moves the secondary menu to the same right side as the menu button, maps Air3/SDK up and down touchpad keys to chat context scrolling, keeps right/menu keys on the same-side options flow, and adds local silence auto-stop after tap-to-start voice recording. |
 
@@ -242,4 +242,26 @@ Validation gates:
 - Direct AI build/install with `scripts/build-install-dingdang-ai-assistant-direct-apk.ps1`.
 - Install and coexistence verify with `scripts/install-and-verify-dingdang-ai-assistant.ps1`.
 - Voice must auto-send after stable realtime ASR transcript without requiring the user to tap end.
+- Chat must keep following the newest realtime transcript and streaming AI text while content height changes.
 - The old package `com.codex.air3nativecamera.dingdangops` must remain installed when this assistant package is installed.
+
+## Dingdang AI Ops Manager GPT Test APK
+
+| Field | Value |
+| --- | --- |
+| Package | `com.codex.air3nativecamera.dingdangmanager` |
+| Label | `叮当AI运维管家` |
+| Version | `7.0.6-voice-smoother` / `706` |
+| Artifact | `DingdangAiOpsManager-v<versionName>-<gitSha>.apk` |
+| Scope | Parallel-install GPT test package named `叮当AI运维管家`. Voice ASR still uses Alibaba DashScope realtime ASR, while photo + final transcript are sent directly to GPT via `https://api.xje96.uk` using `gpt-5.5` by default with `reasoning_effort` set to `high`. It must not uninstall or replace `叮当AI运维专家`; other historical packages remain untouched if present on the device. |
+
+Validation gates:
+
+- `7.0.4-lag-fix` keeps GPT5.5 high reasoning and reduces Air3 lag by preventing duplicate launcher Activity stacks and throttling ASR/GPT streaming UI redraws.
+- `7.0.5-website-skill` keeps GPT5.5 high reasoning and adds the GPT-routed website recovery demo Skill: site/502 voice triggers and OCR-visible `HTTP ERROR 502` or `bb.chinacedar.top` should produce the fixed nginx recovery flow without asking for container, server, or process names.
+- `7.0.6-voice-smoother` keeps the website recovery Skill and GPT5.5 high reasoning, then makes voice auto-stop less aggressive by waiting longer for real speech pauses and reducing the recording wave redraw rate on Air3.
+- Build with `scripts/build-dingdang-ai-manager-apk.ps1`.
+- Direct GPT build/install with `scripts/build-install-dingdang-ai-manager-gpt-apk.ps1`.
+- Install and coexistence verify with `scripts/install-and-verify-dingdang-ai-manager.ps1`.
+- GPT key must come from `OPENAI_API_KEY` or ignored `tmp/openai_api_key.local`.
+- DashScope ASR key and endpoint must still come from ignored direct ASR env/files.

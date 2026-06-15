@@ -129,6 +129,7 @@ if ($env:DIRECT_ASR_API_KEY) {
 }
 $directGptBaseUrl = if ($env:DIRECT_GPT_BASE_URL) { $env:DIRECT_GPT_BASE_URL } else { "https://api.openai.com/v1" }
 $directGptModel = if ($env:DIRECT_GPT_MODEL) { $env:DIRECT_GPT_MODEL } else { "gpt-4.1-mini" }
+$directGptReasoningEffort = if ($env:DIRECT_GPT_REASONING_EFFORT) { $env:DIRECT_GPT_REASONING_EFFORT } else { "" }
 $directAsrEndpoint = if ($env:DIRECT_ASR_ENDPOINT) { $env:DIRECT_ASR_ENDPOINT } else { "" }
 $dingdangBackendBaseUrl = if ($env:DINGDANG_BACKEND_BASE_URL) { $env:DINGDANG_BACKEND_BASE_URL } else { $opsEndpoint -replace "/sessions/events$", "" }
 $dingdangBackendApiKey = $opsKey
@@ -139,6 +140,7 @@ $escapedDingdangBackendBaseUrl = $dingdangBackendBaseUrl.Replace("\", "\\").Repl
 $escapedDingdangBackendApiKey = $dingdangBackendApiKey.Replace("\", "\\").Replace('"', '\"')
 $escapedDirectGptBaseUrl = $directGptBaseUrl.Replace("\", "\\").Replace('"', '\"')
 $escapedDirectGptModel = $directGptModel.Replace("\", "\\").Replace('"', '\"')
+$escapedDirectGptReasoningEffort = $directGptReasoningEffort.Replace("\", "\\").Replace('"', '\"')
 $escapedDirectGptKey = $directGptKey.Replace("\", "\\").Replace('"', '\"')
 $escapedDirectAsrEndpoint = $directAsrEndpoint.Replace("\", "\\").Replace('"', '\"')
 $escapedDirectAsrKey = $directAsrKey.Replace("\", "\\").Replace('"', '\"')
@@ -158,6 +160,7 @@ final class GeneratedConfig {
     static final boolean DIRECT_GPT_ENABLED = $directGptEnabled;
     static final String DIRECT_GPT_BASE_URL = "$escapedDirectGptBaseUrl";
     static final String DIRECT_GPT_MODEL = "$escapedDirectGptModel";
+    static final String DIRECT_GPT_REASONING_EFFORT = "$escapedDirectGptReasoningEffort";
     static final String DIRECT_GPT_API_KEY = "$escapedDirectGptKey";
     static final String DIRECT_ASR_ENDPOINT = "$escapedDirectAsrEndpoint";
     static final String DIRECT_ASR_API_KEY = "$escapedDirectAsrKey";

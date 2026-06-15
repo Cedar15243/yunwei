@@ -15,6 +15,9 @@ const dingdangInstallVerifyScriptPath = path.join(root, "scripts/install-and-ver
 const assistantBuildScriptPath = path.join(root, "scripts/build-dingdang-ai-assistant-apk.ps1");
 const assistantInstallVerifyScriptPath = path.join(root, "scripts/install-and-verify-dingdang-ai-assistant.ps1");
 const assistantDirectBuildInstallScriptPath = path.join(root, "scripts/build-install-dingdang-ai-assistant-direct-apk.ps1");
+const managerBuildScriptPath = path.join(root, "scripts/build-dingdang-ai-manager-apk.ps1");
+const managerInstallVerifyScriptPath = path.join(root, "scripts/install-and-verify-dingdang-ai-manager.ps1");
+const managerDirectBuildInstallScriptPath = path.join(root, "scripts/build-install-dingdang-ai-manager-gpt-apk.ps1");
 const packageJsonPath = path.join(root, "package.json");
 
 const buildScript = fs.readFileSync(buildScriptPath, "utf8");
@@ -47,6 +50,15 @@ const assistantInstallVerifyScript = fs.existsSync(assistantInstallVerifyScriptP
   : "";
 const assistantDirectBuildInstallScript = fs.existsSync(assistantDirectBuildInstallScriptPath)
   ? fs.readFileSync(assistantDirectBuildInstallScriptPath, "utf8")
+  : "";
+const managerBuildScript = fs.existsSync(managerBuildScriptPath)
+  ? fs.readFileSync(managerBuildScriptPath, "utf8")
+  : "";
+const managerInstallVerifyScript = fs.existsSync(managerInstallVerifyScriptPath)
+  ? fs.readFileSync(managerInstallVerifyScriptPath, "utf8")
+  : "";
+const managerDirectBuildInstallScript = fs.existsSync(managerDirectBuildInstallScriptPath)
+  ? fs.readFileSync(managerDirectBuildInstallScriptPath, "utf8")
   : "";
 const packageJson = fs.readFileSync(packageJsonPath, "utf8");
 
@@ -96,6 +108,7 @@ for (const marker of [
   'static final String DINGDANG_BACKEND_API_KEY = "$escapedDingdangBackendApiKey";',
   'static final String DIRECT_GPT_BASE_URL = "$escapedDirectGptBaseUrl";',
   'static final String DIRECT_GPT_MODEL = "$escapedDirectGptModel";',
+  'static final String DIRECT_GPT_REASONING_EFFORT = "$escapedDirectGptReasoningEffort";',
   'static final String DIRECT_GPT_API_KEY = "$escapedDirectGptKey";',
   'static final String DIRECT_ASR_ENDPOINT = "$escapedDirectAsrEndpoint";',
   'static final String DIRECT_ASR_API_KEY = "$escapedDirectAsrKey";',
@@ -134,8 +147,8 @@ for (const marker of [
   "`6.1.0-asr-final-autostop`",
   "`叮当运维AI`",
   "`com.codex.air3nativecamera.dingdangexpert`",
-  "`624`",
-  "`6.2.4-asr-auto-send`",
+  "`625`",
+  "`6.2.5-chat-autoscroll`",
   "`叮当AI运维专家`",
   "DingdangAiOpsExpert-v<versionName>-<gitSha>.apk",
   "AIR3_APK_VERSION_CODE",
@@ -330,8 +343,8 @@ for (const marker of [
   '[char]0x4E13, [char]0x5BB6',
   '$env:AIR3_APK_APP_LABEL = $assistantLabel',
   '$env:AIR3_APK_OUTPUT_NAME = "DingdangAiOpsExpert"',
-  '$env:AIR3_APK_VERSION_CODE = "624"',
-  '$env:AIR3_APK_VERSION_NAME = "6.2.4-asr-auto-send"',
+  '$env:AIR3_APK_VERSION_CODE = "625"',
+  '$env:AIR3_APK_VERSION_NAME = "6.2.5-chat-autoscroll"',
   '$env:AIR3_APK_DIRECT_GPT = "0"',
   'build-native-apk.ps1',
 ]) {
@@ -345,8 +358,8 @@ for (const marker of [
   '[string]$OldPackage = "com.codex.air3nativecamera.dingdangops"',
   '[string]$PreviousAssistantPackage = "com.codex.air3nativecamera.dingdangassistant"',
   '[string]$ApkPath = "air3-native-camera-test\\build\\DingdangAiOpsExpert.apk"',
-  '[int]$ExpectedVersionCode = 624',
-  '[string]$ExpectedVersionName = "6.2.4-asr-auto-send"',
+  '[int]$ExpectedVersionCode = 625',
+  '[string]$ExpectedVersionName = "6.2.5-chat-autoscroll"',
   '[string]$ExpectedLabel = (-join @(',
   '[char]0x53EE, [char]0x5F53, "AI",',
   '[char]0x8FD0, [char]0x7EF4,',
@@ -377,6 +390,58 @@ for (const marker of [
   'Key values are loaded but will not be printed',
 ]) {
   mustInclude(assistantDirectBuildInstallScript, marker, `assistant direct build/install script must include ${marker}`);
+}
+
+for (const marker of [
+  '$env:AIR3_APK_APP_ID = "com.codex.air3nativecamera.dingdangmanager"',
+  '$managerLabel = -join @(',
+  '[char]0x7BA1, [char]0x5BB6',
+  '$env:AIR3_APK_APP_LABEL = $managerLabel',
+  '$env:AIR3_APK_OUTPUT_NAME = "DingdangAiOpsManager"',
+  '$env:AIR3_APK_VERSION_CODE = "706"',
+  '$env:AIR3_APK_VERSION_NAME = "7.0.6-voice-smoother"',
+  '$env:AIR3_APK_DIRECT_GPT = "1"',
+  '$env:DIRECT_GPT_BASE_URL = "https://api.xje96.uk"',
+  '$env:DIRECT_GPT_MODEL = "gpt-5.5"',
+  '$env:DIRECT_GPT_REASONING_EFFORT = "high"',
+  'tmp\\openai_api_key.local',
+  'build-native-apk.ps1',
+]) {
+  mustInclude(managerBuildScript, marker, `manager build script must include ${marker}`);
+}
+
+for (const marker of [
+  '[string]$Package = "com.codex.air3nativecamera.dingdangmanager"',
+  '[string[]]$CoexistPackages = @(',
+  '"com.codex.air3nativecamera.dingdangexpert"',
+  '[string]$ApkPath = "air3-native-camera-test\\build\\DingdangAiOpsManager.apk"',
+  '[int]$ExpectedVersionCode = 706',
+  '[string]$ExpectedVersionName = "7.0.6-voice-smoother"',
+  '[char]0x7BA1, [char]0x5BB6',
+  'install -r $apk',
+  'foreach ($requiredPackage in @($CoexistPackages + $Package))',
+  'Expected coexist package missing after manager install',
+  'uiautomator dump /dev/tty',
+  'screencap -p',
+]) {
+  mustInclude(managerInstallVerifyScript, marker, `manager install-and-verify script must include ${marker}`);
+}
+
+for (const marker of [
+  'scripts\\build-dingdang-ai-manager-apk.ps1',
+  'scripts\\install-and-verify-dingdang-ai-manager.ps1',
+  'OPENAI_API_KEY',
+  'tmp\\openai_api_key.local',
+  'DIRECT_ASR_API_KEY',
+  'DIRECT_ASR_ENDPOINT',
+  '$env:DIRECT_GPT_BASE_URL = "https://api.xje96.uk"',
+  '$env:DIRECT_GPT_REASONING_EFFORT = "high"',
+  'GPT reasoning effort: high',
+  'DINGDANG_MANAGER_GPT_MODEL',
+  'gpt-5.5',
+  'Key values are loaded but will not be printed',
+]) {
+  mustInclude(managerDirectBuildInstallScript, marker, `manager direct build/install script must include ${marker}`);
 }
 
 console.log("Native build versioning validation passed.");
