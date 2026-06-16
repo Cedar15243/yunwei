@@ -81,6 +81,7 @@ import javax.net.ssl.SSLSocketFactory;
 
 public final class MainActivity extends Activity {
     private enum ScreenMode { CHAT, CAMERA }
+    private enum VoiceCommand { NONE, TAKE_PHOTO, RETAKE_PHOTO, SEND, BACK_TO_CHAT, START_VOICE }
     private enum VoiceStreamState { IDLE, LISTENING, PARTIAL_READY, FINAL_READY, AI_PENDING, AI_DONE, VOICE_UNCLEAR }
 
     private interface ChatAiClient {
@@ -135,7 +136,8 @@ public final class MainActivity extends Activity {
     private static final long VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L;
     private static final long VOICE_AUTO_STOP_SILENCE_MS = 2500L;
     private static final long VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 3200L;
-    private static final long CHAT_STREAM_RENDER_INTERVAL_MS = 120L;
+    private static final long VOICE_RECORD_THREAD_JOIN_MS = 700L;
+    private static final long CHAT_STREAM_RENDER_INTERVAL_MS = 260L;
     private static final int VOICE_SILENCE_RMS_THRESHOLD = 520;
     private static final int VOICE_SAMPLE_RATE_HZ = 16000;
     private static final int VOICE_WAV_CHANNEL_COUNT = 1;
@@ -170,6 +172,21 @@ public final class MainActivity extends Activity {
     private static final String[] WEBSITE_RECOVERY_OCR_KEYWORDS = {
             "HTTP ERROR 502",
             "bb.chinacedar.top"
+    };
+    private static final String[] VOICE_COMMAND_PHOTO_WORDS = {
+            "\u62cd\u7167", "\u62cd\u4e00\u5f20", "\u7167\u4e00\u4e0b", "\u770b\u4e00\u4e0b", "\u626b\u4e00\u4e0b"
+    };
+    private static final String[] VOICE_COMMAND_RETAKE_WORDS = {
+            "\u91cd\u62cd", "\u91cd\u65b0\u62cd", "\u518d\u62cd", "\u91cd\u65b0\u7167", "\u518d\u7167"
+    };
+    private static final String[] VOICE_COMMAND_SEND_WORDS = {
+            "\u53d1\u9001", "\u5f00\u59cb\u5206\u6790", "\u5e2e\u6211\u5206\u6790", "\u5c31\u8fd9\u5f20", "\u7528\u8fd9\u5f20"
+    };
+    private static final String[] VOICE_COMMAND_BACK_WORDS = {
+            "\u8fd4\u56de", "\u56de\u5230\u804a\u5929", "\u53d6\u6d88", "\u4e0d\u62cd\u4e86", "\u9000\u51fa\u76f8\u673a"
+    };
+    private static final String[] VOICE_COMMAND_SPEAK_WORDS = {
+            "\u7ee7\u7eed\u8bf4", "\u7ee7\u7eed\u95ee", "\u6211\u518d\u8bf4", "\u8ffd\u95ee", "\u7ee7\u7eed\u63d0\u95ee"
     };
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -211,6 +228,7 @@ public final class MainActivity extends Activity {
 
     private AudioRecord voiceRecorder;
     private Thread voiceRecordThread;
+    private Thread voiceRecordCleanupThread;
     private File voiceFile;
     private boolean recordingVoice;
     private Runnable voiceStopRunnable;
@@ -235,11 +253,13 @@ public final class MainActivity extends Activity {
     private int streamingAssistantIndex = -1;
     private int liveTranscriptMessageIndex = -1;
     private Runnable chatStreamRenderRunnable;
+    private Runnable foregroundAutoVoiceStartRunnable;
     private long lastChatStreamRenderAtMs;
     private boolean scrollChatToBottom;
     private int chatScrollRequestId;
     private long gptStreamStartedAtMs = 0L;
     private boolean gptFirstDeltaLogged = false;
+    private boolean pendingVoicePhotoCapture;
     private int currentProjectIndex = 0;
     private ChatAiClient chatAiClient;
     private BackendChatClient backendChatClient;
@@ -279,6 +299,7 @@ public final class MainActivity extends Activity {
                 && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCameraFlow();
         }
+        scheduleForegroundVoiceListening("resume");
     }
 
     @Override
@@ -296,6 +317,7 @@ public final class MainActivity extends Activity {
     protected void onPause() {
         persistChatProjects();
         cancelPendingChatStreamRender();
+        cancelForegroundVoiceListening();
         stopVoiceRecording(false, "pause");
         closeCamera();
         stopCameraThread();
@@ -306,6 +328,7 @@ public final class MainActivity extends Activity {
     protected void onDestroy() {
         persistChatProjects();
         cancelPendingChatStreamRender();
+        cancelForegroundVoiceListening();
         stopVoiceRecording(false, "destroy");
         closeCamera();
         stopCameraThread();
@@ -326,9 +349,12 @@ public final class MainActivity extends Activity {
                             + " screen=" + screenMode);
         }
         if (event.getAction() == KeyEvent.ACTION_DOWN && isHandledHardwareKey(event.getKeyCode())) {
+            if (event.getRepeatCount() == 0) {
+                handleHardwareShortcut(event.getKeyCode());
+            }
             return true;
         }
-        if (event.getAction() == KeyEvent.ACTION_UP && handleHardwareShortcut(event.getKeyCode())) {
+        if (event.getAction() == KeyEvent.ACTION_UP && isHandledHardwareKey(event.getKeyCode())) {
             return true;
         }
         return super.dispatchKeyEvent(event);
@@ -415,7 +441,8 @@ public final class MainActivity extends Activity {
 
     private boolean isCameraShortcutKey(int keyCode) {
         return keyCode == KeyEvent.KEYCODE_FOCUS
-                || keyCode == KeyEvent.KEYCODE_F9;
+                || keyCode == KeyEvent.KEYCODE_F9
+                || isSystemReservedCameraKey(keyCode);
     }
 
     private boolean isSystemReservedCameraKey(int keyCode) {
@@ -451,6 +478,7 @@ public final class MainActivity extends Activity {
                 || isChatScrollKey(keyCode)
                 || isBackShortcutKey(keyCode)
                 || isSendShortcutKey(keyCode)
+                || isSystemReservedCameraKey(keyCode)
                 || isVolumeKey(keyCode);
     }
 
@@ -1145,6 +1173,10 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void renderChatStreamMessagesOnly() {
+        renderMessages();
+    }
+
     private void scheduleChatScrollToTop() {
         if (chatScrollView == null) {
             return;
@@ -1483,7 +1515,13 @@ public final class MainActivity extends Activity {
             }
         }
         if (recordingVoice) {
-            transcriptDraftText.setVisibility(View.GONE);
+            if (composerTranscript.trim().length() == 0) {
+                transcriptDraftText.setVisibility(View.GONE);
+                transcriptDraftText.setText("");
+            } else {
+                transcriptDraftText.setVisibility(View.VISIBLE);
+                transcriptDraftText.setText(composerTranscript);
+            }
             voiceWaveView.setVisibility(View.VISIBLE);
             voiceWaveView.start();
             voiceButton.setText("结束提问");
@@ -1512,6 +1550,31 @@ public final class MainActivity extends Activity {
 
     private void enterCameraScreen(String source) {
         renderCameraScreen();
+    }
+
+    private void requestVoicePhotoCapture() {
+        pendingVoicePhotoCapture = true;
+        if (screenMode != ScreenMode.CAMERA) {
+            enterCameraScreen("voice-command");
+        }
+        capturePendingVoicePhotoIfReady();
+    }
+
+    private void capturePendingVoicePhotoIfReady() {
+        if (!pendingVoicePhotoCapture) {
+            return;
+        }
+        if (screenMode == ScreenMode.CAMERA && cameraDevice != null && captureSession != null && imageReader != null && !captureInFlight) {
+            pendingVoicePhotoCapture = false;
+            captureStillImage();
+            return;
+        }
+        mainHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                capturePendingVoicePhotoIfReady();
+            }
+        }, 250L);
     }
 
     private void confirmCapturedPhoto(byte[] jpegBytes) {
@@ -1644,6 +1707,91 @@ public final class MainActivity extends Activity {
         renderChatScreen();
     }
 
+    private boolean handleVoiceCommand(String text) {
+        VoiceCommand command = classifyVoiceCommand(text);
+        if (command == VoiceCommand.NONE) {
+            return false;
+        }
+        clearLiveTranscriptMessageIfStreaming();
+        if (command == VoiceCommand.TAKE_PHOTO) {
+            requestVoicePhotoCapture();
+            return true;
+        }
+        if (command == VoiceCommand.RETAKE_PHOTO) {
+            composerImageBytes = null;
+            composerImagePreviewBase64 = "";
+            composerImagePreviewBitmap = null;
+            composerImageId = "";
+            composerImageUploadFailed = false;
+            sendAfterImageUpload = false;
+            requestVoicePhotoCapture();
+            return true;
+        }
+        if (command == VoiceCommand.SEND) {
+            boolean hasImageContext = composerImageBytes != null || composerImageId.length() > 0 || latestImageMessage() != null;
+            if (hasImageContext) {
+                composerTranscript = "\u8bf7\u7ed3\u5408\u8fd9\u5f20\u73b0\u573a\u7167\u7247\u7ed9\u51fa\u6392\u67e5\u5efa\u8bae";
+            }
+            sendComposerToAi();
+            return true;
+        }
+        if (command == VoiceCommand.BACK_TO_CHAT) {
+            renderChatScreen();
+            voiceStreamState = VoiceStreamState.IDLE;
+            scheduleForegroundVoiceListening("voice-command-back");
+            return true;
+        }
+        if (command == VoiceCommand.START_VOICE) {
+            renderComposer();
+            startToggleVoiceRecording();
+            return true;
+        }
+        return false;
+    }
+
+    private VoiceCommand classifyVoiceCommand(String text) {
+        String normalized = normalizeVoiceCommandText(text);
+        if (normalized.length() == 0) {
+            return VoiceCommand.NONE;
+        }
+        if (containsAny(normalized, VOICE_COMMAND_RETAKE_WORDS)) {
+            return VoiceCommand.RETAKE_PHOTO;
+        }
+        if (containsAny(normalized, VOICE_COMMAND_PHOTO_WORDS)) {
+            return VoiceCommand.TAKE_PHOTO;
+        }
+        if (containsAny(normalized, VOICE_COMMAND_SEND_WORDS)) {
+            return VoiceCommand.SEND;
+        }
+        if (containsAny(normalized, VOICE_COMMAND_BACK_WORDS)) {
+            return VoiceCommand.BACK_TO_CHAT;
+        }
+        if (containsAny(normalized, VOICE_COMMAND_SPEAK_WORDS)) {
+            return VoiceCommand.START_VOICE;
+        }
+        return VoiceCommand.NONE;
+    }
+
+    private String normalizeVoiceCommandText(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.replace(" ", "")
+                .replace("\t", "")
+                .replace("\n", "")
+                .replace("\r", "")
+                .trim();
+    }
+
+    private boolean containsAny(String text, String[] words) {
+        for (String word : words) {
+            if (word != null && word.length() > 0 && text.contains(word)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void appendAssistantMessage(String text) {
         chatMessages.add(new ChatMessage("assistant", "text", text, "", false));
     }
@@ -1653,7 +1801,7 @@ public final class MainActivity extends Activity {
         streamingAssistantIndex = chatMessages.size() - 1;
         scrollChatToBottom = true;
         lastChatStreamRenderAtMs = 0L;
-        renderChatScreen();
+        renderChatStreamMessagesOnly();
     }
 
     private void scheduleChatStreamRender() {
@@ -1667,7 +1815,7 @@ public final class MainActivity extends Activity {
             public void run() {
                 chatStreamRenderRunnable = null;
                 lastChatStreamRenderAtMs = SystemClock.elapsedRealtime();
-                renderChatScreen();
+                renderChatStreamMessagesOnly();
             }
         };
         if (delayMs <= 0L) {
@@ -1683,7 +1831,7 @@ public final class MainActivity extends Activity {
             chatStreamRenderRunnable = null;
         }
         lastChatStreamRenderAtMs = SystemClock.elapsedRealtime();
-        renderChatScreen();
+        renderChatStreamMessagesOnly();
     }
 
     private void cancelPendingChatStreamRender() {
@@ -1731,7 +1879,9 @@ public final class MainActivity extends Activity {
         persistChatProjects();
         scrollChatToBottom = true;
         cancelPendingChatStreamRender();
-        renderChatScreen();
+        renderChatStreamMessagesOnly();
+        voiceStreamState = VoiceStreamState.IDLE;
+        scheduleForegroundVoiceListening("ai_complete");
     }
 
     private void sendComposerToAi() {
@@ -1961,6 +2111,39 @@ public final class MainActivity extends Activity {
         return new DirectAsrClient(DIRECT_ASR_ENDPOINT, DIRECT_ASR_API_KEY, DIRECT_ASR_MODEL);
     }
 
+    private void scheduleForegroundVoiceListening(String reason) {
+        cancelForegroundVoiceListening();
+        if (!shouldStartForegroundVoiceListening()) {
+            return;
+        }
+        foregroundAutoVoiceStartRunnable = new Runnable() {
+            @Override
+            public void run() {
+                foregroundAutoVoiceStartRunnable = null;
+                if (shouldStartForegroundVoiceListening()) {
+                    Log.i(KEY_LOG_TAG, "Foreground voice auto start reason=" + reason);
+                    startToggleVoiceRecording();
+                }
+            }
+        };
+        mainHandler.postDelayed(foregroundAutoVoiceStartRunnable, 600L);
+    }
+
+    private void cancelForegroundVoiceListening() {
+        if (foregroundAutoVoiceStartRunnable != null) {
+            mainHandler.removeCallbacks(foregroundAutoVoiceStartRunnable);
+            foregroundAutoVoiceStartRunnable = null;
+        }
+    }
+
+    private boolean shouldStartForegroundVoiceListening() {
+        return screenMode == ScreenMode.CHAT
+                && !recordingVoice
+                && voiceStreamState == VoiceStreamState.IDLE
+                && streamingAssistantIndex < 0
+                && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+
     private void startToggleVoiceRecording() {
         if (recordingVoice) {
             finishToggleVoiceRecording("manual_finish");
@@ -2006,7 +2189,7 @@ public final class MainActivity extends Activity {
                 }
             };
             mainHandler.postDelayed(voiceStopRunnable, VOICE_RECORDING_MS);
-            renderChatScreen();
+            renderComposer();
         } catch (Exception error) {
             recordingVoice = false;
             setComposerStatus("录音失败：" + safeMessage(error));
@@ -2211,7 +2394,7 @@ public final class MainActivity extends Activity {
         } else if (realtimeAsrClient != null) {
             realtimeAsrClient.cancel();
         }
-        waitForVoiceRecordThread();
+        cleanupVoiceRecordThreadAsync();
         if (!transcribe || voiceFile == null || !voiceFile.exists() || voiceFile.length() <= VOICE_WAV_HEADER_BYTES) {
             voiceStreamState = VoiceStreamState.IDLE;
             stateText.setText("在线");
@@ -2247,7 +2430,7 @@ public final class MainActivity extends Activity {
         if (recorder != null) {
             recorder.release();
         }
-        waitForVoiceRecordThread();
+        cleanupVoiceRecordThreadAsync();
     }
 
     private void onAsrPartial(final String text) {
@@ -2266,7 +2449,7 @@ public final class MainActivity extends Activity {
                 voiceStreamState = VoiceStreamState.PARTIAL_READY;
                 composerTranscript = partial;
                 stateText.setText("正在听");
-                updateLiveTranscriptMessage(partial, false);
+                updateLiveTranscriptDraft(partial);
                 scheduleTranscriptStableAutoStop(partial);
                 renderComposer();
             }
@@ -2287,6 +2470,9 @@ public final class MainActivity extends Activity {
                 stopVoiceCaptureAfterAsrFinal();
                 voiceStreamState = VoiceStreamState.FINAL_READY;
                 composerTranscript = finalText;
+                if (handleVoiceCommand(finalText)) {
+                    return;
+                }
                 updateLiveTranscriptMessage(finalText, true);
                 voiceStreamState = VoiceStreamState.AI_PENDING;
                 stateText.setText("已听清，正在分析");
@@ -2294,6 +2480,10 @@ public final class MainActivity extends Activity {
                 sendComposerToAi();
             }
         });
+    }
+
+    private void updateLiveTranscriptDraft(String partial) {
+        composerTranscript = sanitizeTranscriptForDisplay(partial);
     }
 
     private void onVoiceUnclear(final String diagnosticCode) {
@@ -2307,6 +2497,7 @@ public final class MainActivity extends Activity {
                 if (realtimeAsrFinished && composerTranscript.trim().length() > 0) {
                     return;
                 }
+                stopVoiceCaptureAfterAsrFinal();
                 voiceStreamState = VoiceStreamState.VOICE_UNCLEAR;
                 composerTranscript = voiceStatusForDiagnostic(code);
                 clearLiveTranscriptMessageIfStreaming();
@@ -2330,14 +2521,24 @@ public final class MainActivity extends Activity {
         return "没有听清，请再说一次";
     }
 
-    private void waitForVoiceRecordThread() {
+    private void cleanupVoiceRecordThreadAsync() {
         Thread thread = voiceRecordThread;
         voiceRecordThread = null;
         if (thread == null) {
             return;
         }
+        voiceRecordCleanupThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                waitForVoiceRecordThread(thread);
+            }
+        }, "DingdangVoiceRecorderCleanup");
+        voiceRecordCleanupThread.start();
+    }
+
+    private void waitForVoiceRecordThread(Thread thread) {
         try {
-            thread.join(700L);
+            thread.join(VOICE_RECORD_THREAD_JOIN_MS);
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
         }
@@ -2956,7 +3157,7 @@ public final class MainActivity extends Activity {
                 json.put("kind", kind);
                 json.put("text", text);
                 json.put("image_id", imageId);
-                json.put("image_preview_base64", imagePreviewBase64);
+                json.put("image_preview_base64", "");
                 json.put("streaming", streaming);
             } catch (Exception ignored) {
             }
@@ -4190,7 +4391,7 @@ public final class MainActivity extends Activity {
             }
             if (running) {
                 phase += 0.28f;
-                postInvalidateDelayed(80L);
+                postInvalidateDelayed(160L);
             }
         }
     }

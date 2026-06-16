@@ -6,15 +6,15 @@ param(
   ),
   [string]$Activity = "com.codex.air3nativecamera.MainActivity",
   [string]$ApkPath = "air3-native-camera-test\build\DingdangAiOpsManager.apk",
-  [int]$ExpectedVersionCode = 706,
-  [string]$ExpectedVersionName = "7.0.6-voice-smoother",
+  [int]$ExpectedVersionCode = 711,
+  [string]$ExpectedVersionName = "7.1.1-voice-commands",
   [string]$ExpectedLabel = (-join @(
     [char]0x53EE, [char]0x5F53, "AI",
     [char]0x8FD0, [char]0x7EF4,
     [char]0x7BA1, [char]0x5BB6
   )),
   [int]$WaitSeconds = 120,
-  [string]$EvidencePrefix = "tmp\dingdang-ai-ops-manager-706"
+  [string]$EvidencePrefix = "tmp\dingdang-ai-ops-manager-711"
 )
 
 $ErrorActionPreference = "Stop"
@@ -111,10 +111,14 @@ $pngPath = Join-Path $root "$EvidencePrefix-ui.png"
 $ui = Get-Content -LiteralPath $uiPath -Raw -Encoding UTF8
 $photoMarker = -join @([char]0x70B9, [char]0x6211, [char]0x62CD, [char]0x7167)
 $voiceMarker = -join @([char]0x70B9, [char]0x6211, [char]0x8BF4, [char]0x8BDD)
-foreach ($marker in @($ExpectedLabel, $photoMarker, $voiceMarker)) {
+$listeningMarker = -join @([char]0x7ED3, [char]0x675F, [char]0x63D0, [char]0x95EE)
+foreach ($marker in @($ExpectedLabel, $photoMarker)) {
   if ($ui -notmatch [regex]::Escape($marker)) {
     throw "UI marker missing after launch: $marker"
   }
+}
+if ($ui -notmatch [regex]::Escape($voiceMarker) -and $ui -notmatch [regex]::Escape($listeningMarker)) {
+  throw "UI voice marker missing after launch: expected $voiceMarker or $listeningMarker"
 }
 
 Write-Output "Installed and verified $Package $ExpectedVersionCode/$ExpectedVersionName label=$ExpectedLabel"

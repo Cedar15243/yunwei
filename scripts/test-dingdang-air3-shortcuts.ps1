@@ -5,6 +5,8 @@ param(
   [string]$SystemCameraPackage = "com.inmo.camera_extreme",
   [int]$ExpectedVersionCode = 602,
   [string]$ExpectedVersionName = "6.0.2-chat",
+  [ValidateSet("SystemCamera", "AppCameraWhenDelivered")]
+  [string]$CameraKeyMode = "SystemCamera",
   [int]$WaitSeconds = 30,
   [int]$WaitAfterKeyMs = 1200,
   [string]$OutDir = ""
@@ -87,6 +89,8 @@ if ($resolved -notmatch [regex]::Escape("$Package/$Activity")) {
   throw "Dingdang package activity did not resolve: $resolved"
 }
 
+$cameraKeyExpectation = if ($CameraKeyMode -eq "AppCameraWhenDelivered") { "app_camera_or_system_camera" } else { "system_camera" }
+
 $keyCases = @(
   @{ name = "enter_66_voice"; code = 66; expect = "voice" },
   @{ name = "dpad_center_23_voice"; code = 23; expect = "voice" },
@@ -102,8 +106,8 @@ $keyCases = @(
   @{ name = "f10_140_chat"; code = 140; expect = "chat" },
   @{ name = "volume_up_24_consumed"; code = 24; expect = "consumed" },
   @{ name = "volume_down_25_consumed"; code = 25; expect = "consumed" },
-  @{ name = "camera_27_reserved"; code = 27; expect = "system_camera" },
-  @{ name = "dvr_173_reserved"; code = 173; expect = "system_camera" },
+  @{ name = "camera_27_reserved"; code = 27; expect = $cameraKeyExpectation },
+  @{ name = "dvr_173_reserved"; code = 173; expect = $cameraKeyExpectation },
   @{ name = "f11_141_not_bound"; code = 141; expect = "not_bound" }
 )
 
@@ -143,7 +147,8 @@ foreach ($case in $keyCases) {
     "chat" { $appLog -and $inDingdang -and -not $inSystemCamera }
     "consumed" { $appLog -and $inDingdang -and -not $inSystemCamera }
     "system_camera" { $inSystemCamera }
-    "not_bound" { $appLog -and $inDingdang -and -not $voiceStarted -and -not $appCameraStarted -and -not $inSystemCamera }
+    "app_camera_or_system_camera" { ($appLog -and $inDingdang -and $appCameraStarted) -or $inSystemCamera }
+    "not_bound" { $appLog -and $inDingdang -and -not $appCameraStarted -and -not $inSystemCamera }
     default { $false }
   }
 
@@ -186,6 +191,7 @@ $result = [pscustomobject]@{
   package = $Package
   versionCode = $ExpectedVersionCode
   versionName = $ExpectedVersionName
+  cameraKeyMode = $CameraKeyMode
   allExpectedOk = [bool]$allExpectedOk
   finalInDingdang = [bool]($finalFocus -match [regex]::Escape($Package))
   evidenceDir = $OutDir

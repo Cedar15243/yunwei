@@ -51,6 +51,7 @@ function methodBlock(signature) {
 
 for (const marker of [
   "private enum ScreenMode { CHAT, CAMERA }",
+  "private enum VoiceCommand { NONE, TAKE_PHOTO, RETAKE_PHOTO, SEND, BACK_TO_CHAT, START_VOICE }",
   "private interface ChatAiClient",
   "private static final class DirectGptClient implements ChatAiClient",
   "private static final class BackendGptClient implements ChatAiClient",
@@ -92,13 +93,29 @@ for (const marker of [
   "confirmCapturedPhoto(",
   "createImagePreviewBase64(",
   "startToggleVoiceRecording()",
+  "scheduleForegroundVoiceListening(",
+  "shouldStartForegroundVoiceListening()",
+  "foregroundAutoVoiceStartRunnable",
   "finishToggleVoiceRecording(",
   "startRealtimeAsr(",
   "feedRealtimeAsrPcm(",
   "finishRealtimeAsr(",
+  "cleanupVoiceRecordThreadAsync()",
+  "DingdangVoiceRecorderCleanup",
+  "VOICE_RECORD_THREAD_JOIN_MS",
   "stopVoiceCaptureAfterAsrFinal()",
   "onAsrPartial(",
   "onAsrFinal(",
+  "classifyVoiceCommand(",
+  "handleVoiceCommand(",
+  "requestVoicePhotoCapture()",
+  "capturePendingVoicePhotoIfReady()",
+  "pendingVoicePhotoCapture",
+  "VOICE_COMMAND_PHOTO_WORDS",
+  "VOICE_COMMAND_RETAKE_WORDS",
+  "VOICE_COMMAND_SEND_WORDS",
+  "VOICE_COMMAND_BACK_WORDS",
+  "VOICE_COMMAND_SPEAK_WORDS",
   "onVoiceUnclear(",
   "voiceStreamState = VoiceStreamState.AI_PENDING",
   "sendComposerToAi();",
@@ -141,9 +158,10 @@ for (const marker of [
   "isHandledHardwareKey(",
   "handleHardwareShortcut(",
   "isSystemReservedCameraKey(",
-  "system-reserved camera key observed; not used as an app shortcut",
   "event.getAction() == KeyEvent.ACTION_DOWN && isHandledHardwareKey(event.getKeyCode())",
-  "event.getAction() == KeyEvent.ACTION_UP && handleHardwareShortcut(event.getKeyCode())",
+  "event.getRepeatCount() == 0",
+  "handleHardwareShortcut(event.getKeyCode())",
+  "event.getAction() == KeyEvent.ACTION_UP && isHandledHardwareKey(event.getKeyCode())",
   "KeyEvent.KEYCODE_CAMERA",
   "KeyEvent.KEYCODE_FOCUS",
   "KEYCODE_DVR",
@@ -204,7 +222,7 @@ for (const marker of [
   "action.setDefaultFocusHighlightEnabled(false)",
   "root.requestFocus()",
   "private int liveTranscriptMessageIndex = -1;",
-  "updateLiveTranscriptMessage(partial, false)",
+  "updateLiveTranscriptDraft(partial)",
   "updateLiveTranscriptMessage(finalText, true)",
   "hasLiveTranscriptMessage()",
   "clearLiveTranscriptMessageIfStreaming()",
@@ -232,10 +250,11 @@ for (const marker of [
   "VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L",
   "VOICE_AUTO_STOP_SILENCE_MS = 2500L",
   "VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 3200L",
-  "postInvalidateDelayed(80L)",
+  "postInvalidateDelayed(160L)",
   "android.content.Intent",
   "protected void onNewIntent(Intent intent)",
-  "CHAT_STREAM_RENDER_INTERVAL_MS",
+  "CHAT_STREAM_RENDER_INTERVAL_MS = 260L",
+  "renderChatStreamMessagesOnly()",
   "scheduleChatStreamRender()",
   "flushPendingChatStreamRender()",
   "cancelPendingChatStreamRender()",
@@ -310,17 +329,94 @@ if (!recordThreadBody.includes("feedRealtimeAsrPcm(buffer, read)") ||
     !code.includes("onAsrPartial(")) {
   throw new Error("voice recording must feed PCM chunks into realtime ASR and show partial text while speaking");
 }
+const startVoiceBody = methodBlock("private void startToggleVoiceRecording(");
+if (!startVoiceBody.includes("renderComposer();") || startVoiceBody.includes("renderChatScreen();")) {
+  throw new Error("starting voice recording must update only the composer instead of rebuilding the full chat screen");
+}
+
+const onResumeBody = methodBlock("protected void onResume(");
+if (!onResumeBody.includes("scheduleForegroundVoiceListening(\"resume\")")) {
+  throw new Error("opening or returning to the foreground app must schedule voice listening without requiring the voice button");
+}
+const foregroundVoiceBody = methodBlock("private void scheduleForegroundVoiceListening(");
+if (!foregroundVoiceBody.includes("shouldStartForegroundVoiceListening()") ||
+    !foregroundVoiceBody.includes("startToggleVoiceRecording();") ||
+    !foregroundVoiceBody.includes("postDelayed(foregroundAutoVoiceStartRunnable")) {
+  throw new Error("foreground voice listening must be delayed, gated, and start the existing recorder path");
+}
+
+const stopVoiceBody = methodBody("stopVoiceRecording(");
+if (!stopVoiceBody.includes("cleanupVoiceRecordThreadAsync();") || stopVoiceBody.includes(".join(")) {
+  throw new Error("stopping voice recording must not join the recorder thread on the UI thread");
+}
+
+const stopVoiceAfterFinalBody = methodBody("stopVoiceCaptureAfterAsrFinal(");
+if (!stopVoiceAfterFinalBody.includes("cleanupVoiceRecordThreadAsync();") || stopVoiceAfterFinalBody.includes(".join(")) {
+  throw new Error("ASR final capture cleanup must not join the recorder thread on the UI thread");
+}
 
 const asrFinalBody = methodBody("onAsrFinal(");
 if (!asrFinalBody.includes("voiceStreamState = VoiceStreamState.AI_PENDING") ||
     !asrFinalBody.includes("stopVoiceCaptureAfterAsrFinal()") ||
+    !asrFinalBody.includes("handleVoiceCommand(finalText)") ||
     !asrFinalBody.includes("sendComposerToAi();")) {
-  throw new Error("final ASR text must auto-send to GPT to reduce glasses-side operations");
+  throw new Error("final ASR text must route app voice commands before auto-sending to GPT");
+}
+
+const classifyVoiceCommandBody = methodBlock("private VoiceCommand classifyVoiceCommand(");
+for (const marker of [
+  "VOICE_COMMAND_PHOTO_WORDS",
+  "VOICE_COMMAND_RETAKE_WORDS",
+  "VOICE_COMMAND_SEND_WORDS",
+  "VOICE_COMMAND_BACK_WORDS",
+  "VOICE_COMMAND_SPEAK_WORDS",
+]) {
+  if (!classifyVoiceCommandBody.includes(marker)) {
+    throw new Error(`voice command classifier missing marker: ${marker}`);
+  }
+}
+
+const handleVoiceCommandBody = methodBlock("private boolean handleVoiceCommand(");
+for (const marker of [
+  "VoiceCommand.TAKE_PHOTO",
+  "VoiceCommand.RETAKE_PHOTO",
+  "VoiceCommand.SEND",
+  "VoiceCommand.BACK_TO_CHAT",
+  "VoiceCommand.START_VOICE",
+  "requestVoicePhotoCapture();",
+  "sendComposerToAi();",
+  "renderChatScreen();",
+  "startToggleVoiceRecording();",
+]) {
+  if (!handleVoiceCommandBody.includes(marker)) {
+    throw new Error(`voice command handler missing marker: ${marker}`);
+  }
+}
+
+const voicePhotoBody = methodBlock("private void requestVoicePhotoCapture(");
+if (!voicePhotoBody.includes("pendingVoicePhotoCapture = true") ||
+    !voicePhotoBody.includes("enterCameraScreen(\"voice-command\")") ||
+    !voicePhotoBody.includes("capturePendingVoicePhotoIfReady();")) {
+  throw new Error("voice photo command must enter the in-app camera and automatically capture when ready");
+}
+const pendingVoicePhotoBody = methodBlock("private void capturePendingVoicePhotoIfReady(");
+if (!pendingVoicePhotoBody.includes("pendingVoicePhotoCapture = false") ||
+    !pendingVoicePhotoBody.includes("captureStillImage();") ||
+    !pendingVoicePhotoBody.includes("postDelayed(new Runnable()")) {
+  throw new Error("pending voice photo capture must retry briefly until the camera session is ready");
+}
+
+const asrPartialBody = methodBody("onAsrPartial(");
+if (!asrPartialBody.includes("updateLiveTranscriptDraft(partial)") ||
+    asrPartialBody.includes("updateLiveTranscriptMessage(partial, false)") ||
+    asrPartialBody.includes("renderChatScreen();")) {
+  throw new Error("ASR partial text must update only the lightweight composer draft");
 }
 
 const voiceUnclearBody = methodBody("onVoiceUnclear(");
 if (!voiceUnclearBody.includes("composerTranscript = voiceStatusForDiagnostic(code)") ||
-    !voiceUnclearBody.includes("voiceStatusForDiagnostic(code)")) {
+    !voiceUnclearBody.includes("voiceStatusForDiagnostic(code)") ||
+    !voiceUnclearBody.includes("stopVoiceCaptureAfterAsrFinal()")) {
   throw new Error("voice unclear state must replace listening placeholders with a short retry diagnosis");
 }
 
@@ -340,6 +436,12 @@ if (!imageBubbleBody.includes("ImageView imageView = new ImageView(this)") ||
     !imageBubbleBody.includes("message.imagePreviewBitmap") ||
     !imageBubbleBody.includes("ImageView.ScaleType.FIT_CENTER")) {
   throw new Error("sent photo messages must render a non-stretched image thumbnail in chat");
+}
+
+const chatMessageToJsonBody = methodBlock("JSONObject toJson()");
+if (!chatMessageToJsonBody.includes('json.put("image_preview_base64", "")') ||
+    chatMessageToJsonBody.includes('json.put("image_preview_base64", imagePreviewBase64)')) {
+  throw new Error("chat persistence must not write base64 image previews into SharedPreferences");
 }
 
 const uploadImageBody = methodBody("uploadImageForChat(");
@@ -362,11 +464,38 @@ if (sendComposerBody.includes("if (image == null)")) {
   throw new Error("voice-only conversations must not be blocked by a missing photo");
 }
 
+const appendStreamingBody = methodBody("appendAssistantStreamingMessage(");
+if (!appendStreamingBody.includes("renderChatStreamMessagesOnly();") ||
+    appendStreamingBody.includes("renderChatScreen();")) {
+  throw new Error("starting GPT streaming must not rebuild the whole chat screen");
+}
+
+const scheduleStreamBody = methodBody("scheduleChatStreamRender(");
+if (!scheduleStreamBody.includes("renderChatStreamMessagesOnly();") ||
+    scheduleStreamBody.includes("renderChatScreen();")) {
+  throw new Error("GPT streaming deltas must refresh only messages to avoid ANR");
+}
+
+const finalizeStreamBody = methodBody("finalizeAssistantStreamingMessage(");
+if (!finalizeStreamBody.includes("renderChatStreamMessagesOnly();")) {
+  throw new Error("GPT streaming completion must refresh messages after cancelling pending stream renders");
+}
+
 const hardwareShortcutBody = methodBlock("private boolean handleHardwareShortcut(");
 if (!hardwareShortcutBody.includes("screenMode == ScreenMode.CAMERA") ||
     !hardwareShortcutBody.includes("captureStillImage();") ||
     !hardwareShortcutBody.includes("startToggleVoiceRecording();")) {
-  throw new Error("hardware shortcuts must execute from dispatch ACTION_UP even when a child view has focus");
+  throw new Error("hardware shortcuts must execute from dispatch ACTION_DOWN even when a child view has focus");
+}
+const dispatchKeyBody = methodBlock("public boolean dispatchKeyEvent(");
+if (!dispatchKeyBody.includes("event.getRepeatCount() == 0") ||
+    !dispatchKeyBody.includes("handleHardwareShortcut(event.getKeyCode())") ||
+    !dispatchKeyBody.includes("event.getAction() == KeyEvent.ACTION_UP && isHandledHardwareKey(event.getKeyCode())")) {
+  throw new Error("hardware shortcuts must fire on initial key down and consume key up without duplicate actions");
+}
+const cameraShortcutBody = methodBlock("private boolean isCameraShortcutKey(");
+if (!cameraShortcutBody.includes("isSystemReservedCameraKey(keyCode)")) {
+  throw new Error("camera/DVR key events that reach the app must map to the in-app camera shortcut");
 }
 
 console.log("Native chat flow validation passed.");

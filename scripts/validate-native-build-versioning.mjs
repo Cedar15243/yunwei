@@ -398,13 +398,15 @@ for (const marker of [
   '[char]0x7BA1, [char]0x5BB6',
   '$env:AIR3_APK_APP_LABEL = $managerLabel',
   '$env:AIR3_APK_OUTPUT_NAME = "DingdangAiOpsManager"',
-  '$env:AIR3_APK_VERSION_CODE = "706"',
-  '$env:AIR3_APK_VERSION_NAME = "7.0.6-voice-smoother"',
+  '$env:AIR3_APK_VERSION_CODE = "711"',
+  '$env:AIR3_APK_VERSION_NAME = "7.1.1-voice-commands"',
   '$env:AIR3_APK_DIRECT_GPT = "1"',
   '$env:DIRECT_GPT_BASE_URL = "https://api.xje96.uk"',
   '$env:DIRECT_GPT_MODEL = "gpt-5.5"',
   '$env:DIRECT_GPT_REASONING_EFFORT = "high"',
   'tmp\\openai_api_key.local',
+  'tmp\\direct_asr_endpoint.local',
+  '$env:DIRECT_ASR_ENDPOINT',
   'build-native-apk.ps1',
 ]) {
   mustInclude(managerBuildScript, marker, `manager build script must include ${marker}`);
@@ -415,14 +417,16 @@ for (const marker of [
   '[string[]]$CoexistPackages = @(',
   '"com.codex.air3nativecamera.dingdangexpert"',
   '[string]$ApkPath = "air3-native-camera-test\\build\\DingdangAiOpsManager.apk"',
-  '[int]$ExpectedVersionCode = 706',
-  '[string]$ExpectedVersionName = "7.0.6-voice-smoother"',
+  '[int]$ExpectedVersionCode = 711',
+  '[string]$ExpectedVersionName = "7.1.1-voice-commands"',
   '[char]0x7BA1, [char]0x5BB6',
   'install -r $apk',
   'foreach ($requiredPackage in @($CoexistPackages + $Package))',
   'Expected coexist package missing after manager install',
   'uiautomator dump /dev/tty',
   'screencap -p',
+  '$listeningMarker',
+  '$voiceMarker) -and $ui -notmatch',
 ]) {
   mustInclude(managerInstallVerifyScript, marker, `manager install-and-verify script must include ${marker}`);
 }

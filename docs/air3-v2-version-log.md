@@ -251,7 +251,7 @@ Validation gates:
 | --- | --- |
 | Package | `com.codex.air3nativecamera.dingdangmanager` |
 | Label | `叮当AI运维管家` |
-| Version | `7.0.6-voice-smoother` / `706` |
+| Version | `7.1.1-voice-commands` / `711` |
 | Artifact | `DingdangAiOpsManager-v<versionName>-<gitSha>.apk` |
 | Scope | Parallel-install GPT test package named `叮当AI运维管家`. Voice ASR still uses Alibaba DashScope realtime ASR, while photo + final transcript are sent directly to GPT via `https://api.xje96.uk` using `gpt-5.5` by default with `reasoning_effort` set to `high`. It must not uninstall or replace `叮当AI运维专家`; other historical packages remain untouched if present on the device. |
 
@@ -260,6 +260,11 @@ Validation gates:
 - `7.0.4-lag-fix` keeps GPT5.5 high reasoning and reduces Air3 lag by preventing duplicate launcher Activity stacks and throttling ASR/GPT streaming UI redraws.
 - `7.0.5-website-skill` keeps GPT5.5 high reasoning and adds the GPT-routed website recovery demo Skill: site/502 voice triggers and OCR-visible `HTTP ERROR 502` or `bb.chinacedar.top` should produce the fixed nginx recovery flow without asking for container, server, or process names.
 - `7.0.6-voice-smoother` keeps the website recovery Skill and GPT5.5 high reasoning, then makes voice auto-stop less aggressive by waiting longer for real speech pauses and reducing the recording wave redraw rate on Air3.
+- `7.0.7-key-responsive` keeps the voice smoother behavior, then handles hardware shortcuts on key down instead of key up and treats camera/DVR key events that reach the app as the in-app camera shortcut.
+- `7.0.8-no-anr-stop` keeps the key-down shortcuts, then moves voice recorder thread cleanup off the UI thread and releases capture when ASR reports unclear/finished so key events are not blocked by voice-stop cleanup.
+- `7.0.9-stream-no-anr` keeps voice-stop cleanup off the UI thread, then reduces GPT streaming main-thread pressure by refreshing only the message list during deltas and by not persisting base64 image previews into SharedPreferences.
+- `7.1.0-voice-draft-smooth` keeps the stream ANR fixes, then renders ASR partial text only in the lightweight composer draft and waits until final ASR text before adding a chat message.
+- `7.1.1-voice-commands` keeps the final-text draft behavior, then interprets foreground ASR final text as app commands for taking a photo, retaking, sending, returning to chat, or starting another voice turn.
 - Build with `scripts/build-dingdang-ai-manager-apk.ps1`.
 - Direct GPT build/install with `scripts/build-install-dingdang-ai-manager-gpt-apk.ps1`.
 - Install and coexistence verify with `scripts/install-and-verify-dingdang-ai-manager.ps1`.

@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $localOpenAiKeyPath = Join-Path $repoRoot "tmp\openai_api_key.local"
+$localDirectAsrEndpointPath = Join-Path $repoRoot "tmp\direct_asr_endpoint.local"
 
 $managerLabel = -join @(
   [char]0x53EE, [char]0x5F53, "AI",
@@ -17,11 +18,17 @@ if (-not $env:DIRECT_GPT_API_KEY -or $env:DIRECT_GPT_API_KEY.Trim().Length -eq 0
   }
 }
 
+if (-not $env:DIRECT_ASR_ENDPOINT -or $env:DIRECT_ASR_ENDPOINT.Trim().Length -eq 0) {
+  if (Test-Path -LiteralPath $localDirectAsrEndpointPath) {
+    $env:DIRECT_ASR_ENDPOINT = (Get-Content -LiteralPath $localDirectAsrEndpointPath -Raw).Trim()
+  }
+}
+
 $env:AIR3_APK_APP_ID = "com.codex.air3nativecamera.dingdangmanager"
 $env:AIR3_APK_APP_LABEL = $managerLabel
 $env:AIR3_APK_OUTPUT_NAME = "DingdangAiOpsManager"
-$env:AIR3_APK_VERSION_CODE = "706"
-$env:AIR3_APK_VERSION_NAME = "7.0.6-voice-smoother"
+$env:AIR3_APK_VERSION_CODE = "711"
+$env:AIR3_APK_VERSION_NAME = "7.1.1-voice-commands"
 $env:AIR3_APK_FAST_UPLOAD = "1"
 $env:AIR3_APK_DIRECT_GPT = "1"
 $env:DIRECT_GPT_BASE_URL = "https://api.xje96.uk"
