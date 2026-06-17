@@ -6,15 +6,15 @@ param(
   ),
   [string]$Activity = "com.codex.air3nativecamera.MainActivity",
   [string]$ApkPath = "air3-native-camera-test\build\DingdangAiOpsManager.apk",
-  [int]$ExpectedVersionCode = 711,
-  [string]$ExpectedVersionName = "7.1.1-voice-commands",
+  [int]$ExpectedVersionCode = 712,
+  [string]$ExpectedVersionName = "7.1.2-all-voice-controls",
   [string]$ExpectedLabel = (-join @(
     [char]0x53EE, [char]0x5F53, "AI",
     [char]0x8FD0, [char]0x7EF4,
     [char]0x7BA1, [char]0x5BB6
   )),
   [int]$WaitSeconds = 120,
-  [string]$EvidencePrefix = "tmp\dingdang-ai-ops-manager-711"
+  [string]$EvidencePrefix = "tmp\dingdang-ai-ops-manager-712"
 )
 
 $ErrorActionPreference = "Stop"

@@ -251,7 +251,7 @@ Validation gates:
 | --- | --- |
 | Package | `com.codex.air3nativecamera.dingdangmanager` |
 | Label | `叮当AI运维管家` |
-| Version | `7.1.1-voice-commands` / `711` |
+| Version | `7.1.2-all-voice-controls` / `712` |
 | Artifact | `DingdangAiOpsManager-v<versionName>-<gitSha>.apk` |
 | Scope | Parallel-install GPT test package named `叮当AI运维管家`. Voice ASR still uses Alibaba DashScope realtime ASR, while photo + final transcript are sent directly to GPT via `https://api.xje96.uk` using `gpt-5.5` by default with `reasoning_effort` set to `high`. It must not uninstall or replace `叮当AI运维专家`; other historical packages remain untouched if present on the device. |
 
@@ -265,6 +265,7 @@ Validation gates:
 - `7.0.9-stream-no-anr` keeps voice-stop cleanup off the UI thread, then reduces GPT streaming main-thread pressure by refreshing only the message list during deltas and by not persisting base64 image previews into SharedPreferences.
 - `7.1.0-voice-draft-smooth` keeps the stream ANR fixes, then renders ASR partial text only in the lightweight composer draft and waits until final ASR text before adding a chat message.
 - `7.1.1-voice-commands` keeps the final-text draft behavior, then interprets foreground ASR final text as app commands for taking a photo, retaking, sending, returning to chat, or starting another voice turn.
+- `7.1.2-all-voice-controls` keeps foreground voice commands, then adds voice control for creating a new project, opening conversation records, and switching to previous, next, or latest project records.
 - Build with `scripts/build-dingdang-ai-manager-apk.ps1`.
 - Direct GPT build/install with `scripts/build-install-dingdang-ai-manager-gpt-apk.ps1`.
 - Install and coexistence verify with `scripts/install-and-verify-dingdang-ai-manager.ps1`.
