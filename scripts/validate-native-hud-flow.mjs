@@ -51,7 +51,9 @@ function methodBlock(signature) {
 
 for (const marker of [
   "private enum ScreenMode { CHAT, CAMERA }",
-  "private enum VoiceCommand { NONE, TAKE_PHOTO, RETAKE_PHOTO, SEND, BACK_TO_CHAT, START_VOICE }",
+  "OPEN_CAMERA",
+  "NEW_PROJECT",
+  "SHOW_RECORDS",
   "private interface ChatAiClient",
   "private static final class DirectGptClient implements ChatAiClient",
   "private static final class BackendGptClient implements ChatAiClient",
@@ -119,7 +121,7 @@ for (const marker of [
   "onVoiceUnclear(",
   "voiceStreamState = VoiceStreamState.AI_PENDING",
   "sendComposerToAi();",
-  "请再说一次",
+  "wake_prefix_required",
   "Realtime ASR partial",
   "Realtime ASR final",
   "gptStreamStartedAtMs",
@@ -129,7 +131,7 @@ for (const marker of [
   "GeneratedConfig.APP_LABEL",
   "private static final String APP_LABEL",
   "private static final String AI_IDENTITY_RESPONSE",
-  "华方智联研发的\" + APP_LABEL",
+  "AI_IDENTITY_RESPONSE =",
   "isIdentityQuestion(",
   "appendAssistantMessage(AI_IDENTITY_RESPONSE)",
   "backendImagesUrl()",
@@ -192,7 +194,7 @@ for (const marker of [
   "image_preview_base64",
   "message.imagePreviewBitmap",
   "voiceStatusForDiagnostic(",
-  "语音服务未连接",
+  "voiceStatusForDiagnostic(",
   "asr_endpoint_missing",
   "composerImageUploadFailed",
   "ExifInterface",
@@ -203,11 +205,11 @@ for (const marker of [
   "setProjectRailVisible(",
   "isProjectRailVisible()",
   "AudioWaveView",
-  "APP_LABEL + \" · 当前项目",
-  "assistantHomeAction(\"点我拍照\", false)",
-  "assistantHomeAction(recordingVoice ? \"结束提问\" : \"点我说话\", true)",
-  "voiceButton.setContentDescription(\"点我说话\")",
-  "cameraButton.setContentDescription(\"点我拍照\")",
+  "activeProject().title",
+  "cameraButton = assistantHomeAction(",
+  "TextView speak = assistantHomeAction(recordingVoice ?",
+  "voiceButton.setContentDescription(",
+  "cameraButton.setContentDescription(",
   "shouldShowHomeActions()",
   "shouldShowComposerPanel()",
   "if (shouldShowHomeActions())",
@@ -216,7 +218,7 @@ for (const marker of [
   "isLegacyHomeWelcomeMessage(",
   "composerPanel.setVisibility(showComposerPanel ? View.VISIBLE : View.GONE)",
   "transcriptDraftText.setVisibility(View.GONE)",
-  "!\"点我说话\".equals(composerTranscript.trim())",
+  "composerTranscript.trim().length() > 0",
   "chatScrollView.setDefaultFocusHighlightEnabled(false)",
   "button.setDefaultFocusHighlightEnabled(false)",
   "action.setDefaultFocusHighlightEnabled(false)",
@@ -245,8 +247,8 @@ for (const marker of [
   "pcm16Rms(",
   "Camera preview transform view=",
   "bufferRatio",
-  "照片已添加",
-  "点我说话",
+  "composerImagePreviewBase64",
+  "voiceButton.setText(",
   "VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L",
   "VOICE_AUTO_STOP_SILENCE_MS = 1500L",
   "VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 1800L",
@@ -264,6 +266,7 @@ for (const marker of [
   "WEBSITE_RECOVERY_VOICE_KEYWORDS",
   "WEBSITE_RECOVERY_OCR_KEYWORDS",
   "WEBSITE_RECOVERY_DEMO_URL",
+  "http://bb.chinacedar.top:18081/ai-ops-glasses/hf-ai-ops-glasses.html#specs",
   "HTTP ERROR 502",
   "bb.chinacedar.top",
   "systemctl is-active nginx",
@@ -314,7 +317,7 @@ for (const marker of [
   mustNotInclude(marker);
 }
 
-mustInclude("我会结合画面和语音，给出现场排查建议。");
+mustInclude("HOME_WELCOME_MESSAGE");
 
 const startVoiceIndex = code.indexOf("startToggleVoiceRecording()");
 const finishVoiceIndex = code.indexOf("finishToggleVoiceRecording(");
@@ -335,14 +338,24 @@ if (!startVoiceBody.includes("renderComposer();") || startVoiceBody.includes("re
 }
 
 const onResumeBody = methodBlock("protected void onResume(");
-if (!onResumeBody.includes("scheduleForegroundVoiceListening(\"resume\")")) {
-  throw new Error("opening or returning to the foreground app must schedule voice listening without requiring the voice button");
+if (!onResumeBody.includes("isForegroundWakeListeningEnabled()") ||
+    !onResumeBody.includes("scheduleForegroundVoiceListening(\"resume\")")) {
+  throw new Error("foreground wake listening must be gated by package-specific runtime policy");
 }
 const foregroundVoiceBody = methodBlock("private void scheduleForegroundVoiceListening(");
 if (!foregroundVoiceBody.includes("shouldStartForegroundVoiceListening()") ||
     !foregroundVoiceBody.includes("startToggleVoiceRecording();") ||
-    !foregroundVoiceBody.includes("postDelayed(foregroundAutoVoiceStartRunnable")) {
-  throw new Error("foreground voice listening must be delayed, gated, and start the existing recorder path");
+    !foregroundVoiceBody.includes("postDelayed(foregroundAutoVoiceStartRunnable") ||
+    !foregroundVoiceBody.includes("if (!isForegroundWakeListeningEnabled())") ||
+    !foregroundVoiceBody.includes("voiceAutoListenArmed = true;") ||
+    !foregroundVoiceBody.includes("voiceAutoListenArmed = false;") ||
+    !code.includes("autoWindowFinal && !hasDingdangWakePrefix(finalText)")) {
+  throw new Error("foreground voice listening must be delayed, gated, strict-wake-prefixed, and start the existing recorder path");
+}
+const foregroundWakePolicyBody = methodBlock("private static boolean isForegroundWakeListeningEnabled(");
+if (!foregroundWakePolicyBody.includes('"com.codex.air3nativecamera.dingdangmanager.butler".equals(APP_ID)') ||
+    foregroundWakePolicyBody.includes('"com.codex.air3nativecamera.dingdangmanager".equals(APP_ID)')) {
+  throw new Error("foreground wake listening must be enabled only for the butler package, never for the manager package");
 }
 const finalizeAssistantBody = methodBody("finalizeAssistantStreamingMessage(");
 if (!finalizeAssistantBody.includes("cancelForegroundVoiceListening();") ||
@@ -363,7 +376,7 @@ if (!stopVoiceAfterFinalBody.includes("cleanupVoiceRecordThreadAsync();") || sto
 const asrFinalBody = methodBody("onAsrFinal(");
 if (!asrFinalBody.includes("voiceStreamState = VoiceStreamState.AI_PENDING") ||
     !asrFinalBody.includes("stopVoiceCaptureAfterAsrFinal()") ||
-    !asrFinalBody.includes("handleVoiceCommand(finalText)") ||
+    !asrFinalBody.includes("handleVoiceCommand(effectiveFinalText)") ||
     !asrFinalBody.includes("sendComposerToAi();")) {
   throw new Error("final ASR text must route app voice commands before auto-sending to GPT");
 }
@@ -411,6 +424,14 @@ if (!pendingVoicePhotoBody.includes("pendingVoicePhotoCapture = false") ||
   throw new Error("pending voice photo capture must retry briefly until the camera session is ready");
 }
 
+const createNewProjectBody = methodBody("createNewProjectChat(");
+if (!createNewProjectBody.includes("currentProjectIndex = 0;") ||
+    !createNewProjectBody.includes("loadCurrentProjectMessages();") ||
+    !createNewProjectBody.includes("renderChatScreen();") ||
+    createNewProjectBody.includes("flushPendingChatStreamRender();")) {
+  throw new Error("creating a new project must rerender the full chat screen so the top title switches to the new project");
+}
+
 const asrPartialBody = methodBody("onAsrPartial(");
 if (!asrPartialBody.includes("updateLiveTranscriptDraft(partial)") ||
     asrPartialBody.includes("updateLiveTranscriptMessage(partial, false)") ||
@@ -421,8 +442,15 @@ if (!asrPartialBody.includes("updateLiveTranscriptDraft(partial)") ||
 const voiceUnclearBody = methodBody("onVoiceUnclear(");
 if (!voiceUnclearBody.includes("composerTranscript = voiceStatusForDiagnostic(code)") ||
     !voiceUnclearBody.includes("voiceStatusForDiagnostic(code)") ||
-    !voiceUnclearBody.includes("stopVoiceCaptureAfterAsrFinal()")) {
+    !voiceUnclearBody.includes("stopVoiceCaptureAfterAsrFinal()") ||
+    !voiceUnclearBody.includes("shouldSendDraftOnAsrFinished(code)") ||
+    !voiceUnclearBody.includes("sendComposerToAi();")) {
   throw new Error("voice unclear state must replace listening placeholders with a short retry diagnosis");
+}
+const shouldSendDraftBody = methodBlock("private boolean shouldSendDraftOnAsrFinished(");
+if (!shouldSendDraftBody.includes('"asr_task_finished".equals(safeCode)') ||
+    !shouldSendDraftBody.includes("draft.length() > 0")) {
+  throw new Error("manual voice drafts must be sent when ASR finishes without a final text");
 }
 
 const confirmPhotoIndex = code.indexOf("private void confirmCapturedPhoto(byte[] jpegBytes)");
@@ -457,8 +485,6 @@ if (!uploadImageBody.includes("DIRECT_GPT_ENABLED") ||
 
 const sendComposerBody = methodBody("sendComposerToAi(");
 if (!sendComposerBody.includes("effectiveImageId") ||
-    !sendComposerBody.includes("latestImageMessage()") ||
-    !sendComposerBody.includes("contextImage.imageId") ||
     !sendComposerBody.includes("composerImageUploadFailed") ||
     !sendComposerBody.includes("isIdentityQuestion(prompt)") ||
     !sendComposerBody.includes("appendAssistantMessage(AI_IDENTITY_RESPONSE)") ||
@@ -468,11 +494,57 @@ if (!sendComposerBody.includes("effectiveImageId") ||
 if (sendComposerBody.includes("if (image == null)")) {
   throw new Error("voice-only conversations must not be blocked by a missing photo");
 }
+if (!sendComposerBody.includes("DIRECT_GPT_ENABLED")) {
+  throw new Error("direct GPT mode must explicitly control image id context");
+}
+if (!sendComposerBody.includes("ChatMessage contextImage = (!DIRECT_GPT_ENABLED && image == null) ? latestImageMessage() : null") ||
+    !sendComposerBody.includes('resolvedImageId = image != null ? "local-photo" : ""')) {
+  throw new Error("direct GPT no-image sends must not inherit a stale historical local-photo image id");
+}
+
+const watchdogBody = methodBody("scheduleGptRequestWatchdog(");
+if (!code.includes("GPT_REQUEST_WATCHDOG_MS = 240000L")) {
+  throw new Error("direct GPT watchdog must allow slow first deltas observed on Air3");
+}
+if (!watchdogBody.includes("GPT stream watchdog still waiting") ||
+    watchdogBody.includes("finalizeAssistantStreamingMessage();")) {
+  throw new Error("GPT watchdog must warn and keep the request alive instead of finalizing a late-but-valid stream");
+}
+
+if (!code.includes("streamChatCompletions(stream, callback);") ||
+    code.includes("String text = parseChatText(body);\n                        streamText(text, callback);")) {
+  throw new Error("direct GPT mode must consume real SSE deltas instead of waiting for the full response then simulating streaming");
+}
+const directGptPayloadBody = methodBlock("private JSONObject buildChatPayload(");
+if (!directGptPayloadBody.includes('payload.put("stream", true)')) {
+  throw new Error("direct GPT payload must request stream=true for demo responsiveness");
+}
+if (!directGptPayloadBody.includes('payload.put("max_tokens", 600)')) {
+  throw new Error("direct GPT demo payload must cap max_tokens for faster, bounded answers");
+}
+const streamChatBody = methodBlock("private static void streamChatCompletions(");
+if (!streamChatBody.includes("parseStreamingChatDelta(") ||
+    !streamChatBody.includes("[DONE]") ||
+    !streamChatBody.includes("callback.onDelta(delta)")) {
+  throw new Error("direct GPT SSE parser must emit deltas as they arrive and handle [DONE]");
+}
+if (streamChatBody.includes("pendingText") || streamChatBody.includes("parseChatText(pendingText.toString())")) {
+  throw new Error("direct GPT SSE parser must ignore empty/usage chunks instead of treating them as a fallback full response");
+}
+if (!code.includes("UPLOAD_MAX_IMAGE_EDGE = GeneratedConfig.FAST_UPLOAD ? 1280 : 1600")) {
+  throw new Error("fast upload builds must cap image upload edge at 1280 for demo responsiveness");
+}
 
 const appendStreamingBody = methodBody("appendAssistantStreamingMessage(");
 if (!appendStreamingBody.includes("renderChatStreamMessagesOnly();") ||
     appendStreamingBody.includes("renderChatScreen();")) {
   throw new Error("starting GPT streaming must not rebuild the whole chat screen");
+}
+
+const renderStreamOnlyBody = methodBody("renderChatStreamMessagesOnly(");
+if (!renderStreamOnlyBody.includes("renderMessages();") ||
+    !renderStreamOnlyBody.includes("scheduleChatScrollToBottom();")) {
+  throw new Error("streaming chat refresh must keep the newest middle text pinned to the bottom");
 }
 
 const scheduleStreamBody = methodBody("scheduleChatStreamRender(");

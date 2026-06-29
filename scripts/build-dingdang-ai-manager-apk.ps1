@@ -27,14 +27,14 @@ if (-not $env:DIRECT_ASR_ENDPOINT -or $env:DIRECT_ASR_ENDPOINT.Trim().Length -eq
 $env:AIR3_APK_APP_ID = "com.codex.air3nativecamera.dingdangmanager"
 $env:AIR3_APK_APP_LABEL = $managerLabel
 $env:AIR3_APK_OUTPUT_NAME = "DingdangAiOpsManager"
-$env:AIR3_APK_VERSION_CODE = "715"
-$env:AIR3_APK_VERSION_NAME = "7.1.5-one-shot-autostop"
+$env:AIR3_APK_VERSION_CODE = "720"
+$env:AIR3_APK_VERSION_NAME = "7.2.0-demo-stable-stream"
 $env:AIR3_APK_FAST_UPLOAD = "1"
 $env:AIR3_APK_DIRECT_GPT = "1"
 $env:DIRECT_GPT_BASE_URL = "https://api.xje96.uk"
 if (-not $env:DIRECT_GPT_MODEL -or $env:DIRECT_GPT_MODEL.Trim().Length -eq 0) {
   $env:DIRECT_GPT_MODEL = "gpt-5.5"
 }
-$env:DIRECT_GPT_REASONING_EFFORT = "high"
+$env:DIRECT_GPT_REASONING_EFFORT = "low"
 
 powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "air3-native-camera-test\build-native-apk.ps1")

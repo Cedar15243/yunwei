@@ -81,7 +81,20 @@ import javax.net.ssl.SSLSocketFactory;
 
 public final class MainActivity extends Activity {
     private enum ScreenMode { CHAT, CAMERA }
-    private enum VoiceCommand { NONE, TAKE_PHOTO, RETAKE_PHOTO, SEND, BACK_TO_CHAT, START_VOICE }
+    private enum VoiceCommand {
+        NONE,
+        OPEN_CAMERA,
+        TAKE_PHOTO,
+        RETAKE_PHOTO,
+        SEND,
+        BACK_TO_CHAT,
+        START_VOICE,
+        NEW_PROJECT,
+        NEXT_PROJECT,
+        PREVIOUS_PROJECT,
+        LATEST_PROJECT,
+        SHOW_RECORDS
+    }
     private enum VoiceStreamState { IDLE, LISTENING, PARTIAL_READY, FINAL_READY, AI_PENDING, AI_DONE, VOICE_UNCLEAR }
 
     private interface ChatAiClient {
@@ -127,17 +140,23 @@ public final class MainActivity extends Activity {
     private static final String DIRECT_ASR_API_KEY = GeneratedConfig.DIRECT_ASR_API_KEY;
     private static final String DINGDANG_BACKEND_BASE_URL = GeneratedConfig.DINGDANG_BACKEND_BASE_URL;
     private static final String DINGDANG_BACKEND_API_KEY = GeneratedConfig.DINGDANG_BACKEND_API_KEY;
+    private static final String APP_ID = GeneratedConfig.APP_ID;
     private static final String APP_LABEL = GeneratedConfig.APP_LABEL;
     private static final String DIRECT_ASR_MODEL = "fun-asr-realtime";
     private static final int JPEG_QUALITY = GeneratedConfig.FAST_UPLOAD ? 82 : 92;
-    private static final int UPLOAD_MAX_IMAGE_EDGE = 1600;
+    private static final int UPLOAD_MAX_IMAGE_EDGE = GeneratedConfig.FAST_UPLOAD ? 1280 : 1600;
     private static final int PREVIEW_MAX_IMAGE_EDGE = 480;
     private static final long VOICE_RECORDING_MS = 30000L;
+    private static final long VOICE_AUTO_WAKE_RECORDING_MS = 6000L;
     private static final long VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L;
     private static final long VOICE_AUTO_STOP_SILENCE_MS = 1500L;
     private static final long VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 1800L;
     private static final long VOICE_RECORD_THREAD_JOIN_MS = 700L;
     private static final long CHAT_STREAM_RENDER_INTERVAL_MS = 260L;
+    private static final long GPT_REQUEST_WATCHDOG_MS = 240000L;
+    private static final long WAKE_PREFIX_GRACE_MS = 4000L;
+    private static final long FOREGROUND_WAKE_RETRY_DELAY_MS = 900L;
+    private static final int MAX_VOICE_COMMAND_CHARS = 16;
     private static final int VOICE_SILENCE_RMS_THRESHOLD = 520;
     private static final int VOICE_SAMPLE_RATE_HZ = 16000;
     private static final int VOICE_WAV_CHANNEL_COUNT = 1;
@@ -150,7 +169,7 @@ public final class MainActivity extends Activity {
     private static final String AI_IDENTITY_RESPONSE = "我是华方智联研发的" + APP_LABEL
             + "模型，专注现场运维场景。你可以通过眼镜拍摄现场画面，再用语音说明问题，我会结合图片和问题给出简洁、可执行的排查建议。";
 
-    private static final String WEBSITE_RECOVERY_DEMO_URL = "http://bb.chinacedar.top:18081/ai-ops-glasses/hf-ai-ops-glasses.html";
+    private static final String WEBSITE_RECOVERY_DEMO_URL = "http://bb.chinacedar.top:18081/ai-ops-glasses/hf-ai-ops-glasses.html#specs";
     private static final String WEBSITE_RECOVERY_DEMO_RESPONSE =
             "\u8fd9\u662f\u7f51\u7ad9 502 \u6545\u969c\uff0c\u6309\u64cd\u4f5c\u6d41\u7a0b\u91cd\u542f\u7f51\u7ad9\u670d\u52a1\u5373\u53ef\u3002\n\n"
                     + "1. \u5148\u770b\u4e00\u4e0b\u7f51\u7ad9\u670d\u52a1\u662f\u4e0d\u662f\u5728\u8fd0\u884c\uff1a\n"
@@ -173,8 +192,11 @@ public final class MainActivity extends Activity {
             "HTTP ERROR 502",
             "bb.chinacedar.top"
     };
+    private static final String[] VOICE_COMMAND_OPEN_CAMERA_WORDS = {
+            "\u6253\u5f00\u76f8\u673a", "\u51c6\u5907\u62cd\u7167", "\u642d\u914d\u76f8\u673a"
+    };
     private static final String[] VOICE_COMMAND_PHOTO_WORDS = {
-            "\u62cd\u7167", "\u62cd\u4e00\u5f20", "\u7167\u4e00\u4e0b", "\u770b\u4e00\u4e0b", "\u626b\u4e00\u4e0b"
+            "\u73b0\u573a\u62cd\u7167", "\u62cd\u7167", "\u62cd\u4e00\u5f20", "\u62cd\u5f20\u7167", "\u7167\u4e00\u4e0b", "\u770b\u4e00\u4e0b", "\u626b\u4e00\u4e0b"
     };
     private static final String[] VOICE_COMMAND_RETAKE_WORDS = {
             "\u91cd\u62cd", "\u91cd\u65b0\u62cd", "\u518d\u62cd", "\u91cd\u65b0\u7167", "\u518d\u7167"
@@ -187,6 +209,21 @@ public final class MainActivity extends Activity {
     };
     private static final String[] VOICE_COMMAND_SPEAK_WORDS = {
             "\u7ee7\u7eed\u8bf4", "\u7ee7\u7eed\u95ee", "\u6211\u518d\u8bf4", "\u8ffd\u95ee", "\u7ee7\u7eed\u63d0\u95ee"
+    };
+    private static final String[] VOICE_COMMAND_NEW_PROJECT_WORDS = {
+            "\u65b0\u5efa\u9879\u76ee", "\u5efa\u7acb\u9879\u76ee", "\u65b0\u7684\u9879\u76ee"
+    };
+    private static final String[] VOICE_COMMAND_NEXT_PROJECT_WORDS = {
+            "\u4e0b\u4e00\u6761\u8bb0\u5f55", "\u4e0b\u4e00\u4e2a\u8bb0\u5f55", "\u4e0b\u4e00\u6761"
+    };
+    private static final String[] VOICE_COMMAND_PREVIOUS_PROJECT_WORDS = {
+            "\u4e0a\u4e00\u6761\u8bb0\u5f55", "\u4e0a\u4e00\u4e2a\u8bb0\u5f55", "\u4e0a\u4e00\u6761"
+    };
+    private static final String[] VOICE_COMMAND_LATEST_PROJECT_WORDS = {
+            "\u6700\u65b0\u8bb0\u5f55", "\u6700\u8fd1\u8bb0\u5f55", "\u56de\u5230\u6700\u65b0"
+    };
+    private static final String[] VOICE_COMMAND_RECORDS_WORDS = {
+            "\u67e5\u770b\u8bb0\u5f55", "\u6253\u5f00\u8bb0\u5f55", "\u5386\u53f2\u8bb0\u5f55"
     };
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -242,6 +279,9 @@ public final class MainActivity extends Activity {
     private boolean voiceSpeechStarted;
     private boolean voiceAutoStopRequested;
     private Runnable voiceTranscriptStableStopRunnable;
+    private boolean voiceAutoListenArmed;
+    private boolean voiceStartedFromAutoWindow;
+    private long wakePrefixGraceUntilMs;
 
     private byte[] composerImageBytes;
     private String composerImageId = "";
@@ -259,6 +299,7 @@ public final class MainActivity extends Activity {
     private int chatScrollRequestId;
     private long gptStreamStartedAtMs = 0L;
     private boolean gptFirstDeltaLogged = false;
+    private int gptRequestGeneration = 0;
     private boolean pendingVoicePhotoCapture;
     private int currentProjectIndex = 0;
     private ChatAiClient chatAiClient;
@@ -299,7 +340,11 @@ public final class MainActivity extends Activity {
                 && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCameraFlow();
         }
-        scheduleForegroundVoiceListening("resume");
+        if (isForegroundWakeListeningEnabled()) {
+            scheduleForegroundVoiceListening("resume");
+        } else {
+            cancelForegroundVoiceListening();
+        }
     }
 
     @Override
@@ -380,6 +425,7 @@ public final class MainActivity extends Activity {
     }
 
     private boolean handleHardwareShortcut(int keyCode) {
+        Log.i(KEY_LOG_TAG, "handleHardwareShortcut keyCode=" + keyCode + " screen=" + screenMode);
         if (isChatScrollKey(keyCode)) {
             if (screenMode == ScreenMode.CHAT) {
                 scrollChatByKey(keyCode);
@@ -1009,11 +1055,13 @@ public final class MainActivity extends Activity {
         sendAfterImageUpload = false;
         composerTranscript = "";
         streamingAssistantIndex = -1;
+        gptRequestGeneration++;
+        gptStreamStartedAtMs = 0L;
         liveTranscriptMessageIndex = -1;
         loadCurrentProjectMessages();
         persistChatProjects();
         scrollChatToBottom = true;
-        flushPendingChatStreamRender();
+        renderChatScreen();
     }
 
     private void switchProjectChat(int index) {
@@ -1175,6 +1223,7 @@ public final class MainActivity extends Activity {
 
     private void renderChatStreamMessagesOnly() {
         renderMessages();
+        scheduleChatScrollToBottom();
     }
 
     private void scheduleChatScrollToTop() {
@@ -1578,6 +1627,7 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmCapturedPhoto(byte[] jpegBytes) {
+        Log.i(KEY_LOG_TAG, "Photo captured bytes=" + (jpegBytes == null ? 0 : jpegBytes.length));
         composerImageBytes = jpegBytes;
         composerImageId = "";
         composerImagePreviewBase64 = createImagePreviewBase64(jpegBytes);
@@ -1586,6 +1636,8 @@ public final class MainActivity extends Activity {
         showComposerAttachment("正在上传");
         renderChatScreen();
         uploadImageForChat(jpegBytes);
+        voiceStreamState = VoiceStreamState.IDLE;
+        scheduleForegroundVoiceListening("photo-captured");
     }
 
     private void showComposerAttachment(String label) {
@@ -1633,6 +1685,8 @@ public final class MainActivity extends Activity {
     }
 
     private void onBackendImageUploaded(String imageId, byte[] imageBytes) {
+        Log.i(KEY_LOG_TAG, "Photo context ready imageId=" + (imageId == null ? "" : imageId)
+                + " bytes=" + (imageBytes == null ? 0 : imageBytes.length));
         composerImageBytes = imageBytes;
         composerImageId = imageId == null ? "" : imageId;
         composerImagePreviewBase64 = createImagePreviewBase64(imageBytes);
@@ -1713,8 +1767,20 @@ public final class MainActivity extends Activity {
             return false;
         }
         clearLiveTranscriptMessageIfStreaming();
+        if (command == VoiceCommand.OPEN_CAMERA) {
+            enterCameraScreen("voice-open-camera");
+            voiceStreamState = VoiceStreamState.IDLE;
+            scheduleForegroundVoiceListening("camera-opened");
+            return true;
+        }
         if (command == VoiceCommand.TAKE_PHOTO) {
-            requestVoicePhotoCapture();
+            if (screenMode == ScreenMode.CAMERA) {
+                requestVoicePhotoCapture();
+            } else {
+                enterCameraScreen("voice-open-camera-before-photo");
+                voiceStreamState = VoiceStreamState.IDLE;
+                scheduleForegroundVoiceListening("camera-opened");
+            }
             return true;
         }
         if (command == VoiceCommand.RETAKE_PHOTO) {
@@ -1746,28 +1812,77 @@ public final class MainActivity extends Activity {
             startToggleVoiceRecording();
             return true;
         }
+        if (command == VoiceCommand.NEW_PROJECT) {
+            createNewProjectChat();
+            setProjectRailVisible(false);
+            voiceStreamState = VoiceStreamState.IDLE;
+            renderChatScreen();
+            return true;
+        }
+        if (command == VoiceCommand.SHOW_RECORDS) {
+            renderChatScreen();
+            setProjectRailVisible(true);
+            voiceStreamState = VoiceStreamState.IDLE;
+            return true;
+        }
+        if (command == VoiceCommand.NEXT_PROJECT) {
+            switchProjectChat(Math.min(chatProjects.size() - 1, currentProjectIndex + 1));
+            setProjectRailVisible(true);
+            voiceStreamState = VoiceStreamState.IDLE;
+            return true;
+        }
+        if (command == VoiceCommand.PREVIOUS_PROJECT) {
+            switchProjectChat(Math.max(0, currentProjectIndex - 1));
+            setProjectRailVisible(true);
+            voiceStreamState = VoiceStreamState.IDLE;
+            return true;
+        }
+        if (command == VoiceCommand.LATEST_PROJECT) {
+            switchProjectChat(0);
+            setProjectRailVisible(true);
+            voiceStreamState = VoiceStreamState.IDLE;
+            return true;
+        }
         return false;
     }
 
     private VoiceCommand classifyVoiceCommand(String text) {
-        String normalized = normalizeVoiceCommandText(text);
-        if (normalized.length() == 0) {
+        String normalized = compactVoiceCommandCandidate(text);
+        if (!isLikelyVoiceCommandPhrase(normalized)) {
             return VoiceCommand.NONE;
+        }
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_OPEN_CAMERA_WORDS)) {
+            return VoiceCommand.OPEN_CAMERA;
         }
         if (containsAny(normalized, VOICE_COMMAND_RETAKE_WORDS)) {
             return VoiceCommand.RETAKE_PHOTO;
         }
-        if (containsAny(normalized, VOICE_COMMAND_PHOTO_WORDS)) {
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_PHOTO_WORDS)) {
             return VoiceCommand.TAKE_PHOTO;
         }
-        if (containsAny(normalized, VOICE_COMMAND_SEND_WORDS)) {
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_SEND_WORDS)) {
             return VoiceCommand.SEND;
         }
-        if (containsAny(normalized, VOICE_COMMAND_BACK_WORDS)) {
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_BACK_WORDS)) {
             return VoiceCommand.BACK_TO_CHAT;
         }
-        if (containsAny(normalized, VOICE_COMMAND_SPEAK_WORDS)) {
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_SPEAK_WORDS)) {
             return VoiceCommand.START_VOICE;
+        }
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_NEW_PROJECT_WORDS)) {
+            return VoiceCommand.NEW_PROJECT;
+        }
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_NEXT_PROJECT_WORDS)) {
+            return VoiceCommand.NEXT_PROJECT;
+        }
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_PREVIOUS_PROJECT_WORDS)) {
+            return VoiceCommand.PREVIOUS_PROJECT;
+        }
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_LATEST_PROJECT_WORDS)) {
+            return VoiceCommand.LATEST_PROJECT;
+        }
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_RECORDS_WORDS)) {
+            return VoiceCommand.SHOW_RECORDS;
         }
         return VoiceCommand.NONE;
     }
@@ -1780,7 +1895,39 @@ public final class MainActivity extends Activity {
                 .replace("\t", "")
                 .replace("\n", "")
                 .replace("\r", "")
+                .replace("\u3002", "")
+                .replace("\uff01", "")
+                .replace("\uff1f", "")
+                .replace("\uff0c", "")
+                .replace("\u3001", "")
                 .trim();
+    }
+
+    private String compactVoiceCommandCandidate(String text) {
+        return normalizeVoiceCommandText(text)
+                .replace("\u53ee\u5f53", "")
+                .replace("\u5c0f\u53ee", "")
+                .replace("\u5c0f\u4e01", "")
+                .replace("\u8bf7", "")
+                .replace("\u5e2e\u6211", "")
+                .replace("\u4e00\u4e0b", "");
+    }
+
+    private boolean isLikelyVoiceCommandPhrase(String text) {
+        return text != null && text.length() > 0 && text.length() <= MAX_VOICE_COMMAND_CHARS;
+    }
+
+    private boolean matchesVoiceCommand(String text, String[] words) {
+        if (!isLikelyVoiceCommandPhrase(text)) {
+            return false;
+        }
+        for (String word : words) {
+            if (word != null && word.length() > 0
+                    && (text.equals(word) || text.startsWith(word) || text.endsWith(word))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean containsAny(String text, String[] words) {
@@ -1790,6 +1937,65 @@ public final class MainActivity extends Activity {
             }
         }
         return false;
+    }
+
+    private boolean hasDingdangWakePrefix(String text) {
+        String normalized = normalizeVoiceCommandText(text);
+        return normalized.startsWith("\u53ee\u5f53")
+                || normalized.startsWith("\u5c0f\u53ee")
+                || normalized.startsWith("\u5c0f\u4e01");
+    }
+
+    private boolean isDingdangWakeOnly(String text) {
+        String normalized = normalizeVoiceCommandText(text);
+        return normalized.equals("\u53ee\u5f53")
+                || normalized.equals("\u5c0f\u53ee")
+                || normalized.equals("\u5c0f\u4e01");
+    }
+
+    private boolean hasWakePrefixGrace() {
+        return wakePrefixGraceUntilMs > 0L && SystemClock.elapsedRealtime() <= wakePrefixGraceUntilMs;
+    }
+
+    private String stripDingdangWakePrefix(String text) {
+        String normalized = normalizeVoiceCommandText(text);
+        if (normalized.startsWith("\u53ee\u5f53")) {
+            return normalized.substring(2);
+        }
+        if (normalized.startsWith("\u5c0f\u53ee") || normalized.startsWith("\u5c0f\u4e01")) {
+            return normalized.substring(2);
+        }
+        return text;
+    }
+
+    private boolean isIgnorableVoiceUtterance(String text) {
+        String normalized = normalizeVoiceCommandText(text);
+        if (normalized.length() == 0) {
+            return true;
+        }
+        if (normalized.equals("\u597d")
+                || normalized.equals("\u55ef")
+                || normalized.equals("\u554a")
+                || normalized.equals("\u5443")
+                || normalized.equals("\u54e6")
+                || normalized.equals("\u5582")
+                || normalized.equals("\u662f")) {
+            return true;
+        }
+        return isNumericFillerNoise(normalized);
+    }
+
+    private boolean isNumericFillerNoise(String normalized) {
+        if (normalized == null || normalized.length() == 0) {
+            return false;
+        }
+        String stripped = normalized.replaceAll("[0-9\uff10-\uff19]", "");
+        return stripped.length() > 0
+                && stripped.length() <= 2
+                && (stripped.equals("\u55ef")
+                || stripped.equals("\u554a")
+                || stripped.equals("\u5443")
+                || stripped.equals("\u54e6"));
     }
 
     private void appendAssistantMessage(String text) {
@@ -1884,17 +2090,41 @@ public final class MainActivity extends Activity {
         cancelForegroundVoiceListening();
     }
 
+    private boolean isActiveGptRequest(int requestGeneration) {
+        return streamingAssistantIndex >= 0 && gptRequestGeneration == requestGeneration;
+    }
+
+    private void scheduleGptRequestWatchdog(final int requestGeneration) {
+        mainHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!isActiveGptRequest(requestGeneration)) {
+                    return;
+                }
+                Log.w(KEY_LOG_TAG, "GPT stream watchdog still waiting requestGeneration=" + requestGeneration);
+                updateAssistantStreamingMessage("\n\n\u7f51\u7edc\u8f83\u6162\uff0c\u4ecd\u5728\u7b49\u5f85 AI \u56de\u590d...");
+            }
+        }, GPT_REQUEST_WATCHDOG_MS);
+    }
+
     private void sendComposerToAi() {
         final String prompt = composerTranscript.trim();
         final byte[] image = composerImageBytes;
         final String imageId = composerImageId;
-        ChatMessage contextImage = image == null ? latestImageMessage() : null;
+        ChatMessage contextImage = (!DIRECT_GPT_ENABLED && image == null) ? latestImageMessage() : null;
         final String imagePreviewBase64 = image != null ? composerImagePreviewBase64 : "";
-        final String effectiveImageId = imageId.length() > 0
-                ? imageId
-                : (image != null && DIRECT_GPT_ENABLED
-                        ? "local-photo"
-                        : (contextImage == null ? "" : contextImage.imageId));
+        String resolvedImageId = "";
+        if (imageId.length() > 0) {
+            resolvedImageId = imageId;
+        } else if (DIRECT_GPT_ENABLED) {
+            resolvedImageId = image != null ? "local-photo" : "";
+        } else if (contextImage != null) {
+            resolvedImageId = contextImage.imageId;
+        }
+        final String effectiveImageId = resolvedImageId;
+        Log.i(KEY_LOG_TAG, "sendComposerToAi promptChars=" + prompt.length()
+                + " hasImageBytes=" + (image != null && image.length > 0)
+                + " effectiveImageId=" + effectiveImageId);
         if (image != null && effectiveImageId.length() == 0) {
             if (composerImageUploadFailed) {
                 sendAfterImageUpload = false;
@@ -1949,6 +2179,8 @@ public final class MainActivity extends Activity {
         appendAssistantStreamingMessage();
         stateText.setText("Thinking");
         markGptStreamStart(effectiveImageId, prompt);
+        final int requestGeneration = ++gptRequestGeneration;
+        scheduleGptRequestWatchdog(requestGeneration);
         chatAiClient.send(prompt, effectiveImageId, image, new StreamingCallback() {
             @Override
             public void onDelta(String text) {
@@ -1967,6 +2199,10 @@ public final class MainActivity extends Activity {
                 mainHandler.post(new Runnable() {
                     @Override
                     public void run() {
+                        if (!isActiveGptRequest(requestGeneration)) {
+                            return;
+                        }
+                        Log.i(KEY_LOG_TAG, "GPT stream complete");
                         finalizeAssistantStreamingMessage();
                     }
                 });
@@ -1977,6 +2213,10 @@ public final class MainActivity extends Activity {
                 mainHandler.post(new Runnable() {
                     @Override
                     public void run() {
+                        if (!isActiveGptRequest(requestGeneration)) {
+                            return;
+                        }
+                        Log.w(KEY_LOG_TAG, "GPT stream error " + safeMessage(error));
                         updateAssistantStreamingMessage("\n\nAI 调用失败：" + safeMessage(error));
                         finalizeAssistantStreamingMessage();
                     }
@@ -2113,6 +2353,10 @@ public final class MainActivity extends Activity {
 
     private void scheduleForegroundVoiceListening(String reason) {
         cancelForegroundVoiceListening();
+        if (!isForegroundWakeListeningEnabled()) {
+            return;
+        }
+        voiceAutoListenArmed = true;
         if (!shouldStartForegroundVoiceListening()) {
             return;
         }
@@ -2122,11 +2366,20 @@ public final class MainActivity extends Activity {
                 foregroundAutoVoiceStartRunnable = null;
                 if (shouldStartForegroundVoiceListening()) {
                     Log.i(KEY_LOG_TAG, "Foreground voice auto start reason=" + reason);
+                    voiceStartedFromAutoWindow = true;
+                    voiceAutoListenArmed = false;
                     startToggleVoiceRecording();
                 }
             }
         };
-        mainHandler.postDelayed(foregroundAutoVoiceStartRunnable, 600L);
+        mainHandler.postDelayed(foregroundAutoVoiceStartRunnable, foregroundVoiceStartDelayMs(reason));
+    }
+
+    private long foregroundVoiceStartDelayMs(String reason) {
+        if ("wake-listen-retry".equals(reason)) {
+            return FOREGROUND_WAKE_RETRY_DELAY_MS;
+        }
+        return 600L;
     }
 
     private void cancelForegroundVoiceListening() {
@@ -2134,17 +2387,37 @@ public final class MainActivity extends Activity {
             mainHandler.removeCallbacks(foregroundAutoVoiceStartRunnable);
             foregroundAutoVoiceStartRunnable = null;
         }
+        voiceAutoListenArmed = false;
     }
 
     private boolean shouldStartForegroundVoiceListening() {
-        return screenMode == ScreenMode.CHAT
+        return (screenMode == ScreenMode.CHAT || screenMode == ScreenMode.CAMERA)
+                && isForegroundWakeListeningEnabled()
+                && voiceAutoListenArmed
                 && !recordingVoice
                 && voiceStreamState == VoiceStreamState.IDLE
                 && streamingAssistantIndex < 0
                 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
     }
 
+    private boolean shouldContinueForegroundWakeListening(String code) {
+        if (!isForegroundWakeListeningEnabled() || streamingAssistantIndex >= 0) {
+            return false;
+        }
+        String safeCode = code == null ? "" : code;
+        return (screenMode == ScreenMode.CHAT || screenMode == ScreenMode.CAMERA)
+                && !safeCode.startsWith("asr_error:")
+                && !"asr_endpoint_missing".equals(safeCode)
+                && !"asr_realtime_unavailable".equals(safeCode);
+    }
+
+    private static boolean isForegroundWakeListeningEnabled() {
+        return "com.codex.air3nativecamera.dingdangmanager.butler".equals(APP_ID);
+    }
+
     private void startToggleVoiceRecording() {
+        boolean autoWindowStart = voiceStartedFromAutoWindow;
+        voiceStartedFromAutoWindow = false;
         if (recordingVoice) {
             finishToggleVoiceRecording("manual_finish");
             return;
@@ -2170,6 +2443,7 @@ public final class MainActivity extends Activity {
             voiceRecorder = recorder;
             voiceFile = file;
             recordingVoice = true;
+            voiceStartedFromAutoWindow = autoWindowStart;
             voiceRecordingStartedAtMs = SystemClock.elapsedRealtime();
             voiceLastSpeechAtMs = voiceRecordingStartedAtMs;
             voiceLastTranscriptAtMs = voiceRecordingStartedAtMs;
@@ -2188,7 +2462,7 @@ public final class MainActivity extends Activity {
                     finishToggleVoiceRecording("max_duration");
                 }
             };
-            mainHandler.postDelayed(voiceStopRunnable, VOICE_RECORDING_MS);
+            mainHandler.postDelayed(voiceStopRunnable, autoWindowStart ? VOICE_AUTO_WAKE_RECORDING_MS : VOICE_RECORDING_MS);
             renderComposer();
         } catch (Exception error) {
             recordingVoice = false;
@@ -2463,14 +2737,51 @@ public final class MainActivity extends Activity {
             @Override
             public void run() {
                 realtimeAsrFinished = true;
+                boolean autoWindowFinal = voiceStartedFromAutoWindow;
                 if (finalText.length() == 0) {
                     onVoiceUnclear("empty_final_text");
                     return;
                 }
+                if (isIgnorableVoiceUtterance(finalText)) {
+                    composerTranscript = "";
+                    stopVoiceCaptureAfterAsrFinal();
+                    voiceStreamState = VoiceStreamState.IDLE;
+                    voiceStartedFromAutoWindow = false;
+                    onVoiceUnclear("voice-filler-retry");
+                    return;
+                }
+                if (autoWindowFinal && isDingdangWakeOnly(finalText)) {
+                    wakePrefixGraceUntilMs = SystemClock.elapsedRealtime() + WAKE_PREFIX_GRACE_MS;
+                    composerTranscript = "";
+                    stopVoiceCaptureAfterAsrFinal();
+                    voiceStreamState = VoiceStreamState.IDLE;
+                    voiceStartedFromAutoWindow = false;
+                    clearLiveTranscriptMessageIfStreaming();
+                    scheduleForegroundVoiceListening("wake-prefix-grace");
+                    return;
+                }
+                boolean missingWakePrefix = autoWindowFinal && !hasDingdangWakePrefix(finalText);
+                boolean hasWakePrefix = !missingWakePrefix;
+                boolean graceCommand = autoWindowFinal && !hasWakePrefix && hasWakePrefixGrace()
+                        && classifyVoiceCommand(finalText) != VoiceCommand.NONE;
+                if (missingWakePrefix && !graceCommand) {
+                    wakePrefixGraceUntilMs = 0L;
+                    composerTranscript = "";
+                    stopVoiceCaptureAfterAsrFinal();
+                    voiceStreamState = VoiceStreamState.IDLE;
+                    voiceStartedFromAutoWindow = false;
+                    onVoiceUnclear("wake_prefix_required");
+                    return;
+                }
                 stopVoiceCaptureAfterAsrFinal();
+                voiceStartedFromAutoWindow = false;
                 voiceStreamState = VoiceStreamState.FINAL_READY;
-                composerTranscript = finalText;
-                if (handleVoiceCommand(finalText)) {
+                String effectiveFinalText = hasWakePrefix ? stripDingdangWakePrefix(finalText) : finalText;
+                if (graceCommand) {
+                    wakePrefixGraceUntilMs = 0L;
+                }
+                composerTranscript = effectiveFinalText;
+                if (handleVoiceCommand(effectiveFinalText)) {
                     return;
                 }
                 updateLiveTranscriptMessage(finalText, true);
@@ -2495,6 +2806,14 @@ public final class MainActivity extends Activity {
             @Override
             public void run() {
                 if (realtimeAsrFinished && composerTranscript.trim().length() > 0) {
+                    if (!voiceStartedFromAutoWindow && shouldSendDraftOnAsrFinished(code)) {
+                        stopVoiceCaptureAfterAsrFinal();
+                        voiceStartedFromAutoWindow = false;
+                        voiceStreamState = VoiceStreamState.AI_PENDING;
+                        stateText.setText("宸插惉娓咃紝姝ｅ湪鍒嗘瀽");
+                        renderComposer();
+                        sendComposerToAi();
+                    }
                     return;
                 }
                 stopVoiceCaptureAfterAsrFinal();
@@ -2503,8 +2822,23 @@ public final class MainActivity extends Activity {
                 clearLiveTranscriptMessageIfStreaming();
                 stateText.setText("在线");
                 renderComposer();
+                voiceStreamState = VoiceStreamState.IDLE;
+                if (shouldContinueForegroundWakeListening(code)) {
+                    scheduleForegroundVoiceListening("wake-listen-retry");
+                } else {
+                    cancelForegroundVoiceListening();
+                }
             }
         });
+    }
+
+    private boolean shouldSendDraftOnAsrFinished(String code) {
+        String safeCode = code == null ? "" : code;
+        String draft = composerTranscript == null ? "" : composerTranscript.trim();
+        return draft.length() > 0
+                && ("asr_task_finished".equals(safeCode)
+                || "empty_final_text".equals(safeCode)
+                || "voice_unclear".equals(safeCode));
     }
 
     private String voiceStatusForDiagnostic(String code) {
@@ -3250,10 +3584,13 @@ public final class MainActivity extends Activity {
                     OutputStream output = null;
                     try {
                         JSONObject payload = buildChatPayload(prompt, jpegBytes);
+                        long requestStartedAt = SystemClock.elapsedRealtime();
+                        Log.i(KEY_LOG_TAG, "Direct GPT request start payloadChars=" + payload.toString().length()
+                                + " imageBytes=" + (jpegBytes == null ? 0 : jpegBytes.length));
                         connection = (HttpURLConnection) new URL(chatCompletionsUrl(baseUrl)).openConnection();
                         connection.setRequestMethod("POST");
                         connection.setConnectTimeout(15000);
-                        connection.setReadTimeout(90000);
+                        connection.setReadTimeout((int) GPT_REQUEST_WATCHDOG_MS);
                         connection.setDoOutput(true);
                         connection.setRequestProperty("Authorization", "Bearer " + apiKey);
                         connection.setRequestProperty("Content-Type", JSON_CONTENT_TYPE);
@@ -3262,17 +3599,21 @@ public final class MainActivity extends Activity {
                         output.close();
                         output = null;
                         int status = connection.getResponseCode();
+                        Log.i(KEY_LOG_TAG, "Direct GPT response status=" + status
+                                + " latencyMs=" + (SystemClock.elapsedRealtime() - requestStartedAt));
                         InputStream stream = status >= 200 && status < 300
                                 ? connection.getInputStream()
                                 : connection.getErrorStream();
-                        String body = readAll(stream);
                         if (status < 200 || status >= 300) {
+                            String body = readAll(stream);
                             throw new IOException("direct_gpt_http_" + status + ": " + body);
                         }
-                        String text = parseChatText(body);
-                        streamText(text, callback);
+                        streamChatCompletions(stream, callback);
+                        Log.i(KEY_LOG_TAG, "Direct GPT SSE done latencyMs="
+                                + (SystemClock.elapsedRealtime() - requestStartedAt));
                         callback.onComplete();
                     } catch (Exception error) {
+                        Log.w(KEY_LOG_TAG, "Direct GPT request failed " + safeMessage(error));
                         callback.onError(error);
                     } finally {
                         if (output != null) {
@@ -3306,6 +3647,8 @@ public final class MainActivity extends Activity {
             if (reasoningEffort.length() > 0) {
                 payload.put("reasoning_effort", reasoningEffort);
             }
+            payload.put("stream", true);
+            payload.put("max_tokens", 600);
             JSONArray messages = new JSONArray();
             JSONObject system = new JSONObject();
             system.put("role", "system");
@@ -3332,6 +3675,48 @@ public final class MainActivity extends Activity {
             payload.put("messages", messages);
             payload.put("temperature", 0.2);
             return payload;
+        }
+
+        private static void streamChatCompletions(InputStream stream, StreamingCallback callback) throws Exception {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String trimmed = line.trim();
+                if (trimmed.length() == 0 || !trimmed.startsWith("data:")) {
+                    continue;
+                }
+                String data = trimmed.substring("data:".length()).trim();
+                if ("[DONE]".equals(data)) {
+                    break;
+                }
+                String delta = parseStreamingChatDelta(data);
+                if (delta.length() > 0) {
+                    callback.onDelta(delta);
+                }
+            }
+        }
+
+        private static String parseStreamingChatDelta(String data) throws Exception {
+            JSONObject root = new JSONObject(data);
+            JSONArray choices = root.optJSONArray("choices");
+            if (choices == null || choices.length() == 0) {
+                return "";
+            }
+            JSONObject choice = choices.optJSONObject(0);
+            if (choice == null) {
+                return "";
+            }
+            JSONObject delta = choice.optJSONObject("delta");
+            if (delta != null) {
+                Object content = delta.opt("content");
+                return content instanceof String ? (String) content : "";
+            }
+            JSONObject message = choice.optJSONObject("message");
+            if (message != null) {
+                Object content = message.opt("content");
+                return content instanceof String ? (String) content : "";
+            }
+            return "";
         }
 
         private static String parseChatText(String body) throws Exception {

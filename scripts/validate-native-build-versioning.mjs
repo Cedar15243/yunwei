@@ -15,6 +15,9 @@ const dingdangInstallVerifyScriptPath = path.join(root, "scripts/install-and-ver
 const assistantBuildScriptPath = path.join(root, "scripts/build-dingdang-ai-assistant-apk.ps1");
 const assistantInstallVerifyScriptPath = path.join(root, "scripts/install-and-verify-dingdang-ai-assistant.ps1");
 const assistantDirectBuildInstallScriptPath = path.join(root, "scripts/build-install-dingdang-ai-assistant-direct-apk.ps1");
+const assistantFollowBuildScriptPath = path.join(root, "scripts/build-dingdang-ai-expert-follow-apk.ps1");
+const assistantFollowInstallVerifyScriptPath = path.join(root, "scripts/install-and-verify-dingdang-ai-expert-follow.ps1");
+const assistantFollowDirectBuildInstallScriptPath = path.join(root, "scripts/build-install-dingdang-ai-expert-follow-direct-apk.ps1");
 const managerBuildScriptPath = path.join(root, "scripts/build-dingdang-ai-manager-apk.ps1");
 const managerInstallVerifyScriptPath = path.join(root, "scripts/install-and-verify-dingdang-ai-manager.ps1");
 const managerDirectBuildInstallScriptPath = path.join(root, "scripts/build-install-dingdang-ai-manager-gpt-apk.ps1");
@@ -50,6 +53,15 @@ const assistantInstallVerifyScript = fs.existsSync(assistantInstallVerifyScriptP
   : "";
 const assistantDirectBuildInstallScript = fs.existsSync(assistantDirectBuildInstallScriptPath)
   ? fs.readFileSync(assistantDirectBuildInstallScriptPath, "utf8")
+  : "";
+const assistantFollowBuildScript = fs.existsSync(assistantFollowBuildScriptPath)
+  ? fs.readFileSync(assistantFollowBuildScriptPath, "utf8")
+  : "";
+const assistantFollowInstallVerifyScript = fs.existsSync(assistantFollowInstallVerifyScriptPath)
+  ? fs.readFileSync(assistantFollowInstallVerifyScriptPath, "utf8")
+  : "";
+const assistantFollowDirectBuildInstallScript = fs.existsSync(assistantFollowDirectBuildInstallScriptPath)
+  ? fs.readFileSync(assistantFollowDirectBuildInstallScriptPath, "utf8")
   : "";
 const managerBuildScript = fs.existsSync(managerBuildScriptPath)
   ? fs.readFileSync(managerBuildScriptPath, "utf8")
@@ -393,17 +405,74 @@ for (const marker of [
 }
 
 for (const marker of [
+  '$env:AIR3_APK_APP_ID = "com.codex.air3nativecamera.dingdangexpert.follow"',
+  '$assistantLabel = -join @(',
+  '[char]0x53EE, [char]0x5F53, "AI",',
+  '[char]0x8FD0, [char]0x7EF4,',
+  '[char]0x4E13, [char]0x5BB6',
+  '$env:AIR3_APK_APP_LABEL = $assistantLabel',
+  '$env:AIR3_APK_OUTPUT_NAME = "DingdangAiOpsExpertFollow"',
+  '$env:AIR3_APK_VERSION_CODE = "626"',
+  '$env:AIR3_APK_VERSION_NAME = "6.2.6-chat-follow-new-app"',
+  '$env:AIR3_APK_DIRECT_GPT = "0"',
+  'build-native-apk.ps1',
+]) {
+  mustInclude(assistantFollowBuildScript, marker, `expert follow build script must include ${marker}`);
+}
+
+for (const marker of [
+  'param(',
+  '[string]$Serial = "YM00FCF3NW0031"',
+  '[string]$Package = "com.codex.air3nativecamera.dingdangexpert.follow"',
+  '[string[]]$RequiredCoexistPackages = @(',
+  '"com.codex.air3nativecamera.dingdangexpert"',
+  '"com.codex.air3nativecamera.dingdangmanager"',
+  '"com.codex.air3nativecamera.dingdangmanager.butler"',
+  '[string]$ApkPath = "air3-native-camera-test\\build\\DingdangAiOpsExpertFollow.apk"',
+  '[int]$ExpectedVersionCode = 626',
+  '[string]$ExpectedVersionName = "6.2.6-chat-follow-new-app"',
+  '[string]$ExpectedLabel = (-join @(',
+  '[char]0x53EE, [char]0x5F53, "AI",',
+  '[char]0x8FD0, [char]0x7EF4,',
+  '[char]0x4E13, [char]0x5BB6',
+  'install -r $apk',
+  'pm grant $Package android.permission.CAMERA',
+  'pm grant $Package android.permission.RECORD_AUDIO',
+  'foreach ($requiredPackage in @($RequiredCoexistPackages + $Package))',
+  'Expected coexist package missing after expert follow install',
+  'versionCode=$ExpectedVersionCode',
+  'versionName=$([regex]::Escape($ExpectedVersionName))',
+  'resolve-activity --brief $Package',
+  'am start --display 0 -n "$Package/$Activity"',
+  'uiautomator dump /dev/tty',
+  'screencap -p',
+]) {
+  mustInclude(assistantFollowInstallVerifyScript, marker, `expert follow install-and-verify script must include ${marker}`);
+}
+
+for (const marker of [
+  'scripts\\build-dingdang-ai-expert-follow-apk.ps1',
+  'scripts\\install-and-verify-dingdang-ai-expert-follow.ps1',
+  'DIRECT_GPT_API_KEY',
+  'DIRECT_ASR_API_KEY',
+  'DIRECT_ASR_ENDPOINT',
+  'Key values are loaded but will not be printed',
+]) {
+  mustInclude(assistantFollowDirectBuildInstallScript, marker, `expert follow direct build/install script must include ${marker}`);
+}
+
+for (const marker of [
   '$env:AIR3_APK_APP_ID = "com.codex.air3nativecamera.dingdangmanager"',
   '$managerLabel = -join @(',
   '[char]0x7BA1, [char]0x5BB6',
   '$env:AIR3_APK_APP_LABEL = $managerLabel',
   '$env:AIR3_APK_OUTPUT_NAME = "DingdangAiOpsManager"',
-  '$env:AIR3_APK_VERSION_CODE = "715"',
-  '$env:AIR3_APK_VERSION_NAME = "7.1.5-one-shot-autostop"',
+  '$env:AIR3_APK_VERSION_CODE = "720"',
+  '$env:AIR3_APK_VERSION_NAME = "7.2.0-demo-stable-stream"',
   '$env:AIR3_APK_DIRECT_GPT = "1"',
   '$env:DIRECT_GPT_BASE_URL = "https://api.xje96.uk"',
   '$env:DIRECT_GPT_MODEL = "gpt-5.5"',
-  '$env:DIRECT_GPT_REASONING_EFFORT = "high"',
+  '$env:DIRECT_GPT_REASONING_EFFORT = "low"',
   'tmp\\openai_api_key.local',
   'tmp\\direct_asr_endpoint.local',
   '$env:DIRECT_ASR_ENDPOINT',
@@ -417,8 +486,8 @@ for (const marker of [
   '[string[]]$CoexistPackages = @(',
   '"com.codex.air3nativecamera.dingdangexpert"',
   '[string]$ApkPath = "air3-native-camera-test\\build\\DingdangAiOpsManager.apk"',
-  '[int]$ExpectedVersionCode = 715',
-  '[string]$ExpectedVersionName = "7.1.5-one-shot-autostop"',
+  '[int]$ExpectedVersionCode = 720',
+  '[string]$ExpectedVersionName = "7.2.0-demo-stable-stream"',
   '[char]0x7BA1, [char]0x5BB6',
   'install -r $apk',
   'foreach ($requiredPackage in @($CoexistPackages + $Package))',
@@ -439,8 +508,8 @@ for (const marker of [
   'DIRECT_ASR_API_KEY',
   'DIRECT_ASR_ENDPOINT',
   '$env:DIRECT_GPT_BASE_URL = "https://api.xje96.uk"',
-  '$env:DIRECT_GPT_REASONING_EFFORT = "high"',
-  'GPT reasoning effort: high',
+  '$env:DIRECT_GPT_REASONING_EFFORT = "low"',
+  'GPT reasoning effort: low',
   'DINGDANG_MANAGER_GPT_MODEL',
   'gpt-5.5',
   'Key values are loaded but will not be printed',

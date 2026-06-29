@@ -151,6 +151,7 @@ $generatedConfigSource = @"
 package com.codex.air3nativecamera;
 
 final class GeneratedConfig {
+    static final String APP_ID = "$appId";
     static final String APP_LABEL = "$escapedAppLabel";
     static final String EVENTS_ENDPOINT = "$escapedEndpoint";
     static final String OPS_GLASSES_API_KEY = "$escapedKey";
