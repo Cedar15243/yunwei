@@ -81,7 +81,7 @@ import javax.net.ssl.SSLSocketFactory;
 
 public final class MainActivity extends Activity {
     private enum ScreenMode { CHAT, CAMERA }
-    private enum VoiceCommand { NONE, TAKE_PHOTO, RETAKE_PHOTO, SEND, BACK_TO_CHAT, START_VOICE, NEW_PROJECT, SHOW_RECORDS, NEXT_PROJECT, PREVIOUS_PROJECT, LATEST_PROJECT }
+    private enum VoiceCommand { NONE, TAKE_PHOTO, RETAKE_PHOTO, SEND, BACK_TO_CHAT, START_VOICE }
     private enum VoiceStreamState { IDLE, LISTENING, PARTIAL_READY, FINAL_READY, AI_PENDING, AI_DONE, VOICE_UNCLEAR }
 
     private interface ChatAiClient {
@@ -134,8 +134,8 @@ public final class MainActivity extends Activity {
     private static final int PREVIEW_MAX_IMAGE_EDGE = 480;
     private static final long VOICE_RECORDING_MS = 30000L;
     private static final long VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L;
-    private static final long VOICE_AUTO_STOP_SILENCE_MS = 2500L;
-    private static final long VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 3200L;
+    private static final long VOICE_AUTO_STOP_SILENCE_MS = 1500L;
+    private static final long VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 1800L;
     private static final long VOICE_RECORD_THREAD_JOIN_MS = 700L;
     private static final long CHAT_STREAM_RENDER_INTERVAL_MS = 260L;
     private static final int VOICE_SILENCE_RMS_THRESHOLD = 520;
@@ -187,21 +187,6 @@ public final class MainActivity extends Activity {
     };
     private static final String[] VOICE_COMMAND_SPEAK_WORDS = {
             "\u7ee7\u7eed\u8bf4", "\u7ee7\u7eed\u95ee", "\u6211\u518d\u8bf4", "\u8ffd\u95ee", "\u7ee7\u7eed\u63d0\u95ee"
-    };
-    private static final String[] VOICE_COMMAND_NEW_PROJECT_WORDS = {
-            "\u65b0\u5efa\u9879\u76ee", "\u65b0\u9879\u76ee", "\u5efa\u4e2a\u9879\u76ee", "\u91cd\u65b0\u5f00\u59cb", "\u65b0\u5efa\u4f1a\u8bdd", "\u65b0\u4f1a\u8bdd"
-    };
-    private static final String[] VOICE_COMMAND_RECORDS_WORDS = {
-            "\u67e5\u770b\u8bb0\u5f55", "\u6253\u5f00\u8bb0\u5f55", "\u5386\u53f2\u8bb0\u5f55", "\u4f1a\u8bdd\u8bb0\u5f55", "\u9879\u76ee\u8bb0\u5f55", "\u67e5\u770b\u5386\u53f2"
-    };
-    private static final String[] VOICE_COMMAND_NEXT_PROJECT_WORDS = {
-            "\u4e0b\u4e00\u4e2a\u8bb0\u5f55", "\u4e0b\u4e00\u6761\u8bb0\u5f55", "\u4e0b\u4e00\u4e2a\u9879\u76ee", "\u4e0b\u4e00\u4e2a\u4f1a\u8bdd", "\u5f80\u4e0b\u5207\u6362"
-    };
-    private static final String[] VOICE_COMMAND_PREVIOUS_PROJECT_WORDS = {
-            "\u4e0a\u4e00\u4e2a\u8bb0\u5f55", "\u4e0a\u4e00\u6761\u8bb0\u5f55", "\u4e0a\u4e00\u4e2a\u9879\u76ee", "\u4e0a\u4e00\u4e2a\u4f1a\u8bdd", "\u5f80\u4e0a\u5207\u6362"
-    };
-    private static final String[] VOICE_COMMAND_LATEST_PROJECT_WORDS = {
-            "\u6700\u65b0\u8bb0\u5f55", "\u6700\u8fd1\u8bb0\u5f55", "\u6253\u5f00\u6700\u8fd1", "\u56de\u5230\u6700\u65b0", "\u6700\u65b0\u9879\u76ee"
     };
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -1761,29 +1746,6 @@ public final class MainActivity extends Activity {
             startToggleVoiceRecording();
             return true;
         }
-        if (command == VoiceCommand.NEW_PROJECT) {
-            createNewProjectChat();
-            setProjectRailVisible(false);
-            voiceStreamState = VoiceStreamState.IDLE;
-            scheduleForegroundVoiceListening("voice-command-new-project");
-            return true;
-        }
-        if (command == VoiceCommand.SHOW_RECORDS) {
-            showProjectRecordsByVoice();
-            return true;
-        }
-        if (command == VoiceCommand.NEXT_PROJECT) {
-            switchProjectByVoice(1);
-            return true;
-        }
-        if (command == VoiceCommand.PREVIOUS_PROJECT) {
-            switchProjectByVoice(-1);
-            return true;
-        }
-        if (command == VoiceCommand.LATEST_PROJECT) {
-            switchProjectByVoice(-currentProjectIndex);
-            return true;
-        }
         return false;
     }
 
@@ -1807,49 +1769,7 @@ public final class MainActivity extends Activity {
         if (containsAny(normalized, VOICE_COMMAND_SPEAK_WORDS)) {
             return VoiceCommand.START_VOICE;
         }
-        if (containsAny(normalized, VOICE_COMMAND_NEW_PROJECT_WORDS)) {
-            return VoiceCommand.NEW_PROJECT;
-        }
-        if (containsAny(normalized, VOICE_COMMAND_NEXT_PROJECT_WORDS)) {
-            return VoiceCommand.NEXT_PROJECT;
-        }
-        if (containsAny(normalized, VOICE_COMMAND_PREVIOUS_PROJECT_WORDS)) {
-            return VoiceCommand.PREVIOUS_PROJECT;
-        }
-        if (containsAny(normalized, VOICE_COMMAND_LATEST_PROJECT_WORDS)) {
-            return VoiceCommand.LATEST_PROJECT;
-        }
-        if (containsAny(normalized, VOICE_COMMAND_RECORDS_WORDS)) {
-            return VoiceCommand.SHOW_RECORDS;
-        }
         return VoiceCommand.NONE;
-    }
-
-    private void showProjectRecordsByVoice() {
-        renderChatScreen();
-        setProjectRailVisible(true);
-        voiceStreamState = VoiceStreamState.IDLE;
-        scheduleForegroundVoiceListening("voice-command-records");
-    }
-
-    private void switchProjectByVoice(int offset) {
-        if (chatProjects.isEmpty()) {
-            restoreChatProjects();
-        }
-        if (chatProjects.isEmpty()) {
-            return;
-        }
-        int target = currentProjectIndex + offset;
-        if (target < 0) {
-            target = 0;
-        }
-        if (target >= chatProjects.size()) {
-            target = chatProjects.size() - 1;
-        }
-        switchProjectChat(target);
-        setProjectRailVisible(true);
-        voiceStreamState = VoiceStreamState.IDLE;
-        scheduleForegroundVoiceListening("voice-command-switch-project");
     }
 
     private String normalizeVoiceCommandText(String text) {
@@ -1961,7 +1881,7 @@ public final class MainActivity extends Activity {
         cancelPendingChatStreamRender();
         renderChatStreamMessagesOnly();
         voiceStreamState = VoiceStreamState.IDLE;
-        scheduleForegroundVoiceListening("ai_complete");
+        cancelForegroundVoiceListening();
     }
 
     private void sendComposerToAi() {

@@ -27,8 +27,8 @@ if (-not $env:DIRECT_ASR_ENDPOINT -or $env:DIRECT_ASR_ENDPOINT.Trim().Length -eq
 $env:AIR3_APK_APP_ID = "com.codex.air3nativecamera.dingdangmanager"
 $env:AIR3_APK_APP_LABEL = $managerLabel
 $env:AIR3_APK_OUTPUT_NAME = "DingdangAiOpsManager"
-$env:AIR3_APK_VERSION_CODE = "712"
-$env:AIR3_APK_VERSION_NAME = "7.1.2-all-voice-controls"
+$env:AIR3_APK_VERSION_CODE = "715"
+$env:AIR3_APK_VERSION_NAME = "7.1.5-one-shot-autostop"
 $env:AIR3_APK_FAST_UPLOAD = "1"
 $env:AIR3_APK_DIRECT_GPT = "1"
 $env:DIRECT_GPT_BASE_URL = "https://api.xje96.uk"

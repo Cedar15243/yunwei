@@ -51,7 +51,7 @@ function methodBlock(signature) {
 
 for (const marker of [
   "private enum ScreenMode { CHAT, CAMERA }",
-  "private enum VoiceCommand { NONE, TAKE_PHOTO, RETAKE_PHOTO, SEND, BACK_TO_CHAT, START_VOICE, NEW_PROJECT, SHOW_RECORDS, NEXT_PROJECT, PREVIOUS_PROJECT, LATEST_PROJECT }",
+  "private enum VoiceCommand { NONE, TAKE_PHOTO, RETAKE_PHOTO, SEND, BACK_TO_CHAT, START_VOICE }",
   "private interface ChatAiClient",
   "private static final class DirectGptClient implements ChatAiClient",
   "private static final class BackendGptClient implements ChatAiClient",
@@ -110,19 +110,12 @@ for (const marker of [
   "handleVoiceCommand(",
   "requestVoicePhotoCapture()",
   "capturePendingVoicePhotoIfReady()",
-  "switchProjectByVoice(",
-  "showProjectRecordsByVoice()",
   "pendingVoicePhotoCapture",
   "VOICE_COMMAND_PHOTO_WORDS",
   "VOICE_COMMAND_RETAKE_WORDS",
   "VOICE_COMMAND_SEND_WORDS",
   "VOICE_COMMAND_BACK_WORDS",
   "VOICE_COMMAND_SPEAK_WORDS",
-  "VOICE_COMMAND_NEW_PROJECT_WORDS",
-  "VOICE_COMMAND_RECORDS_WORDS",
-  "VOICE_COMMAND_NEXT_PROJECT_WORDS",
-  "VOICE_COMMAND_PREVIOUS_PROJECT_WORDS",
-  "VOICE_COMMAND_LATEST_PROJECT_WORDS",
   "onVoiceUnclear(",
   "voiceStreamState = VoiceStreamState.AI_PENDING",
   "sendComposerToAi();",
@@ -255,8 +248,8 @@ for (const marker of [
   "照片已添加",
   "点我说话",
   "VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L",
-  "VOICE_AUTO_STOP_SILENCE_MS = 2500L",
-  "VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 3200L",
+  "VOICE_AUTO_STOP_SILENCE_MS = 1500L",
+  "VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 1800L",
   "postInvalidateDelayed(160L)",
   "android.content.Intent",
   "protected void onNewIntent(Intent intent)",
@@ -351,6 +344,11 @@ if (!foregroundVoiceBody.includes("shouldStartForegroundVoiceListening()") ||
     !foregroundVoiceBody.includes("postDelayed(foregroundAutoVoiceStartRunnable")) {
   throw new Error("foreground voice listening must be delayed, gated, and start the existing recorder path");
 }
+const finalizeAssistantBody = methodBody("finalizeAssistantStreamingMessage(");
+if (!finalizeAssistantBody.includes("cancelForegroundVoiceListening();") ||
+    finalizeAssistantBody.includes("scheduleForegroundVoiceListening(\"ai_complete\")")) {
+  throw new Error("AI completion must not automatically restart listening and capture bystanders");
+}
 
 const stopVoiceBody = methodBody("stopVoiceRecording(");
 if (!stopVoiceBody.includes("cleanupVoiceRecordThreadAsync();") || stopVoiceBody.includes(".join(")) {
@@ -377,11 +375,6 @@ for (const marker of [
   "VOICE_COMMAND_SEND_WORDS",
   "VOICE_COMMAND_BACK_WORDS",
   "VOICE_COMMAND_SPEAK_WORDS",
-  "VOICE_COMMAND_NEW_PROJECT_WORDS",
-  "VOICE_COMMAND_RECORDS_WORDS",
-  "VOICE_COMMAND_NEXT_PROJECT_WORDS",
-  "VOICE_COMMAND_PREVIOUS_PROJECT_WORDS",
-  "VOICE_COMMAND_LATEST_PROJECT_WORDS",
 ]) {
   if (!classifyVoiceCommandBody.includes(marker)) {
     throw new Error(`voice command classifier missing marker: ${marker}`);
@@ -395,17 +388,7 @@ for (const marker of [
   "VoiceCommand.SEND",
   "VoiceCommand.BACK_TO_CHAT",
   "VoiceCommand.START_VOICE",
-  "VoiceCommand.NEW_PROJECT",
-  "VoiceCommand.SHOW_RECORDS",
-  "VoiceCommand.NEXT_PROJECT",
-  "VoiceCommand.PREVIOUS_PROJECT",
-  "VoiceCommand.LATEST_PROJECT",
   "requestVoicePhotoCapture();",
-  "createNewProjectChat();",
-  "showProjectRecordsByVoice();",
-  "switchProjectByVoice(1);",
-  "switchProjectByVoice(-1);",
-  "switchProjectByVoice(-currentProjectIndex);",
   "sendComposerToAi();",
   "renderChatScreen();",
   "startToggleVoiceRecording();",
