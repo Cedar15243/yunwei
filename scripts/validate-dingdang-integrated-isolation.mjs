@@ -28,4 +28,21 @@ assert.match(build, /versionCode 627/);
 assert.match(build, /versionName "6\.2\.7-expert-preview"/);
 assert.doesNotMatch(build, /TRTC_SDK_SECRET/);
 
+const buildScriptPath = path.join(root, "scripts", "build-dingdang-integrated-preview.ps1");
+const installScriptPath = path.join(root, "scripts", "install-and-verify-dingdang-integrated-preview.ps1");
+assert.ok(existsSync(buildScriptPath), "integrated preview build script is missing");
+assert.ok(existsSync(installScriptPath), "integrated preview install script is missing");
+
+const buildScript = readFileSync(buildScriptPath, "utf8");
+const installScript = readFileSync(installScriptPath, "utf8");
+assert.match(buildScript, /collabServerUrl/);
+assert.match(buildScript, /assembleDebug/);
+assert.match(installScript, /com\.codex\.air3nativecamera\.dingdangexpert\.follow\.preview/);
+assert.match(installScript, /com\.codex\.air3nativecamera\.dingdangexpert\.follow/);
+assert.match(installScript, /com\.codex\.air3nativecamera\.dingdangexpert\.collab/);
+assert.match(installScript, /versionCode=626/);
+assert.match(installScript, /versionCode=801/);
+assert.match(installScript, /versionCode=627/);
+assert.doesNotMatch(installScript, /\buninstall\b/i);
+
 console.log("Integrated preview isolation validation passed.");
