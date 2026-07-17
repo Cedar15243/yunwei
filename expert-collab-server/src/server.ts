@@ -42,6 +42,7 @@ export function createCollabServer(config: ServerConfig): CollabServer {
   const websocketServer = new WebSocketServer({ noServer: true });
   const store = new SessionStore();
   const clients = new Map<WebSocket, RegisteredClient>();
+  const allowedOrigins = new Set(config.allowedOrigin.split(",").map((origin) => origin.trim()).filter(Boolean));
   let serverSequence = 0;
 
   const envelope = (type: string, sessionId: string | null, payload: Record<string, unknown>): Envelope => ({
@@ -55,7 +56,11 @@ export function createCollabServer(config: ServerConfig): CollabServer {
 
   app.use(express.json({ limit: "2mb" }));
   app.use((request, response, next) => {
-    response.setHeader("Access-Control-Allow-Origin", config.allowedOrigin);
+    const requestOrigin = request.headers.origin;
+    if (requestOrigin && allowedOrigins.has(requestOrigin)) {
+      response.setHeader("Access-Control-Allow-Origin", requestOrigin);
+      response.setHeader("Vary", "Origin");
+    }
     response.setHeader("Access-Control-Allow-Headers", "content-type");
     response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     if (request.method === "OPTIONS") {
@@ -259,7 +264,12 @@ export function createCollabServer(config: ServerConfig): CollabServer {
       clients.delete(socket);
       if (client?.kind === "expert") {
         try {
-          store.setExpertOnline(client.id, false);
+          const hasAnotherConnection = [...clients.values()].some(
+            (peer) => peer.kind === "expert" && peer.id === client.id,
+          );
+          if (!hasAnotherConnection) {
+            store.setExpertOnline(client.id, false);
+          }
         } catch {
           // A client can disconnect before registration is committed.
         }

@@ -9,8 +9,8 @@ export interface UserSigOptions {
   nowSeconds?: number;
 }
 
-function toUrlSafeBase64(buffer: Buffer): string {
-  return buffer.toString("base64").replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+function toTencentBase64(buffer: Buffer): string {
+  return buffer.toString("base64").replaceAll("+", "*").replaceAll("/", "-").replaceAll("=", "_");
 }
 
 export function generateUserSig(options: UserSigOptions): string {
@@ -46,10 +46,10 @@ export function generateUserSig(options: UserSigOptions): string {
     "TLS.ver": "2.0",
     "TLS.identifier": userId,
     "TLS.sdkappid": options.sdkAppId,
-    "TLS.expire": expireSeconds,
     "TLS.time": nowSeconds,
+    "TLS.expire": expireSeconds,
     "TLS.sig": signature,
   };
 
-  return toUrlSafeBase64(deflateSync(Buffer.from(JSON.stringify(document), "utf8")));
+  return toTencentBase64(deflateSync(Buffer.from(JSON.stringify(document), "utf8")));
 }

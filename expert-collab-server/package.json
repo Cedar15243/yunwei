@@ -17,6 +17,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.1",
     "@types/ws": "^8.18.1",
+    "tls-sig-api-v2": "^1.0.2",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

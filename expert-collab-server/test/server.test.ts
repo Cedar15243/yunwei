@@ -53,6 +53,20 @@ function nextMessage(socket: WebSocket): Promise<Record<string, unknown>> {
 }
 
 describe("collaboration server", () => {
+  it("allows each configured expert console origin", async () => {
+    const server = await createCollabServer({
+      ...config,
+      allowedOrigin: "http://localhost:5174,http://192.168.30.205:5174",
+    }).start(0);
+    runningServers.push(server);
+
+    const response = await fetch(`${server.httpUrl}/api/config`, {
+      headers: { origin: "http://localhost:5174" },
+    });
+
+    expect(response.headers.get("access-control-allow-origin")).toBe("http://localhost:5174");
+  });
+
   it("serves health and public config without the secret", async () => {
     const server = await startServer();
     const health = await fetch(`${server.httpUrl}/health`).then((response) => response.json());
@@ -117,6 +131,31 @@ describe("collaboration server", () => {
 
     expertWang.close();
     expertLiu.close();
+    glasses.close();
+  });
+
+  it("keeps an expert online while another tab with the same identity remains connected", async () => {
+    const server = await startServer();
+    const firstTab = await openSocket(server.websocketUrl);
+    const secondTab = await openSocket(server.websocketUrl);
+    const glasses = await openSocket(server.websocketUrl);
+
+    firstTab.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-wang", seq: 1, sentAt: 1, payload: { kind: "expert", name: "Wang" } }));
+    secondTab.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-wang", seq: 1, sentAt: 1, payload: { kind: "expert", name: "Wang" } }));
+    glasses.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "glasses-01", seq: 1, sentAt: 1, payload: { kind: "glasses", name: "Air3-01" } }));
+    await Promise.all([nextMessage(firstTab), nextMessage(secondTab), nextMessage(glasses)]);
+
+    const firstTabClosed = new Promise<void>((resolve) => firstTab.once("close", () => resolve()));
+    firstTab.close();
+    await firstTabClosed;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const incomingCall = nextMessage(secondTab);
+    glasses.send(JSON.stringify({ type: "call.requested", sessionId: null, senderId: "glasses-01", seq: 2, sentAt: 2, payload: {} }));
+
+    expect((await incomingCall).type).toBe("call.requested");
+
+    secondTab.close();
     glasses.close();
   });
 

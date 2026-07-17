@@ -69,11 +69,12 @@ if (-not $lanAddress) {
 New-Item -ItemType Directory -Force $runtimeDir | Out-Null
 $serverOrigin = "http://${lanAddress}:$ServerPort"
 $webOrigin = "http://${lanAddress}:$WebPort"
+$localWebOrigin = "http://localhost:$WebPort"
 $env:TRTC_SDK_APP_ID = "1600152353"
 $env:TRTC_SDK_SECRET = $sdkSecret
 $env:COLLAB_HOST = "0.0.0.0"
 $env:COLLAB_PORT = "$ServerPort"
-$env:COLLAB_ORIGIN = $webOrigin
+$env:COLLAB_ORIGIN = "$localWebOrigin,$webOrigin"
 $env:COLLAB_FREEZE_DIR = Join-Path $runtimeDir "freezes"
 $env:VITE_COLLAB_HTTP_URL = $serverOrigin
 $env:VITE_COLLAB_WS_URL = "ws://${lanAddress}:$ServerPort/collab"
@@ -107,7 +108,8 @@ for ($attempt = 0; $attempt -lt 20; $attempt++) {
 } | ConvertTo-Json | Set-Content -LiteralPath $pidFile -Encoding UTF8
 
 Write-Output "Expert collaboration demo is ready."
-Write-Output "Primary expert: $webOrigin/?expertId=expert-wang&name=%E7%8E%8B%E5%B7%A5"
-Write-Output "Observer expert: $webOrigin/?expertId=expert-liu&name=%E5%88%98%E5%B7%A5"
+Write-Output "Primary expert: $localWebOrigin/?expertId=expert-wang&name=%E7%8E%8B%E5%B7%A5"
+Write-Output "Observer expert: $localWebOrigin/?expertId=expert-liu&name=%E5%88%98%E5%B7%A5"
+Write-Output "LAN expert access: $webOrigin"
 Write-Output "Server: $serverOrigin"
 Write-Output "Logs: $runtimeDir"

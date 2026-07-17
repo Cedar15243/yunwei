@@ -1,14 +1,41 @@
+import { createRequire } from "node:module";
 import { inflateSync } from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { generateUserSig } from "../src/trtc-user-sig.js";
 
+const require = createRequire(import.meta.url);
+const { Api: OfficialTlsSigApi } = require("tls-sig-api-v2") as {
+  Api: new (sdkAppId: number, sdkSecret: string) => {
+    genUserSig(userId: string, expireSeconds: number): string;
+  };
+};
+
 function decodeUserSig(userSig: string): Record<string, unknown> {
-  const base64 = userSig.replaceAll("-", "+").replaceAll("_", "/");
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  return JSON.parse(inflateSync(Buffer.from(base64 + padding, "base64")).toString("utf8"));
+  const base64 = userSig.replaceAll("*", "+").replaceAll("-", "/").replaceAll("_", "=");
+  return JSON.parse(inflateSync(Buffer.from(base64, "base64")).toString("utf8"));
 }
 
 describe("generateUserSig", () => {
+  it("matches the Tencent TLS Sig API v2 encoding", () => {
+    const nowSeconds = 1_784_253_600;
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(nowSeconds * 1000);
+
+    try {
+      const officialApi = new OfficialTlsSigApi(1600152353, "private-secret");
+      const officialUserSig = officialApi.genUserSig("expert-wang", 900);
+
+      expect(generateUserSig({
+        sdkAppId: 1600152353,
+        sdkSecret: "private-secret",
+        userId: "expert-wang",
+        expireSeconds: 900,
+        nowSeconds,
+      })).toBe(officialUserSig);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
   it("creates a short-lived TLS signature for the requested identity", () => {
     const userSig = generateUserSig({
       sdkAppId: 1600152353,
