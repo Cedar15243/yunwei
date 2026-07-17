@@ -50,6 +50,7 @@ button { color: inherit; }
 .video-stage { position: relative; min-height: 0; overflow: hidden; background: #111d22; }
 #glasses-video, .video-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 #glasses-video > video { width: 100%; height: 100%; object-fit: contain; }
+.freeze-frame { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #090d11; }
 .video-fallback { background: linear-gradient(140deg, #274148, #111d22 52%, #1d3436); }
 .equipment-line { position: absolute; background: rgba(210,225,225,.18); }
 .equipment-line--left { left: 18%; top: -10%; width: 4%; height: 128%; transform: rotate(18deg); }
@@ -59,6 +60,9 @@ button { color: inherit; }
 .live-indicator span { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #45d483; }
 .role-indicator { right: 16px; }
 .annotation-toolbar { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 3px; padding: 6px; background: rgba(9,13,17,.92); border: 1px solid #2a3643; }
+.annotation-canvas { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.annotation-toolbar { z-index: 4; }
+.live-indicator, .role-indicator, .incoming-call, .call-toast { z-index: 5; }
 .icon-button { width: 38px; height: 36px; display: grid; place-items: center; color: #9aabb7; background: transparent; border: 1px solid transparent; border-radius: 3px; }
 .icon-button:hover:not(:disabled) { background: #24313b; }
 .icon-button--selected { color: #ff6870; background: #26333e; border-color: #3a4956; }
@@ -98,6 +102,8 @@ button { color: inherit; }
 .snapshot--secondary { background: linear-gradient(135deg, #263940, #121d22); }
 .snapshot span { color: #aebbc3; font-size: 9px; }
 .snapshot strong { font-size: 11px; }
+.snapshot { background-position: center; background-size: cover; }
+.empty-records { margin: 16px 0; color: #70818e; font-size: 10px; text-align: center; }
 .connection-panel dl { display: grid; gap: 8px; margin: 0; }
 .connection-panel dl div { display: flex; justify-content: space-between; gap: 10px; font-size: 10px; }
 .connection-panel dt { color: #8fa0ad; }

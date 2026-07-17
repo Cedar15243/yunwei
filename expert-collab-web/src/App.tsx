@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { CollabSocket } from "./api/collab-socket";
 import { TrtcClient } from "./api/trtc-client";
+import type { AnnotationTransport } from "./canvas/AnnotationCanvas";
+import { captureFreezeFrame, uploadFreezeFrame } from "./freeze-frame";
 import {
   CollaborationController,
   type CollaborationSnapshot,
@@ -46,7 +48,13 @@ export function App({ initialRole, live }: AppProps) {
   const role = initialRole ?? "primary";
   const videoViewRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<CollaborationController | null>(null);
+  const signalingRef = useRef<CollabSocket | null>(null);
   const [call, setCall] = useState<CollaborationSnapshot>(waitingSnapshot);
+  const [annotationAuthorId, setAnnotationAuthorId] = useState("expert-preview");
+  const [annotationTransport, setAnnotationTransport] = useState<AnnotationTransport | null>(null);
+  const [freezeUrl, setFreezeUrl] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [snapshots, setSnapshots] = useState<Array<{ id: string; label: string; time: string; url: string }>>([]);
 
   useEffect(() => {
     if (!liveEnabled || !videoViewRef.current) {
@@ -63,20 +71,91 @@ export function App({ initialRole, live }: AppProps) {
       expertName: identity.name,
       videoView: videoViewRef.current,
     });
+    const canvasTransport: AnnotationTransport = {
+      send(type, payload) {
+        const sessionId = controller.getSnapshot().sessionId;
+        if (sessionId) {
+          signaling.sendSessionEvent(type, sessionId, payload);
+        }
+      },
+      subscribe(listener) {
+        return signaling.subscribe(listener);
+      },
+    };
     controllerRef.current = controller;
+    signalingRef.current = signaling;
+    setAnnotationAuthorId(identity.id);
+    setAnnotationTransport(canvasTransport);
     const unsubscribe = controller.subscribe(setCall);
+    const unsubscribeFreeze = signaling.subscribe((message) => {
+      if (message.type === "freeze.created" && typeof message.payload.url === "string") {
+        setFreezeUrl(message.payload.url);
+      } else if (message.type === "freeze.cleared") {
+        setFreezeUrl(null);
+      }
+    });
     const start = () => controller.start();
     socket.addEventListener("open", start);
 
     return () => {
       socket.removeEventListener("open", start);
       unsubscribe();
+      unsubscribeFreeze();
       signaling.close();
       socket.close();
       controllerRef.current = null;
+      signalingRef.current = null;
+      setAnnotationTransport(null);
       void controller.stop();
     };
   }, [liveEnabled]);
+
+  const captureAndUpload = async (): Promise<string> => {
+    const sessionId = controllerRef.current?.getSnapshot().sessionId;
+    if (!sessionId || !videoViewRef.current) {
+      throw new Error("当前没有可截图的协同会话");
+    }
+    return uploadFreezeFrame({
+      dataUrl: captureFreezeFrame(videoViewRef.current),
+      sessionId,
+    });
+  };
+
+  const toggleFreeze = async (): Promise<void> => {
+    const sessionId = controllerRef.current?.getSnapshot().sessionId;
+    if (!sessionId || !signalingRef.current) {
+      return;
+    }
+    setActionError(null);
+    if (freezeUrl) {
+      signalingRef.current.sendSessionEvent("freeze.cleared", sessionId, {});
+      setFreezeUrl(null);
+      return;
+    }
+    try {
+      const url = await captureAndUpload();
+      signalingRef.current.sendSessionEvent("freeze.created", sessionId, { url });
+      setFreezeUrl(url);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "冻结画面失败");
+    }
+  };
+
+  const createSnapshot = async (): Promise<void> => {
+    setActionError(null);
+    try {
+      const url = await captureAndUpload();
+      const now = new Date();
+      setSnapshots((current) => [{
+        id: crypto.randomUUID(),
+        label: `专家截图 ${current.length + 1}`,
+        time: now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+        url,
+      }, ...current]);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "截图失败");
+    }
+  };
 
   return (
     <div className="app-shell">
@@ -88,12 +167,18 @@ export function App({ initialRole, live }: AppProps) {
         <ContactRail />
         <ExpertStage
           call={liveEnabled ? call : null}
+          annotationAuthorId={annotationAuthorId}
+          annotationTransport={annotationTransport}
+          actionError={actionError}
+          freezeUrl={freezeUrl}
           onAccept={() => controllerRef.current?.accept()}
           onEnd={() => void controllerRef.current?.end()}
+          onScreenshot={() => void createSnapshot()}
+          onToggleFreeze={() => void toggleFreeze()}
           role={role}
           videoViewRef={videoViewRef}
         />
-        <SessionPanel role={role} />
+        <SessionPanel role={role} snapshots={liveEnabled ? snapshots : undefined} />
       </div>
     </div>
   );

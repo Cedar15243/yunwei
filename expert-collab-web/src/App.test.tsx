@@ -59,6 +59,7 @@ describe("expert collaboration console", () => {
 
     act(() => socket?.open());
     await waitFor(() => expect(socket?.sent).toHaveLength(1));
+    expect(screen.getByText("专家在线 · 等待现场呼叫")).toBeVisible();
     act(() => socket?.receive({
       type: "call.requested",
       sessionId: "session-1",

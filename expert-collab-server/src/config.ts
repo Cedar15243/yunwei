@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 export interface ServerConfig {
   sdkAppId: number;
   sdkSecret: string;
@@ -5,6 +7,7 @@ export interface ServerConfig {
   port: number;
   allowedOrigin: string;
   websocketPath: "/collab";
+  freezeDirectory: string;
 }
 
 export interface PublicConfig {
@@ -38,6 +41,7 @@ export function loadConfig(environment: Environment = process.env): ServerConfig
     port: readPositiveInteger(environment.COLLAB_PORT, "COLLAB_PORT", 8787),
     allowedOrigin: environment.COLLAB_ORIGIN?.trim() || "http://localhost:5173",
     websocketPath: "/collab",
+    freezeDirectory: resolve(environment.COLLAB_FREEZE_DIR?.trim() || "tmp/expert-collab-freezes"),
   };
 }
 

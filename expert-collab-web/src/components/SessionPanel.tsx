@@ -3,9 +3,16 @@ import type { ExpertRole } from "./ExpertStage";
 
 interface SessionPanelProps {
   role: ExpertRole;
+  snapshots?: Array<{ id: string; label: string; time: string; url: string }>;
 }
 
-export function SessionPanel({ role }: SessionPanelProps) {
+const previewSnapshots = [
+  { id: "preview-1", label: "接线端子标注", time: "10:34", url: "" },
+  { id: "preview-2", label: "设备铭牌", time: "10:32", url: "" },
+];
+
+export function SessionPanel({ role, snapshots }: SessionPanelProps) {
+  const records = snapshots ?? previewSnapshots;
   return (
     <aside className="session-panel" aria-label="会话信息">
       <section className="panel-section">
@@ -17,9 +24,18 @@ export function SessionPanel({ role }: SessionPanelProps) {
       </section>
 
       <section className="panel-section">
-        <header className="panel-title"><span><Radio aria-hidden="true" size={16} />截图记录</span><small>2张</small></header>
-        <button className="snapshot" type="button"><span>10:34</span><strong>接线端子标注</strong></button>
-        <button className="snapshot snapshot--secondary" type="button"><span>10:32</span><strong>设备铭牌</strong></button>
+        <header className="panel-title"><span><Radio aria-hidden="true" size={16} />截图记录</span><small>{records.length}张</small></header>
+        {records.map((record, index) => (
+          <button
+            className={index % 2 === 0 ? "snapshot" : "snapshot snapshot--secondary"}
+            key={record.id}
+            style={record.url ? { backgroundImage: `linear-gradient(rgba(5,9,12,.18), rgba(5,9,12,.72)), url(${record.url})` } : undefined}
+            type="button"
+          >
+            <span>{record.time}</span><strong>{record.label}</strong>
+          </button>
+        ))}
+        {records.length === 0 ? <p className="empty-records">暂无截图记录</p> : null}
       </section>
 
       <section className="panel-section connection-panel">

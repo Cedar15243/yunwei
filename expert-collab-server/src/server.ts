@@ -1,4 +1,7 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
@@ -88,6 +91,42 @@ export function createCollabServer(config: ServerConfig): CollabServer {
       }),
       expiresIn: 900,
     });
+  });
+
+  app.post("/api/sessions/:sessionId/freeze", async (request, response) => {
+    const imageDataUrl = typeof request.body?.imageDataUrl === "string" ? request.body.imageDataUrl : "";
+    const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(imageDataUrl);
+    if (!match) {
+      response.status(400).json({ error: "imageDataUrl must be a base64 JPEG" });
+      return;
+    }
+
+    const image = Buffer.from(match[1], "base64");
+    if (image.length === 0 || image.length > 1_500_000 || image[0] !== 0xff || image[1] !== 0xd8) {
+      response.status(400).json({ error: "frozen JPEG is invalid or too large" });
+      return;
+    }
+
+    const file = `${randomUUID()}.jpg`;
+    await mkdir(config.freezeDirectory, { recursive: true });
+    await writeFile(join(config.freezeDirectory, file), image, { flag: "wx" });
+    response.status(201).json({ url: `/api/freezes/${file}` });
+  });
+
+  app.get("/api/freezes/:file", async (request, response) => {
+    const file = request.params.file;
+    if (!/^[a-f0-9-]{36}\.jpg$/.test(file)) {
+      response.status(404).end();
+      return;
+    }
+    try {
+      const image = await readFile(join(config.freezeDirectory, file));
+      response.setHeader("Content-Type", "image/jpeg");
+      response.setHeader("Cache-Control", "no-store");
+      response.send(image);
+    } catch {
+      response.status(404).end();
+    }
   });
 
   server.on("upgrade", (request, socket, head) => {

@@ -1,7 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import type { ServerConfig } from "../src/config.js";
 import { createCollabServer, type RunningCollabServer } from "../src/server.js";
+
+const freezeDirectory = mkdtempSync(join(tmpdir(), "expert-collab-freezes-"));
 
 const config: ServerConfig = {
   sdkAppId: 1600152353,
@@ -10,12 +15,17 @@ const config: ServerConfig = {
   port: 8787,
   allowedOrigin: "http://localhost:5173",
   websocketPath: "/collab",
+  freezeDirectory,
 };
 
 const runningServers: RunningCollabServer[] = [];
 
 afterEach(async () => {
   await Promise.all(runningServers.splice(0).map((server) => server.close()));
+});
+
+afterAll(() => {
+  rmSync(freezeDirectory, { recursive: true, force: true });
 });
 
 async function startServer(): Promise<RunningCollabServer> {
@@ -68,6 +78,23 @@ describe("collaboration server", () => {
     expect(credential.expiresIn).toBe(900);
     expect(credential.userSig).toEqual(expect.any(String));
     expect(JSON.stringify(credential)).not.toContain("private-secret");
+  });
+
+  it("stores and serves a frozen JPEG frame", async () => {
+    const server = await startServer();
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    const response = await fetch(`${server.httpUrl}/api/sessions/session-1/freeze`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ imageDataUrl: `data:image/jpeg;base64,${jpeg.toString("base64")}` }),
+    });
+    const result = await response.json() as { url: string };
+
+    expect(response.status).toBe(201);
+    expect(result.url).toMatch(/^\/api\/freezes\/[a-f0-9-]+\.jpg$/);
+    const stored = await fetch(`${server.httpUrl}${result.url}`);
+    expect(stored.headers.get("content-type")).toContain("image/jpeg");
+    expect(Buffer.from(await stored.arrayBuffer())).toEqual(jpeg);
   });
 
   it("broadcasts an eye-glasses call to every online expert", async () => {

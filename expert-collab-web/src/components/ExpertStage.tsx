@@ -1,4 +1,4 @@
-import { useState, type RefObject } from "react";
+import { useRef, useState, type RefObject } from "react";
 import {
   ArrowUpRight,
   Camera,
@@ -18,49 +18,97 @@ import {
   VolumeX,
 } from "lucide-react";
 import type { CollaborationSnapshot } from "../collaboration-controller";
+import {
+  AnnotationCanvas,
+  type AnnotationCanvasHandle,
+  type AnnotationTransport,
+} from "../canvas/AnnotationCanvas";
+import type { AnnotationTool } from "../canvas/annotation-model";
 
 export type ExpertRole = "primary" | "observer";
 
 interface ExpertStageProps {
+  actionError?: string | null;
+  annotationAuthorId?: string;
+  annotationTransport?: AnnotationTransport | null;
   call?: CollaborationSnapshot | null;
+  freezeUrl?: string | null;
   onAccept?: () => void;
   onEnd?: () => void;
+  onScreenshot?: () => void;
+  onToggleFreeze?: () => void;
   role: ExpertRole;
   videoViewRef?: RefObject<HTMLDivElement | null>;
 }
 
 const toolButtons = [
-  { label: "撤销", icon: Undo2 },
-  { label: "重做", icon: Redo2 },
-  { label: "箭头", icon: ArrowUpRight },
-  { label: "画笔", icon: Pencil },
-  { label: "圆圈", icon: Circle },
-  { label: "橡皮", icon: Eraser },
-  { label: "清空", icon: Trash2 },
+  { label: "撤销", icon: Undo2, action: "undo" },
+  { label: "重做", icon: Redo2, action: "unsupported" },
+  { label: "箭头", icon: ArrowUpRight, action: "arrow" },
+  { label: "画笔", icon: Pencil, action: "pen" },
+  { label: "圆圈", icon: Circle, action: "circle" },
+  { label: "橡皮", icon: Eraser, action: "unsupported" },
+  { label: "清空", icon: Trash2, action: "clear" },
 ] as const;
 
-export function ExpertStage({ call, onAccept, onEnd, role, videoViewRef }: ExpertStageProps) {
+export function ExpertStage({
+  actionError,
+  annotationAuthorId = "expert-preview",
+  annotationTransport,
+  call,
+  freezeUrl,
+  onAccept,
+  onEnd,
+  onScreenshot,
+  onToggleFreeze,
+  role,
+  videoViewRef,
+}: ExpertStageProps) {
   const [muted, setMuted] = useState(false);
   const [speakerOff, setSpeakerOff] = useState(false);
-  const [activeTool, setActiveTool] = useState("箭头");
-  const [frozen, setFrozen] = useState(false);
+  const [activeTool, setActiveTool] = useState<AnnotationTool>("arrow");
+  const [localFrozen, setLocalFrozen] = useState(false);
+  const annotationCanvasRef = useRef<AnnotationCanvasHandle>(null);
   const controlsDisabled = role !== "primary" || (call !== null && call !== undefined && call.status !== "in_call");
+  const liveLabel = call === null || call === undefined
+    ? "LIVE · Air3 第一视角 · 00:04:18"
+    : call.status === "in_call"
+      ? "LIVE · Air3 第一视角"
+      : "专家在线 · 等待现场呼叫";
+  const roleLabel = call === null || call === undefined
+    ? role === "primary" ? "主专家：王工 · 标注权" : "旁听语音"
+    : call.status === "in_call" ? role === "primary" ? "主专家 · 标注权" : "旁听语音" : "未进入会话";
 
   return (
     <main className="expert-stage" aria-label="专家协同视频工作区">
       <section className="video-stage" aria-label="Air3第一视角">
         <div id="glasses-video" ref={videoViewRef} aria-label="眼镜实时视频" />
-        {call?.status !== "in_call" ? (
+        {freezeUrl ? <img className="freeze-frame" src={freezeUrl} alt="当前冻结画面" /> : null}
+        {call?.status !== "in_call" && !freezeUrl ? (
           <div className="video-fallback" aria-hidden="true">
             <div className="equipment-line equipment-line--left" />
             <div className="equipment-line equipment-line--right" />
           </div>
         ) : null}
-        <div className="live-indicator"><span /> LIVE · Air3 第一视角 · 00:04:18</div>
-        <div className="role-indicator">{role === "primary" ? "主专家：王工 · 标注权" : "旁听语音"}</div>
-        <div className="demo-annotation demo-annotation--arrow" aria-hidden="true" />
-        <div className="demo-annotation demo-annotation--circle" aria-hidden="true" />
-        <div className="annotation-note">检查右侧接线端子</div>
+        <div className="live-indicator"><span /> {liveLabel}</div>
+        <div className="role-indicator">{roleLabel}</div>
+        {call === null || call === undefined ? (
+          <>
+            <div className="demo-annotation demo-annotation--arrow" aria-hidden="true" />
+            <div className="demo-annotation demo-annotation--circle" aria-hidden="true" />
+            <div className="annotation-note">检查右侧接线端子</div>
+          </>
+        ) : null}
+        {call?.sessionId && annotationTransport ? (
+          <AnnotationCanvas
+            authorId={annotationAuthorId}
+            editable={!controlsDisabled}
+            ref={annotationCanvasRef}
+            sessionId={call.sessionId}
+            tool={activeTool}
+            transport={annotationTransport}
+          />
+        ) : null}
 
         {call?.status === "ringing" ? (
           <div className="incoming-call" role="dialog" aria-label="眼镜来电">
@@ -72,15 +120,24 @@ export function ExpertStage({ call, onAccept, onEnd, role, videoViewRef }: Exper
         {call?.status === "taken" ? <div className="call-toast">已由其他专家接听</div> : null}
         {call?.status === "connecting" ? <div className="call-toast">正在建立安全音视频连接</div> : null}
         {call?.status === "failed" ? <div className="call-toast call-toast--error">连接失败：{call.error}</div> : null}
+        {actionError ? <div className="call-toast call-toast--error">{actionError}</div> : null}
 
         <div className="annotation-toolbar" aria-label="标注工具栏">
-          {toolButtons.map(({ label, icon: Icon }) => (
+          {toolButtons.map(({ label, icon: Icon, action }) => (
             <button
               aria-label={label}
-              className={activeTool === label ? "icon-button icon-button--selected" : "icon-button"}
-              disabled={controlsDisabled}
+              className={activeTool === action ? "icon-button icon-button--selected" : "icon-button"}
+              disabled={controlsDisabled || action === "unsupported"}
               key={label}
-              onClick={() => setActiveTool(label)}
+              onClick={() => {
+                if (action === "undo") {
+                  annotationCanvasRef.current?.undo();
+                } else if (action === "clear") {
+                  annotationCanvasRef.current?.clear();
+                } else if (action !== "unsupported") {
+                  setActiveTool(action);
+                }
+              }}
               title={label}
               type="button"
             >
@@ -101,15 +158,15 @@ export function ExpertStage({ call, onAccept, onEnd, role, videoViewRef }: Exper
             {speakerOff ? "开启声音" : "关闭声音"}
           </button>
           <button
-            className={frozen ? "command-button command-button--active" : "command-button"}
+            className={(freezeUrl || localFrozen) ? "command-button command-button--active" : "command-button"}
             disabled={controlsDisabled}
-            onClick={() => setFrozen((value) => !value)}
+            onClick={() => onToggleFreeze ? onToggleFreeze() : setLocalFrozen((value) => !value)}
             type="button"
           >
             <Snowflake aria-hidden="true" size={17} />
-            {frozen ? "恢复实时" : "冻结画面"}
+            {(freezeUrl || localFrozen) ? "恢复实时" : "冻结画面"}
           </button>
-          <button className="command-button" disabled={controlsDisabled} type="button">
+          <button className="command-button" disabled={controlsDisabled} onClick={onScreenshot} type="button">
             <Camera aria-hidden="true" size={17} />截图
           </button>
           <button className="command-button" type="button">
