@@ -16,7 +16,9 @@
     "validate:figma-frames-evidence": "node scripts/validate-dingdang-figma-frames-evidence.mjs",
     "validate:figma-write-script": "node scripts/validate-dingdang-figma-write-script.mjs",
     "validate:mock-smoke-latency": "node scripts/validate-dingdang-mock-smoke-latency.mjs",
-    "validate:real-smoke-summary": "node scripts/validate-dingdang-real-smoke-summary.mjs"
+    "validate:real-smoke-summary": "node scripts/validate-dingdang-real-smoke-summary.mjs",
+    "validate:expert-collab": "node scripts/validate-expert-collab.mjs",
+    "test:expert-collab": "npm --prefix expert-collab-server test && npm --prefix expert-collab-web test -- --run"
   },
   "engines": {
     "node": ">=20"
