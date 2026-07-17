@@ -152,7 +152,7 @@ public void registersExpertAndEveryReservedOperationsFeature() {
 
 - [ ] **Step 2: Run the test and verify red**
 
-Run: `air3-dingdang-expert-integrated-app\gradlew.bat test --tests "*FeatureRegistryTest"`
+Run: `air3-dingdang-expert-integrated-app\gradlew.bat :app:testDebugUnitTest --tests "*FeatureRegistryTest"`
 
 Expected: FAIL because `FeatureRegistry` does not exist.
 
@@ -177,7 +177,7 @@ Register exact user-facing names: `专家协同`、`设备巡检`、`现场记�
 
 - [ ] **Step 4: Run tests and verify green**
 
-Run: `air3-dingdang-expert-integrated-app\gradlew.bat test --tests "*FeatureRegistryTest"`
+Run: `air3-dingdang-expert-integrated-app\gradlew.bat :app:testDebugUnitTest --tests "*FeatureRegistryTest"`
 
 Expected: all registry tests pass.
 
@@ -220,7 +220,7 @@ public void expertExitReleasesTrtcBeforeRestoringChat() {
 
 - [ ] **Step 2: Run and verify red**
 
-Run: `air3-dingdang-expert-integrated-app\gradlew.bat test --tests "*IntegratedModeControllerTest"`
+Run: `air3-dingdang-expert-integrated-app\gradlew.bat :app:testDebugUnitTest --tests "*IntegratedModeControllerTest"`
 
 Expected: FAIL because the controller does not exist.
 
@@ -264,7 +264,7 @@ public final class IntegratedModeController {
 
 - [ ] **Step 4: Run tests and verify green**
 
-Run: `air3-dingdang-expert-integrated-app\gradlew.bat test --tests "*IntegratedModeControllerTest"`
+Run: `air3-dingdang-expert-integrated-app\gradlew.bat :app:testDebugUnitTest --tests "*IntegratedModeControllerTest"`
 
 Expected: all transition and idempotency tests pass.
 
@@ -285,7 +285,7 @@ git commit -m "feat: define integrated media mode transitions"
 
 - [ ] **Step 1: Copy existing pure-Java tests and verify they fail in the new module**
 
-Run: `air3-dingdang-expert-integrated-app\gradlew.bat test --tests "com.codex.expertcollab.*"`
+Run: `air3-dingdang-expert-integrated-app\gradlew.bat :app:testDebugUnitTest --tests "com.codex.expertcollab.*"`
 
 Expected: FAIL because the collaboration classes are not yet present.
 
@@ -317,7 +317,7 @@ The facade owns all collaboration callbacks and provides both `挂断` and `退�
 Run:
 
 ```powershell
-air3-dingdang-expert-integrated-app\gradlew.bat test --tests "com.codex.expertcollab.*"
+air3-dingdang-expert-integrated-app\gradlew.bat :app:testDebugUnitTest --tests "com.codex.expertcollab.*"
 air3-dingdang-expert-integrated-app\gradlew.bat assembleDebug
 ```
 
