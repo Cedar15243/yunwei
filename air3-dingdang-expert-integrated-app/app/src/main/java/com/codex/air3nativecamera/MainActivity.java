@@ -51,6 +51,11 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import com.codex.air3nativecamera.features.FeatureEntry;
+import com.codex.air3nativecamera.features.FeatureRegistry;
+import com.codex.air3nativecamera.mode.IntegratedModeController;
+import com.codex.expertcollab.ExpertCollabCoordinator;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -79,10 +84,11 @@ import java.util.UUID;
 
 import javax.net.ssl.SSLSocketFactory;
 
-public final class MainActivity extends Activity {
-    private enum ScreenMode { CHAT, CAMERA }
+public final class MainActivity extends Activity implements FeatureEntry.FeatureHost, ExpertCollabCoordinator.Host {
+    private enum ScreenMode { CHAT, CAMERA, EXPERT }
     private enum VoiceCommand {
         NONE,
+        OPEN_EXPERT,
         OPEN_CAMERA,
         TAKE_PHOTO,
         RETAKE_PHOTO,
@@ -195,6 +201,9 @@ public final class MainActivity extends Activity {
     private static final String[] VOICE_COMMAND_OPEN_CAMERA_WORDS = {
             "\u6253\u5f00\u76f8\u673a", "\u51c6\u5907\u62cd\u7167", "\u642d\u914d\u76f8\u673a"
     };
+    private static final String[] VOICE_COMMAND_EXPERT_WORDS = {
+            "呼叫专家", "打开专家协同"
+    };
     private static final String[] VOICE_COMMAND_PHOTO_WORDS = {
             "\u73b0\u573a\u62cd\u7167", "\u62cd\u7167", "\u62cd\u4e00\u5f20", "\u62cd\u5f20\u7167", "\u7167\u4e00\u4e0b", "\u770b\u4e00\u4e0b", "\u626b\u4e00\u4e0b"
     };
@@ -229,9 +238,11 @@ public final class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ArrayList<ChatMessage> chatMessages = new ArrayList<>();
     private final ArrayList<ChatProject> chatProjects = new ArrayList<>();
+    private final FeatureRegistry featureRegistry = FeatureRegistry.createDefault();
 
     private ScreenMode screenMode = ScreenMode.CHAT;
     private FrameLayout root;
+    private FrameLayout expertLayer;
     private TextureView previewView;
     private LinearLayout chatLayer;
     private LinearLayout cameraOverlay;
@@ -305,6 +316,8 @@ public final class MainActivity extends Activity {
     private ChatAiClient chatAiClient;
     private BackendChatClient backendChatClient;
     private DirectAsrClient directAsrClient;
+    private IntegratedModeController modeController;
+    private ExpertCollabCoordinator expertCoordinator;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -322,6 +335,51 @@ public final class MainActivity extends Activity {
         realtimeAsrClient = createRealtimeAsrClient();
         restoreChatProjects();
         buildUi();
+        modeController = new IntegratedModeController(new IntegratedModeController.Hooks() {
+            @Override
+            public void persistLegacyState() {
+                persistChatProjects();
+            }
+
+            @Override
+            public void stopLegacyVoice() {
+                cancelForegroundVoiceListening();
+                stopVoiceRecording(false, "expert_enter");
+            }
+
+            @Override
+            public void closeLegacyCamera() {
+                closeCamera();
+                stopCameraThread();
+            }
+
+            @Override
+            public void showExpert() {
+                showExpertLayer();
+            }
+
+            @Override
+            public void releaseExpert() {
+                releaseExpertCoordinator();
+            }
+
+            @Override
+            public void showChat() {
+                renderChatScreen();
+            }
+
+            @Override
+            public void startLegacyCamera() {
+                if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    startCameraFlow();
+                }
+            }
+
+            @Override
+            public void resumeLegacyVoice() {
+                scheduleForegroundVoiceListening("expert_exit");
+            }
+        });
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA);
         } else {
@@ -336,11 +394,12 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (previewView != null && previewView.isAvailable() && cameraDevice == null
+        if (screenMode != ScreenMode.EXPERT
+                && previewView != null && previewView.isAvailable() && cameraDevice == null
                 && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCameraFlow();
         }
-        if (isForegroundWakeListeningEnabled()) {
+        if (screenMode != ScreenMode.EXPERT && isForegroundWakeListeningEnabled()) {
             scheduleForegroundVoiceListening("resume");
         } else {
             cancelForegroundVoiceListening();
@@ -351,7 +410,9 @@ public final class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (screenMode == ScreenMode.CAMERA) {
+        if (screenMode == ScreenMode.EXPERT) {
+            expertLayer.setVisibility(View.VISIBLE);
+        } else if (screenMode == ScreenMode.CAMERA) {
             renderCameraScreen();
         } else {
             renderChatScreen();
@@ -360,6 +421,9 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        if (screenMode == ScreenMode.EXPERT && modeController != null) {
+            exitExpertMode();
+        }
         persistChatProjects();
         cancelPendingChatStreamRender();
         cancelForegroundVoiceListening();
@@ -371,6 +435,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        releaseExpertCoordinator();
         persistChatProjects();
         cancelPendingChatStreamRender();
         cancelForegroundVoiceListening();
@@ -426,6 +491,16 @@ public final class MainActivity extends Activity {
 
     private boolean handleHardwareShortcut(int keyCode) {
         Log.i(KEY_LOG_TAG, "handleHardwareShortcut keyCode=" + keyCode + " screen=" + screenMode);
+        if (screenMode == ScreenMode.EXPERT) {
+            if (isBackShortcutKey(keyCode)) {
+                exitExpertMode();
+                return true;
+            }
+            if (isConfirmKey(keyCode) && expertCoordinator != null) {
+                return expertCoordinator.handleConfirmKey();
+            }
+            return true;
+        }
         if (isChatScrollKey(keyCode)) {
             if (screenMode == ScreenMode.CHAT) {
                 scrollChatByKey(keyCode);
@@ -582,6 +657,31 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         newProjectParams.topMargin = dp(2);
         projectRail.addView(newProjectButton, newProjectParams);
+
+        TextView aiGuidanceButton = menuItem("AI智能运维指导");
+        projectRail.addView(aiGuidanceButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView expertCollabButton = menuItem("专家协同");
+        projectRail.addView(expertCollabButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView equipmentInspectionButton = menuItem("设备巡检");
+        projectRail.addView(equipmentInspectionButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView fieldRecordsButton = menuItem("现场记录");
+        projectRail.addView(fieldRecordsButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView moreOperationsButton = menuItem("更多运维");
+        projectRail.addView(moreOperationsButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView memoryButton = menuItem("记忆");
         projectRail.addView(memoryButton, new LinearLayout.LayoutParams(
@@ -751,6 +851,13 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
+        expertLayer = new FrameLayout(this);
+        expertLayer.setBackgroundColor(Color.rgb(9, 13, 17));
+        expertLayer.setVisibility(View.GONE);
+        root.addView(expertLayer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
         cameraStatusText = new TextView(this);
         cameraStatusText.setText("对准现场后拍照");
         cameraStatusText.setTextColor(Color.WHITE);
@@ -783,6 +890,38 @@ public final class MainActivity extends Activity {
             public void onClick(View view) {
                 createNewProjectChat();
                 setProjectRailVisible(false);
+            }
+        });
+        aiGuidanceButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setProjectRailVisible(false);
+                renderChatScreen();
+            }
+        });
+        expertCollabButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                featureRegistry.require("expert_collab").enter(MainActivity.this);
+            }
+        });
+        equipmentInspectionButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                featureRegistry.require("equipment_inspection").enter(MainActivity.this);
+            }
+        });
+        fieldRecordsButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                featureRegistry.require("field_records").enter(MainActivity.this);
+            }
+        });
+        moreOperationsButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setProjectRailVisible(false);
+                titleText.setText("更多运维 · 接口已预留");
             }
         });
         menuButton.setOnClickListener(new View.OnClickListener() {
@@ -1173,11 +1312,72 @@ public final class MainActivity extends Activity {
         }
     }
 
+    @Override
+    public void openFeature(String id, String title, boolean available) {
+        setProjectRailVisible(false);
+        if (available && "expert_collab".equals(id)) {
+            enterExpertMode();
+            return;
+        }
+        titleText.setText(title + " · 下一阶段启用");
+    }
+
+    @Override
+    public void requestExitExpertMode() {
+        exitExpertMode();
+    }
+
+    @Override
+    public void showExpertStatus(String message) {
+        Log.i(KEY_LOG_TAG, "Expert mode status=" + (message == null ? "" : message));
+    }
+
+    private void enterExpertMode() {
+        if (modeController != null) {
+            modeController.enterExpert();
+        }
+    }
+
+    private void exitExpertMode() {
+        if (modeController != null) {
+            modeController.exitExpert();
+        }
+    }
+
+    private void showExpertLayer() {
+        screenMode = ScreenMode.EXPERT;
+        chatLayer.setVisibility(View.GONE);
+        previewView.setVisibility(View.GONE);
+        cameraOverlay.setVisibility(View.GONE);
+        expertLayer.removeAllViews();
+        expertCoordinator = new ExpertCollabCoordinator(this, BuildConfig.COLLAB_SERVER_URL, this);
+        expertLayer.addView(expertCoordinator.createView(), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        expertLayer.setVisibility(View.VISIBLE);
+        expertCoordinator.start();
+    }
+
+    private void releaseExpertCoordinator() {
+        if (expertCoordinator != null) {
+            expertCoordinator.release();
+            expertCoordinator = null;
+        }
+        if (expertLayer != null) {
+            expertLayer.removeAllViews();
+            expertLayer.setVisibility(View.GONE);
+        }
+    }
+
     private void renderChatScreen() {
         screenMode = ScreenMode.CHAT;
+        if (modeController != null) {
+            modeController.setLegacyMode(IntegratedModeController.Mode.CHAT);
+        }
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                expertLayer.setVisibility(View.GONE);
                 chatLayer.setVisibility(View.VISIBLE);
                 cameraOverlay.setVisibility(View.GONE);
                 previewView.setVisibility(View.GONE);
@@ -1192,9 +1392,13 @@ public final class MainActivity extends Activity {
 
     private void renderCameraScreen() {
         screenMode = ScreenMode.CAMERA;
+        if (modeController != null) {
+            modeController.setLegacyMode(IntegratedModeController.Mode.CAMERA);
+        }
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                expertLayer.setVisibility(View.GONE);
                 chatLayer.setVisibility(View.GONE);
                 previewView.setVisibility(View.VISIBLE);
                 cameraOverlay.setVisibility(View.VISIBLE);
@@ -1767,6 +1971,11 @@ public final class MainActivity extends Activity {
             return false;
         }
         clearLiveTranscriptMessageIfStreaming();
+        if (command == VoiceCommand.OPEN_EXPERT) {
+            voiceStreamState = VoiceStreamState.IDLE;
+            enterExpertMode();
+            return true;
+        }
         if (command == VoiceCommand.OPEN_CAMERA) {
             enterCameraScreen("voice-open-camera");
             voiceStreamState = VoiceStreamState.IDLE;
@@ -1850,6 +2059,9 @@ public final class MainActivity extends Activity {
         String normalized = compactVoiceCommandCandidate(text);
         if (!isLikelyVoiceCommandPhrase(normalized)) {
             return VoiceCommand.NONE;
+        }
+        if (matchesVoiceCommand(normalized, VOICE_COMMAND_EXPERT_WORDS)) {
+            return VoiceCommand.OPEN_EXPERT;
         }
         if (matchesVoiceCommand(normalized, VOICE_COMMAND_OPEN_CAMERA_WORDS)) {
             return VoiceCommand.OPEN_CAMERA;
