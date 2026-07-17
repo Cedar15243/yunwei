@@ -1,0 +1,41 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.codex.expertcollab"
+    compileSdk 34
+    buildToolsVersion "34.0.0"
+
+    defaultConfig {
+        applicationId "com.codex.air3nativecamera.dingdangexpert.collab"
+        minSdk 26
+        targetSdk 34
+        versionCode 801
+        versionName "8.0.1-expert-collab-demo"
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencyLocking {
+    lockAllConfigurations()
+}
+
+dependencies {
+    implementation "com.tencent.liteav:LiteAVSDK_TRTC:13.4.0.20477"
+    testImplementation "junit:junit:4.13.2"
+}

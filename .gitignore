@@ -22,6 +22,10 @@ expert-collab-web/vite.config.js
 expert-collab-web/vite.config.d.ts
 
 # Android build intermediates
+air3-expert-collab-app/.gradle/
+air3-expert-collab-app/build/
+air3-expert-collab-app/app/build/
+air3-expert-collab-app/local.properties
 air3-native-camera-test/build/
 air3-native-camera-test/build/generated-src/
 air3-native-camera-test/build/classes/
