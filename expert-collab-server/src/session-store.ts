@@ -13,12 +13,19 @@ export interface CollabSession {
   status: SessionStatus;
   primaryExpertId: string | null;
   observerIds: Set<string>;
+  invitedObserverIds: Set<string>;
 }
 
 export interface AcceptedParticipant {
   sessionId: string;
   expertId: string;
   role: ParticipantRole;
+}
+
+export interface ObserverInvitation {
+  sessionId: string;
+  inviterId: string;
+  expertId: string;
 }
 
 const defaultIdFactory = (): string => `session-${crypto.randomUUID()}`;
@@ -57,6 +64,7 @@ export class SessionStore {
       status: "calling",
       primaryExpertId: null,
       observerIds: new Set(),
+      invitedObserverIds: new Set(),
     };
     this.sessions.set(session.id, session);
     return session;
@@ -87,6 +95,55 @@ export class SessionStore {
       if (primary?.busySessionId === sessionId) {
         primary.busySessionId = null;
       }
+    }
+    for (const observerId of session.observerIds) {
+      const observer = this.experts.get(observerId);
+      if (observer?.busySessionId === sessionId) {
+        observer.busySessionId = null;
+      }
+    }
+    session.observerIds.clear();
+    session.invitedObserverIds.clear();
+  }
+
+  inviteObserver(sessionId: string, inviterId: string, expertId: string): ObserverInvitation {
+    const session = this.requireSession(sessionId);
+    if (session.primaryExpertId !== inviterId) {
+      throw new Error("only the primary expert can invite observers");
+    }
+    if (session.status === "ended") {
+      throw new Error("call has ended");
+    }
+    const expert = this.experts.get(expertId);
+    if (!expert || !expert.online || expert.busySessionId !== null || expertId === inviterId) {
+      throw new Error("observer expert is unavailable");
+    }
+    session.invitedObserverIds.add(expertId);
+    return { sessionId, inviterId, expertId };
+  }
+
+  acceptObserver(sessionId: string, expertId: string): AcceptedParticipant {
+    const session = this.requireSession(sessionId);
+    if (!session.invitedObserverIds.has(expertId)) {
+      throw new Error("observer was not invited");
+    }
+    const expert = this.experts.get(expertId);
+    if (!expert || !expert.online || expert.busySessionId !== null) {
+      throw new Error("observer expert is unavailable");
+    }
+    session.invitedObserverIds.delete(expertId);
+    session.observerIds.add(expertId);
+    expert.busySessionId = sessionId;
+    return { sessionId, expertId, role: "observer" };
+  }
+
+  removeObserver(sessionId: string, expertId: string): void {
+    const session = this.requireSession(sessionId);
+    session.observerIds.delete(expertId);
+    session.invitedObserverIds.delete(expertId);
+    const expert = this.experts.get(expertId);
+    if (expert?.busySessionId === sessionId) {
+      expert.busySessionId = null;
     }
   }
 

@@ -198,6 +198,45 @@ export function createCollabServer(config: ServerConfig): CollabServer {
           return;
         }
 
+        if (message.type === "observer.invited" && client.kind === "expert" && message.sessionId) {
+          const expertId = typeof message.payload.expertId === "string" ? message.payload.expertId : "";
+          const invitation = store.inviteObserver(message.sessionId, client.id, expertId);
+          const session = store.getSession(message.sessionId);
+          const invited = envelope("observer.invited", message.sessionId, {
+            ...invitation,
+            glassesId: session?.glassesId,
+            glassesName: "Air3-现场01",
+          });
+          for (const [peerSocket, peer] of clients) {
+            if (peer.id === expertId || peer.id === client.id) {
+              send(peerSocket, invited);
+            }
+          }
+          return;
+        }
+
+        if (message.type === "observer.accepted" && client.kind === "expert" && message.sessionId) {
+          const participant = store.acceptObserver(message.sessionId, client.id);
+          const session = store.getSession(message.sessionId);
+          const accepted = envelope("observer.accepted", message.sessionId, {
+            ...participant,
+            glassesId: session?.glassesId,
+          });
+          for (const peerSocket of clients.keys()) {
+            send(peerSocket, accepted);
+          }
+          return;
+        }
+
+        if (message.type === "observer.left" && client.kind === "expert" && message.sessionId) {
+          store.removeObserver(message.sessionId, client.id);
+          const left = envelope("observer.left", message.sessionId, { expertId: client.id });
+          for (const peerSocket of clients.keys()) {
+            send(peerSocket, left);
+          }
+          return;
+        }
+
         if (message.sessionId) {
           const forwarded = envelope(message.type, message.sessionId, {
             ...message.payload,

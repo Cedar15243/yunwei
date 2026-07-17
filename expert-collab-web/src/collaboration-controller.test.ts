@@ -7,7 +7,10 @@ function setup() {
   const signaling: CollabSignaling = {
     register: vi.fn(),
     accept: vi.fn(() => true),
+    acceptObserver: vi.fn(() => true),
     end: vi.fn(),
+    inviteObserver: vi.fn(),
+    leaveObserver: vi.fn(),
     subscribe(next) {
       listener = next;
       return () => {
@@ -101,5 +104,52 @@ describe("CollaborationController", () => {
 
     expect(controller.getSnapshot().status).toBe("taken");
     expect(trtc.join).not.toHaveBeenCalled();
+  });
+
+  it("joins an invited expert as an observer", async () => {
+    const { controller, emit, signaling, trtc } = setup();
+    emit({
+      type: "observer.invited",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 1,
+      sentAt: 1,
+      payload: { expertId: "expert-wang", inviterId: "expert-liu", glassesId: "glasses-01" },
+    });
+
+    expect(controller.getSnapshot().status).toBe("invited");
+    controller.accept();
+    emit({
+      type: "observer.accepted",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 2,
+      sentAt: 2,
+      payload: { expertId: "expert-wang", role: "observer", glassesId: "glasses-01" },
+    });
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe("in_call"));
+
+    expect(signaling.acceptObserver).toHaveBeenCalledWith("session-1");
+    expect(controller.getSnapshot().role).toBe("observer");
+    expect(trtc.join).toHaveBeenCalled();
+  });
+
+  it("lets an observer leave without ending the primary call", async () => {
+    const { controller, emit, signaling } = setup();
+    emit({
+      type: "observer.invited", sessionId: "session-1", senderId: "server", seq: 1, sentAt: 1,
+      payload: { expertId: "expert-wang", inviterId: "expert-liu", glassesId: "glasses-01" },
+    });
+    controller.accept();
+    emit({
+      type: "observer.accepted", sessionId: "session-1", senderId: "server", seq: 2, sentAt: 2,
+      payload: { expertId: "expert-wang", role: "observer", glassesId: "glasses-01" },
+    });
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe("in_call"));
+
+    await controller.end();
+
+    expect(signaling.leaveObserver).toHaveBeenCalledWith("session-1");
+    expect(signaling.end).not.toHaveBeenCalled();
   });
 });

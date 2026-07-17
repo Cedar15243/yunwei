@@ -35,6 +35,7 @@ interface ExpertStageProps {
   freezeUrl?: string | null;
   onAccept?: () => void;
   onEnd?: () => void;
+  onInvite?: () => void;
   onScreenshot?: () => void;
   onToggleFreeze?: () => void;
   role: ExpertRole;
@@ -59,6 +60,7 @@ export function ExpertStage({
   freezeUrl,
   onAccept,
   onEnd,
+  onInvite,
   onScreenshot,
   onToggleFreeze,
   role,
@@ -110,11 +112,14 @@ export function ExpertStage({
           />
         ) : null}
 
-        {call?.status === "ringing" ? (
+        {call?.status === "ringing" || call?.status === "invited" ? (
           <div className="incoming-call" role="dialog" aria-label="眼镜来电">
             <span className="incoming-call__signal"><span /></span>
-            <div><strong>{call.glassesName} 正在呼叫</strong><small>现场请求远程专家协助</small></div>
-            <button className="command-button command-button--primary" onClick={onAccept} type="button">接听</button>
+            <div>
+              <strong>{call.status === "invited" ? "主专家邀请旁听语音" : `${call.glassesName} 正在呼叫`}</strong>
+              <small>{call.status === "invited" ? "加入同一协同房间，仅开放语音" : "现场请求远程专家协助"}</small>
+            </div>
+            <button className="command-button command-button--primary" onClick={onAccept} type="button">{call.status === "invited" ? "加入" : "接听"}</button>
           </div>
         ) : null}
         {call?.status === "taken" ? <div className="call-toast">已由其他专家接听</div> : null}
@@ -174,7 +179,7 @@ export function ExpertStage({
           </button>
         </div>
         <div className="control-group">
-          <button className="command-button command-button--primary" disabled={controlsDisabled} type="button">
+          <button className="command-button command-button--primary" disabled={controlsDisabled} onClick={onInvite} type="button">
             <UserPlus aria-hidden="true" size={17} />邀请专家
           </button>
           <button className="command-button command-button--danger" onClick={onEnd} type="button">

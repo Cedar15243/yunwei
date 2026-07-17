@@ -25,6 +25,7 @@ const waitingSnapshot: CollaborationSnapshot = {
   glassesName: null,
   primaryExpertId: null,
   error: null,
+  role: null,
 };
 
 function resolveWebsocketUrl(): string {
@@ -45,11 +46,11 @@ function resolveExpertIdentity(): { id: string; name: string } {
 
 export function App({ initialRole, live }: AppProps) {
   const liveEnabled = live ?? initialRole === undefined;
-  const role = initialRole ?? "primary";
   const videoViewRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<CollaborationController | null>(null);
   const signalingRef = useRef<CollabSocket | null>(null);
   const [call, setCall] = useState<CollaborationSnapshot>(waitingSnapshot);
+  const role = initialRole ?? (call.role === "observer" ? "observer" : "primary");
   const [annotationAuthorId, setAnnotationAuthorId] = useState("expert-preview");
   const [annotationTransport, setAnnotationTransport] = useState<AnnotationTransport | null>(null);
   const [freezeUrl, setFreezeUrl] = useState<string | null>(null);
@@ -173,6 +174,7 @@ export function App({ initialRole, live }: AppProps) {
           freezeUrl={freezeUrl}
           onAccept={() => controllerRef.current?.accept()}
           onEnd={() => void controllerRef.current?.end()}
+          onInvite={() => controllerRef.current?.inviteObserver("expert-liu")}
           onScreenshot={() => void createSnapshot()}
           onToggleFreeze={() => void toggleFreeze()}
           role={role}

@@ -32,4 +32,30 @@ describe("SessionStore", () => {
     expect(store.getSession(session.id)?.status).toBe("ended");
     expect(store.listAvailableExperts().map((expert) => expert.id)).toEqual(["expert-wang"]);
   });
+
+  it("allows only the primary expert to invite an observer", () => {
+    const store = new SessionStore(() => "session-01");
+    store.registerExpert("expert-wang", "王工");
+    store.registerExpert("expert-liu", "刘工");
+    const session = store.requestCall("glasses-01");
+    store.acceptCall(session.id, "expert-wang");
+
+    expect(store.inviteObserver(session.id, "expert-wang", "expert-liu").expertId).toBe("expert-liu");
+    expect(() => store.inviteObserver(session.id, "expert-liu", "expert-wang")).toThrow("primary expert");
+  });
+
+  it("adds and removes an observer without ending the call", () => {
+    const store = new SessionStore(() => "session-01");
+    store.registerExpert("expert-wang", "王工");
+    store.registerExpert("expert-liu", "刘工");
+    const session = store.requestCall("glasses-01");
+    store.acceptCall(session.id, "expert-wang");
+    store.inviteObserver(session.id, "expert-wang", "expert-liu");
+
+    expect(store.acceptObserver(session.id, "expert-liu").role).toBe("observer");
+    store.removeObserver(session.id, "expert-liu");
+
+    expect(store.getSession(session.id)?.status).toBe("connecting");
+    expect(store.listAvailableExperts().map((expert) => expert.id)).toContain("expert-liu");
+  });
 });

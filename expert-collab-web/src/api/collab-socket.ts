@@ -52,6 +52,23 @@ export class CollabSocket {
     this.send("call.ended", sessionId, {});
   }
 
+  inviteObserver(sessionId: string, expertId: string): void {
+    this.send("observer.invited", sessionId, { expertId });
+  }
+
+  acceptObserver(sessionId: string): boolean {
+    if (this.acceptedSessions.has(`observer:${sessionId}`)) {
+      return false;
+    }
+    this.acceptedSessions.add(`observer:${sessionId}`);
+    this.send("observer.accepted", sessionId, {});
+    return true;
+  }
+
+  leaveObserver(sessionId: string): void {
+    this.send("observer.left", sessionId, {});
+  }
+
   sendSessionEvent(type: string, sessionId: string, payload: Record<string, unknown>): void {
     this.send(type, sessionId, payload);
   }
