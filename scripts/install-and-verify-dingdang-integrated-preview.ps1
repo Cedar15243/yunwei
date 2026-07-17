@@ -71,9 +71,9 @@ if ($LASTEXITCODE -ne 0) {
   throw "Unable to inspect integrated preview APK"
 }
 $packageMatch = [regex]::Match(($badging -join "`n"), "package: name='([^']+)' versionCode='(\d+)'")
-if (-not $packageMatch.Success
-    -or $packageMatch.Groups[1].Value -ne $previewPackage
-    -or [int]$packageMatch.Groups[2].Value -ne 627) {
+if ((-not $packageMatch.Success) -or
+    ($packageMatch.Groups[1].Value -ne $previewPackage) -or
+    ([int]$packageMatch.Groups[2].Value -ne 627)) {
   throw "Refusing installation because APK is not $previewPackage versionCode=627"
 }
 
