@@ -16,6 +16,10 @@ air3-ops-expo-app/node_modules/
 air3-ops-expo-app/.expo/
 air3-ops-expo-app/dist/
 air3-ops-expo-app/expo-web*.log
+expert-collab-web/dist/
+expert-collab-web/*.tsbuildinfo
+expert-collab-web/vite.config.js
+expert-collab-web/vite.config.d.ts
 
 # Android build intermediates
 air3-native-camera-test/build/
