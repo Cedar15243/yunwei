@@ -1,0 +1,104 @@
+plugins {
+    id "com.android.application"
+}
+
+def collabServerUrl = project.findProperty("collabServerUrl") ?: "http://127.0.0.1:8787"
+def generatedConfigDir = layout.buildDirectory.dir("generated/source/dingdang")
+
+def requiredEnvironment = { String name ->
+    def value = System.getenv(name)?.trim()
+    if (!value) {
+        throw new GradleException("${name} is required")
+    }
+    value
+}
+
+def optionalEnvironment = { String name, String fallback ->
+    def value = System.getenv(name)?.trim()
+    value ?: fallback
+}
+
+def javaString = { String value ->
+    value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "\\r").replace("\n", "\\n")
+}
+
+android {
+    namespace "com.codex.air3nativecamera"
+    compileSdk 34
+    buildToolsVersion "34.0.0"
+
+    defaultConfig {
+        applicationId "com.codex.air3nativecamera.dingdangexpert.follow.preview"
+        minSdk 34
+        targetSdk 34
+        versionCode 627
+        versionName "6.2.7-expert-preview"
+        buildConfigField "String", "COLLAB_SERVER_URL", "\"${collabServerUrl}\""
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    sourceSets {
+        main.java.srcDir generatedConfigDir
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+tasks.register("generateDingdangConfig") {
+    outputs.dir generatedConfigDir
+    doLast {
+        def opsKey = requiredEnvironment("OPS_GLASSES_API_KEY")
+        def eventsEndpoint = optionalEnvironment(
+                "OPS_GLASSES_EVENTS_ENDPOINT",
+                "https://zasgzaatthvfglhbxpgo.supabase.co/functions/v1/ops-glasses/sessions/events")
+        def backendBaseUrl = optionalEnvironment(
+                "DINGDANG_BACKEND_BASE_URL",
+                eventsEndpoint.replaceFirst(/\/sessions\/events$/, ""))
+        def packageDir = generatedConfigDir.get().dir("com/codex/air3nativecamera").asFile
+        packageDir.mkdirs()
+        new File(packageDir, "GeneratedConfig.java").setText("""package com.codex.air3nativecamera;
+
+final class GeneratedConfig {
+    static final String APP_ID = "com.codex.air3nativecamera.dingdangexpert.follow.preview";
+    static final String APP_LABEL = "叮当AI运维专家·协同测试";
+    static final String EVENTS_ENDPOINT = "${javaString(eventsEndpoint)}";
+    static final String OPS_GLASSES_API_KEY = "${javaString(opsKey)}";
+    static final String DINGDANG_BACKEND_BASE_URL = "${javaString(backendBaseUrl)}";
+    static final String DINGDANG_BACKEND_API_KEY = "${javaString(opsKey)}";
+    static final boolean FAST_UPLOAD = false;
+    static final boolean DIRECT_GPT_ENABLED = false;
+    static final String DIRECT_GPT_BASE_URL = "${javaString(optionalEnvironment("DIRECT_GPT_BASE_URL", "https://api.openai.com/v1"))}";
+    static final String DIRECT_GPT_MODEL = "${javaString(optionalEnvironment("DIRECT_GPT_MODEL", "gpt-4.1-mini"))}";
+    static final String DIRECT_GPT_REASONING_EFFORT = "${javaString(optionalEnvironment("DIRECT_GPT_REASONING_EFFORT", ""))}";
+    static final String DIRECT_GPT_API_KEY = "${javaString(optionalEnvironment("DIRECT_GPT_API_KEY", ""))}";
+    static final String DIRECT_ASR_ENDPOINT = "${javaString(optionalEnvironment("DIRECT_ASR_ENDPOINT", ""))}";
+    static final String DIRECT_ASR_API_KEY = "${javaString(optionalEnvironment("DIRECT_ASR_API_KEY", ""))}";
+
+    private GeneratedConfig() {}
+}
+""", "UTF-8")
+        logger.lifecycle("Generated Dingdang config from OPS_GLASSES_API_KEY environment variable")
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn tasks.named("generateDingdangConfig")
+}
+
+dependencies {
+    implementation "com.tencent.liteav:LiteAVSDK_TRTC:13.4.0.20477"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    testImplementation "junit:junit:4.13.2"
+}
