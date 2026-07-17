@@ -11,6 +11,7 @@ $localProperties = Join-Path $project "local.properties"
 $package = "com.codex.air3nativecamera.dingdangexpert.collab"
 $versionCode = 801
 $versionName = "8.0.1-expert-collab-demo"
+$collabServerUrl = if ($env:COLLAB_SERVER_URL) { $env:COLLAB_SERVER_URL.TrimEnd("/") } else { "http://127.0.0.1:8787" }
 
 if (-not (Test-Path -LiteralPath $gradlew)) {
   throw "Expert collaboration Gradle wrapper is not ready: $gradlew"
@@ -36,7 +37,7 @@ $sdkProperty = $sdk.Replace("\", "\\")
 [System.IO.File]::WriteAllText($localProperties, "sdk.dir=$sdkProperty`n", (New-Object System.Text.UTF8Encoding $false))
 
 Write-Output "Building $package $versionCode/$versionName"
-& $gradlew --project-dir $project --no-daemon assembleDebug
+& $gradlew --project-dir $project --no-daemon "-PcollabServerUrl=$collabServerUrl" assembleDebug
 if ($LASTEXITCODE -ne 0) {
   throw "Expert collaboration APK build failed"
 }

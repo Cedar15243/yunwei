@@ -2,6 +2,8 @@ plugins {
     id "com.android.application"
 }
 
+def collabServerUrl = project.findProperty("collabServerUrl") ?: "http://127.0.0.1:8787"
+
 android {
     namespace "com.codex.expertcollab"
     compileSdk 34
@@ -13,6 +15,7 @@ android {
         targetSdk 34
         versionCode 801
         versionName "8.0.1-expert-collab-demo"
+        buildConfigField "String", "COLLAB_SERVER_URL", "\"${collabServerUrl}\""
     }
 
     buildTypes {
@@ -37,5 +40,6 @@ dependencyLocking {
 
 dependencies {
     implementation "com.tencent.liteav:LiteAVSDK_TRTC:13.4.0.20477"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
     testImplementation "junit:junit:4.13.2"
 }

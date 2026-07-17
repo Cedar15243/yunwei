@@ -56,6 +56,7 @@ if ($newInfoText -notmatch "versionCode=801\b" -or $newInfoText -notmatch "versi
 }
 
 Assert-Original626
+Invoke-Adb @("reverse", "tcp:8787", "tcp:8787") | Out-Null
 Invoke-Adb @("shell", "am", "start", "-n", $activity) | Out-Null
 $resumed = Invoke-Adb @("shell", "dumpsys", "activity", "activities")
 if (($resumed -join "`n") -notmatch [regex]::Escape($activity)) {
