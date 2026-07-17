@@ -40,3 +40,4 @@ _repo_analysis/
 cache.db
 mihomo-*.yaml
 .superpowers/
+.worktrees/
