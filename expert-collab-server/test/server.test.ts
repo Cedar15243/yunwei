@@ -92,4 +92,39 @@ describe("collaboration server", () => {
     expertLiu.close();
     glasses.close();
   });
+
+  it("notifies every expert when the first expert accepts a call", async () => {
+    const server = await startServer();
+    const expertWang = await openSocket(server.websocketUrl);
+    const expertLiu = await openSocket(server.websocketUrl);
+    const glasses = await openSocket(server.websocketUrl);
+
+    expertWang.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-wang", seq: 1, sentAt: 1, payload: { kind: "expert", name: "王工" } }));
+    expertLiu.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-liu", seq: 1, sentAt: 1, payload: { kind: "expert", name: "刘工" } }));
+    glasses.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "glasses-01", seq: 1, sentAt: 1, payload: { kind: "glasses", name: "Air3-现场01" } }));
+    await Promise.all([nextMessage(expertWang), nextMessage(expertLiu), nextMessage(glasses)]);
+
+    const wangCall = nextMessage(expertWang);
+    const liuCall = nextMessage(expertLiu);
+    glasses.send(JSON.stringify({ type: "call.requested", sessionId: null, senderId: "glasses-01", seq: 2, sentAt: 2, payload: {} }));
+    const [incoming] = await Promise.all([wangCall, liuCall, nextMessage(glasses)]);
+    const sessionId = incoming.sessionId as string;
+
+    const wangAccepted = nextMessage(expertWang);
+    const liuAccepted = nextMessage(expertLiu);
+    const glassesAccepted = nextMessage(glasses);
+    expertWang.send(JSON.stringify({ type: "call.accepted", sessionId, senderId: "expert-wang", seq: 2, sentAt: 3, payload: {} }));
+
+    const results = await Promise.all([wangAccepted, liuAccepted, glassesAccepted]);
+    expect(results.map((message) => message.type)).toEqual(["call.accepted", "call.accepted", "call.accepted"]);
+    expect(results.map((message) => (message.payload as Record<string, unknown>).expertId)).toEqual([
+      "expert-wang",
+      "expert-wang",
+      "expert-wang",
+    ]);
+
+    expertWang.close();
+    expertLiu.close();
+    glasses.close();
+  });
 });

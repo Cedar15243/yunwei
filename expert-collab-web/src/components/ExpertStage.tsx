@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type RefObject } from "react";
 import {
   ArrowUpRight,
   Camera,
@@ -17,11 +17,16 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
+import type { CollaborationSnapshot } from "../collaboration-controller";
 
 export type ExpertRole = "primary" | "observer";
 
 interface ExpertStageProps {
+  call?: CollaborationSnapshot | null;
+  onAccept?: () => void;
+  onEnd?: () => void;
   role: ExpertRole;
+  videoViewRef?: RefObject<HTMLDivElement | null>;
 }
 
 const toolButtons = [
@@ -34,26 +39,39 @@ const toolButtons = [
   { label: "清空", icon: Trash2 },
 ] as const;
 
-export function ExpertStage({ role }: ExpertStageProps) {
+export function ExpertStage({ call, onAccept, onEnd, role, videoViewRef }: ExpertStageProps) {
   const [muted, setMuted] = useState(false);
   const [speakerOff, setSpeakerOff] = useState(false);
   const [activeTool, setActiveTool] = useState("箭头");
   const [frozen, setFrozen] = useState(false);
-  const controlsDisabled = role !== "primary";
+  const controlsDisabled = role !== "primary" || (call !== null && call !== undefined && call.status !== "in_call");
 
   return (
     <main className="expert-stage" aria-label="专家协同视频工作区">
       <section className="video-stage" aria-label="Air3第一视角">
-        <video id="glasses-video" autoPlay playsInline aria-label="眼镜实时视频" />
-        <div className="video-fallback" aria-hidden="true">
-          <div className="equipment-line equipment-line--left" />
-          <div className="equipment-line equipment-line--right" />
-        </div>
+        <div id="glasses-video" ref={videoViewRef} aria-label="眼镜实时视频" />
+        {call?.status !== "in_call" ? (
+          <div className="video-fallback" aria-hidden="true">
+            <div className="equipment-line equipment-line--left" />
+            <div className="equipment-line equipment-line--right" />
+          </div>
+        ) : null}
         <div className="live-indicator"><span /> LIVE · Air3 第一视角 · 00:04:18</div>
         <div className="role-indicator">{role === "primary" ? "主专家：王工 · 标注权" : "旁听语音"}</div>
         <div className="demo-annotation demo-annotation--arrow" aria-hidden="true" />
         <div className="demo-annotation demo-annotation--circle" aria-hidden="true" />
         <div className="annotation-note">检查右侧接线端子</div>
+
+        {call?.status === "ringing" ? (
+          <div className="incoming-call" role="dialog" aria-label="眼镜来电">
+            <span className="incoming-call__signal"><span /></span>
+            <div><strong>{call.glassesName} 正在呼叫</strong><small>现场请求远程专家协助</small></div>
+            <button className="command-button command-button--primary" onClick={onAccept} type="button">接听</button>
+          </div>
+        ) : null}
+        {call?.status === "taken" ? <div className="call-toast">已由其他专家接听</div> : null}
+        {call?.status === "connecting" ? <div className="call-toast">正在建立安全音视频连接</div> : null}
+        {call?.status === "failed" ? <div className="call-toast call-toast--error">连接失败：{call.error}</div> : null}
 
         <div className="annotation-toolbar" aria-label="标注工具栏">
           {toolButtons.map(({ label, icon: Icon }) => (
@@ -102,7 +120,7 @@ export function ExpertStage({ role }: ExpertStageProps) {
           <button className="command-button command-button--primary" disabled={controlsDisabled} type="button">
             <UserPlus aria-hidden="true" size={17} />邀请专家
           </button>
-          <button className="command-button command-button--danger" type="button">
+          <button className="command-button command-button--danger" onClick={onEnd} type="button">
             <PhoneOff aria-hidden="true" size={17} />挂断
           </button>
         </div>

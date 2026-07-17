@@ -141,9 +141,9 @@ export function createCollabServer(config: ServerConfig): CollabServer {
         if (message.type === "call.accepted" && client.kind === "expert" && message.sessionId) {
           const participant = store.acceptCall(message.sessionId, client.id);
           const accepted = envelope("call.accepted", message.sessionId, participant as unknown as Record<string, unknown>);
+          const session = store.getSession(message.sessionId);
           for (const [peerSocket, peer] of clients) {
-            const session = store.getSession(message.sessionId);
-            if (peer.id === client.id || peer.id === session?.glassesId) {
+            if (peer.kind === "expert" || peer.id === session?.glassesId) {
               send(peerSocket, accepted);
             }
           }
