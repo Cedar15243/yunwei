@@ -136,6 +136,41 @@ describe("TrtcClient", () => {
     expect(calls).toEqual(["enter", "audio:start", "camera:start", "video-listener:off"]);
   });
 
+  it("retries the glasses video subscription after a transient TRTC failure", async () => {
+    const calls: string[] = [];
+    let remoteVideoHandler: ((event: { userId: string; streamType: unknown }) => void) | null = null;
+    const sdk: TrtcSdk = {
+      async enterRoom() { remoteVideoHandler?.({ userId: "glasses-01", streamType: "main" }); },
+      async startLocalAudio() { calls.push("audio:start"); },
+      async startLocalVideo() {},
+      async startRemoteVideo() {
+        calls.push("video:remote");
+        if (calls.filter((call) => call === "video:remote").length === 1) {
+          throw new Error("peer connection not ready");
+        }
+      },
+      onRemoteVideoAvailable(handler) { remoteVideoHandler = handler; },
+      offRemoteVideoAvailable() {},
+      async exitRoom() { calls.push("exit"); },
+    };
+    const client = new TrtcClient({
+      createSdk: () => sdk,
+      getCredential: async (userId) => ({ sdkAppId: 1600152353, userId, userSig: "sig" }),
+    });
+
+    await client.join({
+      sessionId: "session-1",
+      userId: "expert-wang",
+      glassesUserId: "glasses-01",
+      videoView: document.createElement("div"),
+      localVideoView: document.createElement("div"),
+      publishVideo: false,
+    });
+
+    await vi.waitFor(() => expect(calls).toEqual(["audio:start", "video:remote", "video:remote"]), { timeout: 2_000 });
+    expect(calls).not.toContain("exit");
+  });
+
   it("joins, publishes microphone, subscribes to glasses video, then leaves", async () => {
     const calls: string[] = [];
     let remoteVideoHandler: ((event: { userId: string; streamType: unknown }) => void) | null = null;

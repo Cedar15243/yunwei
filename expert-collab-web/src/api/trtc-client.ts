@@ -148,14 +148,7 @@ export class TrtcClient {
         if (!videoAvailable || this.sdk !== sdk) {
           return;
         }
-        await sdk.startRemoteVideo({
-          userId: options.glassesUserId,
-          streamType: this.mainStreamType,
-          view: options.videoView,
-        });
-        if (this.sdk === sdk) {
-          this.remoteUserId = options.glassesUserId;
-        }
+        await this.startRemoteVideoWithRetry(sdk, options);
       }).catch(() => {
         // A delayed glasses video must not terminate an otherwise active voice call.
       });
@@ -225,5 +218,27 @@ export class TrtcClient {
     this.cancelRemoteVideoWait = cancel;
 
     return { promise, cancel };
+  }
+
+  private async startRemoteVideoWithRetry(sdk: TrtcSdk, options: JoinOptions, attempt = 0): Promise<void> {
+    if (this.sdk !== sdk) {
+      return;
+    }
+    try {
+      await sdk.startRemoteVideo({
+        userId: options.glassesUserId,
+        streamType: this.mainStreamType,
+        view: options.videoView,
+      });
+      if (this.sdk === sdk) {
+        this.remoteUserId = options.glassesUserId;
+      }
+    } catch {
+      if (attempt >= 2 || this.sdk !== sdk) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      await this.startRemoteVideoWithRetry(sdk, options, attempt + 1);
+    }
   }
 }
