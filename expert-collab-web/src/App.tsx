@@ -179,6 +179,7 @@ export function App({ initialRole, live }: AppProps) {
           onAccept={() => controllerRef.current?.accept()}
           onEnd={() => void controllerRef.current?.end()}
           onInvite={() => controllerRef.current?.inviteObserver("expert-liu")}
+          onRetry={() => controllerRef.current?.retry()}
           onScreenshot={() => void createSnapshot()}
           onToggleFreeze={() => void toggleFreeze()}
           role={role}

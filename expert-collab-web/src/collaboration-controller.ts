@@ -110,6 +110,15 @@ export class CollaborationController {
     return true;
   }
 
+  retry(): boolean {
+    const { sessionId, primaryExpertId, role, status } = this.snapshot;
+    if (status !== "failed" || !sessionId || !primaryExpertId || !role) {
+      return false;
+    }
+    void this.joinCall(primaryExpertId, role);
+    return true;
+  }
+
   async end(): Promise<void> {
     if (this.snapshot.sessionId) {
       if (this.snapshot.role === "observer") {
@@ -211,8 +220,6 @@ export class CollaborationController {
       await this.options.trtc.leave();
       if (role === "observer") {
         this.options.signaling.leaveObserver(sessionId);
-      } else {
-        this.options.signaling.end(sessionId);
       }
       this.update({
         status: "failed",

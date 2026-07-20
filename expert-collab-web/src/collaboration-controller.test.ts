@@ -91,7 +91,7 @@ describe("CollaborationController", () => {
     }));
   });
 
-  it("ends the session when the primary expert cannot join TRTC", async () => {
+  it("keeps the session alive when the primary expert cannot join TRTC", async () => {
     const { controller, emit, signaling, trtc } = setup();
     vi.mocked(trtc.join).mockRejectedValueOnce(new Error("TRTC join failed"));
     emit(incomingCall);
@@ -107,9 +107,26 @@ describe("CollaborationController", () => {
     });
     await vi.waitFor(() => expect(controller.getSnapshot().status).toBe("failed"));
 
-    expect(signaling.end).toHaveBeenCalledWith("session-1");
+    expect(signaling.end).not.toHaveBeenCalled();
     expect(signaling.leaveObserver).not.toHaveBeenCalled();
     expect(trtc.leave).toHaveBeenCalledOnce();
+  });
+
+  it("retries the retained primary session after a TRTC join failure", async () => {
+    const { controller, emit, trtc } = setup();
+    vi.mocked(trtc.join).mockRejectedValueOnce(new Error("TRTC join failed"));
+    emit(incomingCall);
+    controller.accept();
+    emit({
+      type: "call.accepted", sessionId: "session-1", senderId: "server", seq: 2, sentAt: 2,
+      payload: { expertId: "expert-wang", role: "primary" },
+    });
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe("failed"));
+    vi.mocked(trtc.join).mockResolvedValueOnce();
+
+    expect(controller.retry()).toBe(true);
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe("in_call"));
+    expect(trtc.join).toHaveBeenCalledTimes(2);
   });
 
   it("marks the call taken when another expert wins", () => {

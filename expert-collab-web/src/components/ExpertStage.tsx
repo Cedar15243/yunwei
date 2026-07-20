@@ -36,6 +36,7 @@ interface ExpertStageProps {
   onAccept?: () => void;
   onEnd?: () => void;
   onInvite?: () => void;
+  onRetry?: () => void;
   onScreenshot?: () => void;
   onToggleFreeze?: () => void;
   role: ExpertRole;
@@ -62,6 +63,7 @@ export function ExpertStage({
   onAccept,
   onEnd,
   onInvite,
+  onRetry,
   onScreenshot,
   onToggleFreeze,
   role,
@@ -130,7 +132,12 @@ export function ExpertStage({
         ) : null}
         {call?.status === "taken" ? <div className="call-toast">已由其他专家接听</div> : null}
         {call?.status === "connecting" ? <div className="call-toast">正在建立安全音视频连接</div> : null}
-        {call?.status === "failed" ? <div className="call-toast call-toast--error">连接失败：{call.error}</div> : null}
+        {call?.status === "failed" ? (
+          <div className="call-toast call-toast--error">
+            <span>连接失败：{call.error}</span>
+            <button className="command-button" onClick={onRetry} type="button">重新连接</button>
+          </div>
+        ) : null}
         {actionError ? <div className="call-toast call-toast--error">{actionError}</div> : null}
 
         <div className="annotation-toolbar" aria-label="标注工具栏">
