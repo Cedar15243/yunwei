@@ -1,6 +1,7 @@
 package com.codex.expertcollab;
 
 import android.content.Context;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -34,6 +35,7 @@ final class TrtcSessionController {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private final OkHttpClient httpClient = new OkHttpClient();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final AudioManager audioManager;
     private final TRTCCloud trtc;
     private final TXCloudVideoView preview;
     private final TXCloudVideoView expertPreview;
@@ -47,6 +49,8 @@ final class TrtcSessionController {
 
     TrtcSessionController(Context context, TXCloudVideoView preview, TXCloudVideoView expertPreview,
                           String serverOrigin, String userId, Listener listener) {
+        this.audioManager = (AudioManager) context.getApplicationContext()
+                .getSystemService(Context.AUDIO_SERVICE);
         this.trtc = TRTCCloud.sharedInstance(context.getApplicationContext());
         this.preview = preview;
         this.expertPreview = expertPreview;
@@ -59,10 +63,21 @@ final class TrtcSessionController {
                 if (result > 0) {
                     active = true;
                     joining = false;
+                    // Air3 applies its call-volume profile after the room becomes active.
+                    maximizeVoiceCallVolume();
+                    mainHandler.postDelayed(TrtcSessionController.this::maximizeVoiceCallVolume, 800L);
                     listener.onMediaConnected();
                 } else {
                     joining = false;
                     listener.onMediaError("进入TRTC房间失败：" + result);
+                }
+            }
+
+            @Override
+            public void onUserAudioAvailable(String remoteUserId, boolean available) {
+                if (available && remoteUserId.equals(expertUserId)) {
+                    trtc.setRemoteAudioVolume(remoteUserId, 100);
+                    maximizeVoiceCallVolume();
                 }
             }
 
@@ -167,12 +182,25 @@ final class TrtcSessionController {
         trtc.setNetworkQosParam(qos);
         trtc.startLocalPreview(true, preview);
         trtc.startLocalAudio(TRTCCloudDef.TRTC_AUDIO_QUALITY_SPEECH);
+        trtc.setAudioRoute(TRTCCloudDef.TRTC_AUDIO_ROUTE_SPEAKER);
+        trtc.setRemoteAudioVolume(expertUserId, 100);
+        maximizeVoiceCallVolume();
         TRTCCloudDef.TRTCParams params = new TRTCCloudDef.TRTCParams();
         params.sdkAppId = sdkAppId;
         params.userId = signedUserId;
         params.userSig = userSig;
         params.strRoomId = sessionId;
         trtc.enterRoom(params, TRTCCloudDef.TRTC_APP_SCENE_VIDEOCALL);
+    }
+
+    private void maximizeVoiceCallVolume() {
+        if (audioManager == null) {
+            return;
+        }
+        int maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL);
+        if (maxVolume > 0) {
+            audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVolume, 0);
+        }
     }
 
     void leave() {

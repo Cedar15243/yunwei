@@ -127,12 +127,7 @@ public final class ExpertCollabCoordinator implements
         actions.setGravity(Gravity.CENTER);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         primaryButton = actionButton();
-        Button exitButton = actionButton();
-        exitButton.setText("退出专家模式");
-        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(dp(300), dp(68));
-        actionParams.setMarginEnd(dp(20));
-        actions.addView(primaryButton, actionParams);
-        actions.addView(exitButton, new LinearLayout.LayoutParams(dp(300), dp(68)));
+        actions.addView(primaryButton, new LinearLayout.LayoutParams(dp(360), dp(68)));
         FrameLayout.LayoutParams actionsParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -141,7 +136,6 @@ public final class ExpertCollabCoordinator implements
         root.addView(actions, actionsParams);
 
         primaryButton.setOnClickListener(view -> onPrimaryAction());
-        exitButton.setOnClickListener(view -> endCallAndExit());
         renderState();
     }
 
@@ -208,6 +202,13 @@ public final class ExpertCollabCoordinator implements
         }
         CollabStateMachine.State previous = stateMachine.getState();
         CollabStateMachine.State next = stateMachine.onPrimaryAction();
+        if (previous != CollabStateMachine.State.IDLE
+                && previous != CollabStateMachine.State.ENDED
+                && previous != CollabStateMachine.State.FAILED) {
+            endCurrentCall(true);
+            host.requestExitExpertMode();
+            return;
+        }
         if (next == CollabStateMachine.State.CALLING) {
             if (previous == CollabStateMachine.State.FAILED) {
                 endCurrentCall(true);
@@ -228,7 +229,7 @@ public final class ExpertCollabCoordinator implements
             case CALLING:
                 statusText.setText("正在广播呼叫在线专家");
                 expertText.setText("等待接听");
-                primaryButton.setText("取消呼叫");
+                primaryButton.setText("挂断");
                 break;
             case CONNECTING:
                 statusText.setText("专家已接听，正在连接");
@@ -308,7 +309,7 @@ public final class ExpertCollabCoordinator implements
             if (!released && sessionId != null && sessionId.equals(endedSessionId)) {
                 stateMachine.onEnded();
                 endCurrentCall(false);
-                renderState();
+                host.requestExitExpertMode();
             }
         });
     }
