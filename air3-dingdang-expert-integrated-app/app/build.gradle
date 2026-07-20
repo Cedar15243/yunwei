@@ -8,6 +8,7 @@ def previewVersionCode = (project.findProperty("previewVersionCode") ?: "627") a
 def previewVersionName = project.findProperty("previewVersionName") ?: "6.2.7-expert-preview"
 def previewAppLabel = project.findProperty("previewAppLabel") ?: "叮当AI运维专家·协同测试"
 def generatedConfigDir = layout.buildDirectory.dir("generated/source/dingdang")
+def directGptEnabled = System.getenv("AIR3_APK_DIRECT_GPT")?.trim() == "1"
 
 def requiredEnvironment = { String name ->
     def value = System.getenv(name)?.trim()
@@ -64,9 +65,19 @@ android {
 tasks.register("generateDingdangConfig") {
     inputs.property("previewApplicationId", previewApplicationId)
     inputs.property("previewAppLabel", previewAppLabel)
+    inputs.property("directGptEnabled", directGptEnabled)
     outputs.dir generatedConfigDir
     doLast {
         def opsKey = requiredEnvironment("OPS_GLASSES_API_KEY")
+        def directGptApiKey = directGptEnabled
+                ? requiredEnvironment("DIRECT_GPT_API_KEY")
+                : optionalEnvironment("DIRECT_GPT_API_KEY", "")
+        def directAsrEndpoint = directGptEnabled
+                ? requiredEnvironment("DIRECT_ASR_ENDPOINT")
+                : optionalEnvironment("DIRECT_ASR_ENDPOINT", "")
+        def directAsrApiKey = directGptEnabled
+                ? requiredEnvironment("DIRECT_ASR_API_KEY")
+                : optionalEnvironment("DIRECT_ASR_API_KEY", "")
         def eventsEndpoint = optionalEnvironment(
                 "OPS_GLASSES_EVENTS_ENDPOINT",
                 "https://zasgzaatthvfglhbxpgo.supabase.co/functions/v1/ops-glasses/sessions/events")
@@ -85,13 +96,13 @@ final class GeneratedConfig {
     static final String DINGDANG_BACKEND_BASE_URL = "${javaString(backendBaseUrl)}";
     static final String DINGDANG_BACKEND_API_KEY = "${javaString(opsKey)}";
     static final boolean FAST_UPLOAD = false;
-    static final boolean DIRECT_GPT_ENABLED = false;
+    static final boolean DIRECT_GPT_ENABLED = ${directGptEnabled};
     static final String DIRECT_GPT_BASE_URL = "${javaString(optionalEnvironment("DIRECT_GPT_BASE_URL", "https://api.openai.com/v1"))}";
     static final String DIRECT_GPT_MODEL = "${javaString(optionalEnvironment("DIRECT_GPT_MODEL", "gpt-4.1-mini"))}";
     static final String DIRECT_GPT_REASONING_EFFORT = "${javaString(optionalEnvironment("DIRECT_GPT_REASONING_EFFORT", ""))}";
-    static final String DIRECT_GPT_API_KEY = "${javaString(optionalEnvironment("DIRECT_GPT_API_KEY", ""))}";
-    static final String DIRECT_ASR_ENDPOINT = "${javaString(optionalEnvironment("DIRECT_ASR_ENDPOINT", ""))}";
-    static final String DIRECT_ASR_API_KEY = "${javaString(optionalEnvironment("DIRECT_ASR_API_KEY", ""))}";
+    static final String DIRECT_GPT_API_KEY = "${javaString(directGptApiKey)}";
+    static final String DIRECT_ASR_ENDPOINT = "${javaString(directAsrEndpoint)}";
+    static final String DIRECT_ASR_API_KEY = "${javaString(directAsrApiKey)}";
 
     private GeneratedConfig() {}
 }

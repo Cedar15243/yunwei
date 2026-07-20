@@ -3,7 +3,8 @@ param(
   [string]$ApplicationId = "com.codex.air3nativecamera.dingdangexpert.follow.preview",
   [int]$VersionCode = 627,
   [string]$VersionName = "6.2.7-expert-preview",
-  [string]$AppLabel = "叮当AI运维专家·协同测试"
+  [string]$AppLabel = "叮当AI运维专家·协同测试",
+  [switch]$DirectAi
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +14,51 @@ $projectRoot = Join-Path $repoRoot "air3-dingdang-expert-integrated-app"
 $gradle = Join-Path $projectRoot "gradlew.bat"
 $apk = Join-Path $projectRoot "app\build\outputs\apk\debug\app-debug.apk"
 $unityAndroid = "C:\Users\59979\UnityEditors\2022.3.62f3c1\Editor\Data\PlaybackEngines\AndroidPlayer"
+
+$localConfigRoots = @($repoRoot)
+$gitCommonDir = (& git -C $repoRoot rev-parse --git-common-dir 2>$null | Select-Object -First 1)
+if ($LASTEXITCODE -eq 0 -and $gitCommonDir) {
+  $commonPath = $gitCommonDir.Trim().Replace("/", "\")
+  if (-not [System.IO.Path]::IsPathRooted($commonPath)) {
+    $commonPath = Join-Path $repoRoot $commonPath
+  }
+  $localConfigRoots += Split-Path -Parent ([System.IO.Path]::GetFullPath($commonPath))
+}
+$localConfigRoots = @($localConfigRoots | Select-Object -Unique)
+
+function Get-LocalConfigCandidates([string]$FileName) {
+  $candidates = @()
+  foreach ($configRoot in $localConfigRoots) {
+    $candidates += Join-Path $configRoot "tmp\$FileName"
+  }
+  return $candidates | Select-Object -Unique
+}
+
+function Read-ConfigOrEnv(
+  [string]$Name,
+  [string]$FileName,
+  [string]$DefaultValue = "",
+  [switch]$Required
+) {
+  $value = [Environment]::GetEnvironmentVariable($Name, "Process")
+  if ($value -and $value.Trim().Length -gt 0) {
+    return $value.Trim()
+  }
+  $configCandidates = @(Get-LocalConfigCandidates $FileName)
+  $configFile = $configCandidates |
+    Where-Object { Test-Path -LiteralPath $_ } |
+    Select-Object -First 1
+  if ($configFile) {
+    $fileValue = (Get-Content -LiteralPath $configFile -Raw).Trim()
+    if ($fileValue.Length -gt 0) {
+      return $fileValue
+    }
+  }
+  if ($Required) {
+    throw "$Name is missing from the environment and local ignored files"
+  }
+  return $DefaultValue
+}
 
 if (-not $CollabServerUrl) {
   $lanAddress = Get-NetIPAddress -AddressFamily IPv4 |
@@ -35,28 +81,35 @@ if ($VersionCode -lt 627 -or -not $VersionName.Trim() -or -not $AppLabel.Trim())
   throw "Integrated preview version and label are invalid"
 }
 
-if (-not $env:OPS_GLASSES_API_KEY) {
-  $secretCandidates = @(
-    (Join-Path $repoRoot "tmp\ops_glasses_api_key.local")
-  )
-  $gitCommonDir = (& git -C $repoRoot rev-parse --git-common-dir 2>$null | Select-Object -First 1)
-  if ($LASTEXITCODE -eq 0 -and $gitCommonDir) {
-    $commonPath = $gitCommonDir.Trim().Replace("/", "\")
-    if (-not [System.IO.Path]::IsPathRooted($commonPath)) {
-      $commonPath = Join-Path $repoRoot $commonPath
-    }
-    $mainCheckout = Split-Path -Parent ([System.IO.Path]::GetFullPath($commonPath))
-    $secretCandidates += Join-Path $mainCheckout "tmp\ops_glasses_api_key.local"
-  }
-  $secretFile = $secretCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-  if (-not $secretFile) {
-    throw "OPS_GLASSES_API_KEY is missing from the environment and local ignored files"
-  }
-  $env:OPS_GLASSES_API_KEY = (Get-Content -LiteralPath $secretFile -Raw).Trim()
-}
+$env:OPS_GLASSES_API_KEY = Read-ConfigOrEnv `
+  -Name "OPS_GLASSES_API_KEY" `
+  -FileName "ops_glasses_api_key.local" `
+  -Required
 
-if (-not $env:OPS_GLASSES_API_KEY) {
-  throw "OPS_GLASSES_API_KEY is empty"
+if ($DirectAi) {
+  $env:AIR3_APK_DIRECT_GPT = "1"
+  $env:DIRECT_GPT_API_KEY = Read-ConfigOrEnv `
+    -Name "DIRECT_GPT_API_KEY" `
+    -FileName "direct_gpt_api_key.local" `
+    -Required
+  $env:DIRECT_GPT_BASE_URL = Read-ConfigOrEnv `
+    -Name "DIRECT_GPT_BASE_URL" `
+    -FileName "direct_gpt_base_url.local" `
+    -DefaultValue "https://api.openai.com/v1"
+  $env:DIRECT_GPT_MODEL = Read-ConfigOrEnv `
+    -Name "DIRECT_GPT_MODEL" `
+    -FileName "direct_gpt_model.local" `
+    -DefaultValue "gpt-4.1-mini"
+  $env:DIRECT_ASR_API_KEY = Read-ConfigOrEnv `
+    -Name "DIRECT_ASR_API_KEY" `
+    -FileName "direct_asr_api_key.local" `
+    -Required
+  $env:DIRECT_ASR_ENDPOINT = Read-ConfigOrEnv `
+    -Name "DIRECT_ASR_ENDPOINT" `
+    -FileName "direct_asr_endpoint.local" `
+    -Required
+} else {
+  Remove-Item Env:AIR3_APK_DIRECT_GPT -ErrorAction SilentlyContinue
 }
 
 $env:JAVA_HOME = Join-Path $unityAndroid "OpenJDK"
@@ -86,4 +139,5 @@ if (-not (Test-Path -LiteralPath $apk)) {
 Write-Output "Integrated preview build passed."
 Write-Output "Package: $ApplicationId ($VersionCode / $VersionName)"
 Write-Output "Collaboration server: $CollabServerUrl"
+Write-Output "AI mode: $(if ($DirectAi) { 'direct' } else { 'backend' })"
 Write-Output $apk

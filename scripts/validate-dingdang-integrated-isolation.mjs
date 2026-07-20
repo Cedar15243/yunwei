@@ -27,6 +27,9 @@ assert.match(build, /previewApplicationId[^\n]+"com\.codex\.air3nativecamera\.di
 assert.match(build, /previewVersionCode[^\n]+"627"/);
 assert.match(build, /previewVersionName[^\n]+"6\.2\.7-expert-preview"/);
 assert.match(build, /applicationId previewApplicationId/);
+assert.match(build, /AIR3_APK_DIRECT_GPT/);
+assert.match(build, /static final boolean DIRECT_GPT_ENABLED = \$\{directGptEnabled\};/);
+assert.doesNotMatch(build, /static final boolean DIRECT_GPT_ENABLED = false;/);
 assert.doesNotMatch(build, /TRTC_SDK_SECRET/);
 
 const buildScriptPath = path.join(root, "scripts", "build-dingdang-integrated-preview.ps1");
@@ -39,6 +42,13 @@ const installScript = readFileSync(installScriptPath, "utf8");
 assert.match(buildScript, /collabServerUrl/);
 assert.match(buildScript, /ApplicationId must remain in the protected integrated preview namespace/);
 assert.match(buildScript, /assembleDebug/);
+assert.match(buildScript, /\[switch\]\$DirectAi/);
+assert.match(buildScript, /AIR3_APK_DIRECT_GPT/);
+assert.match(buildScript, /direct_gpt_api_key\.local/);
+assert.match(buildScript, /direct_asr_api_key\.local/);
+assert.match(buildScript, /direct_asr_endpoint\.local/);
+assert.match(buildScript, /direct_gpt_base_url\.local/);
+assert.match(buildScript, /direct_gpt_model\.local/);
 assert.match(installScript, /com\.codex\.air3nativecamera\.dingdangexpert\.follow\.preview/);
 assert.match(installScript, /com\.codex\.air3nativecamera\.dingdangexpert\.follow/);
 assert.match(installScript, /com\.codex\.air3nativecamera\.dingdangexpert\.collab/);
