@@ -36,6 +36,8 @@ export interface TrtcSession {
     userId: string;
     glassesUserId: string;
     videoView: HTMLElement;
+    localVideoView: HTMLElement;
+    publishVideo: boolean;
   }): Promise<void>;
   leave(): Promise<void>;
 }
@@ -46,6 +48,7 @@ interface CollaborationControllerOptions {
   expertId: string;
   expertName: string;
   videoView: HTMLElement;
+  localVideoView: HTMLElement;
 }
 
 type SnapshotListener = (snapshot: CollaborationSnapshot) => void;
@@ -200,9 +203,17 @@ export class CollaborationController {
         userId: this.options.expertId,
         glassesUserId: glassesId,
         videoView: this.options.videoView,
+        localVideoView: this.options.localVideoView,
+        publishVideo: role === "primary",
       });
       this.update({ status: "in_call" });
     } catch (error) {
+      await this.options.trtc.leave();
+      if (role === "observer") {
+        this.options.signaling.leaveObserver(sessionId);
+      } else {
+        this.options.signaling.end(sessionId);
+      }
       this.update({
         status: "failed",
         error: error instanceof Error ? error.message : "加入TRTC房间失败",

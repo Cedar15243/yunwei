@@ -3,6 +3,10 @@ plugins {
 }
 
 def collabServerUrl = project.findProperty("collabServerUrl") ?: "http://127.0.0.1:8787"
+def previewApplicationId = project.findProperty("previewApplicationId") ?: "com.codex.air3nativecamera.dingdangexpert.follow.preview"
+def previewVersionCode = (project.findProperty("previewVersionCode") ?: "627") as int
+def previewVersionName = project.findProperty("previewVersionName") ?: "6.2.7-expert-preview"
+def previewAppLabel = project.findProperty("previewAppLabel") ?: "叮当AI运维专家·协同测试"
 def generatedConfigDir = layout.buildDirectory.dir("generated/source/dingdang")
 
 def requiredEnvironment = { String name ->
@@ -28,11 +32,12 @@ android {
     buildToolsVersion "34.0.0"
 
     defaultConfig {
-        applicationId "com.codex.air3nativecamera.dingdangexpert.follow.preview"
+        applicationId previewApplicationId
         minSdk 34
         targetSdk 34
-        versionCode 627
-        versionName "6.2.7-expert-preview"
+        versionCode previewVersionCode
+        versionName previewVersionName
+        manifestPlaceholders = [appLabel: previewAppLabel]
         buildConfigField "String", "COLLAB_SERVER_URL", "\"${collabServerUrl}\""
     }
 
@@ -57,6 +62,8 @@ android {
 }
 
 tasks.register("generateDingdangConfig") {
+    inputs.property("previewApplicationId", previewApplicationId)
+    inputs.property("previewAppLabel", previewAppLabel)
     outputs.dir generatedConfigDir
     doLast {
         def opsKey = requiredEnvironment("OPS_GLASSES_API_KEY")
@@ -71,8 +78,8 @@ tasks.register("generateDingdangConfig") {
         new File(packageDir, "GeneratedConfig.java").setText("""package com.codex.air3nativecamera;
 
 final class GeneratedConfig {
-    static final String APP_ID = "com.codex.air3nativecamera.dingdangexpert.follow.preview";
-    static final String APP_LABEL = "叮当AI运维专家·协同测试";
+    static final String APP_ID = "${javaString(previewApplicationId)}";
+    static final String APP_LABEL = "${javaString(previewAppLabel)}";
     static final String EVENTS_ENDPOINT = "${javaString(eventsEndpoint)}";
     static final String OPS_GLASSES_API_KEY = "${javaString(opsKey)}";
     static final String DINGDANG_BACKEND_BASE_URL = "${javaString(backendBaseUrl)}";

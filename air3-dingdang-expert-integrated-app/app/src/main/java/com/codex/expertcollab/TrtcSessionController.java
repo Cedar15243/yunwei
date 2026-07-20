@@ -28,6 +28,7 @@ final class TrtcSessionController {
         void onConnectionLost();
         void onConnectionRecovered();
         void onMediaError(String reason);
+        void onExpertVideoAvailable(String expertId, boolean available);
     }
 
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
@@ -35,16 +36,20 @@ final class TrtcSessionController {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final TRTCCloud trtc;
     private final TXCloudVideoView preview;
+    private final TXCloudVideoView expertPreview;
     private final String serverOrigin;
     private final String userId;
     private final Listener listener;
     private boolean active;
     private boolean joining;
     private int joinGeneration;
+    private String expertUserId;
 
-    TrtcSessionController(Context context, TXCloudVideoView preview, String serverOrigin, String userId, Listener listener) {
+    TrtcSessionController(Context context, TXCloudVideoView preview, TXCloudVideoView expertPreview,
+                          String serverOrigin, String userId, Listener listener) {
         this.trtc = TRTCCloud.sharedInstance(context.getApplicationContext());
         this.preview = preview;
+        this.expertPreview = expertPreview;
         this.serverOrigin = serverOrigin;
         this.userId = userId;
         this.listener = listener;
@@ -75,10 +80,24 @@ final class TrtcSessionController {
             public void onConnectionRecovery() {
                 listener.onConnectionRecovered();
             }
+
+            @Override
+            public void onUserVideoAvailable(String remoteUserId, boolean available) {
+                if (expertUserId == null || !expertUserId.equals(remoteUserId)) {
+                    return;
+                }
+                if (available) {
+                    trtc.startRemoteView(remoteUserId, TRTCCloudDef.TRTC_VIDEO_STREAM_TYPE_BIG, expertPreview);
+                } else {
+                    trtc.stopRemoteView(remoteUserId, TRTCCloudDef.TRTC_VIDEO_STREAM_TYPE_BIG);
+                }
+                listener.onExpertVideoAvailable(remoteUserId, available);
+            }
         });
     }
 
-    void join(String sessionId) {
+    void join(String sessionId, String primaryExpertId) {
+        expertUserId = primaryExpertId;
         final int generation = ++joinGeneration;
         JSONObject requestJson = new JSONObject();
         try {
@@ -134,6 +153,18 @@ final class TrtcSessionController {
 
     private void enterRoom(String sessionId, int sdkAppId, String signedUserId, String userSig) {
         joining = true;
+        TRTCCloudDef.TRTCVideoEncParam encoder = new TRTCCloudDef.TRTCVideoEncParam();
+        encoder.videoResolution = TRTCCloudDef.TRTC_VIDEO_RESOLUTION_1280_720;
+        encoder.videoResolutionMode = TRTCCloudDef.TRTC_VIDEO_RESOLUTION_MODE_LANDSCAPE;
+        encoder.videoFps = 24;
+        encoder.videoBitrate = 1800;
+        encoder.minVideoBitrate = 1000;
+        encoder.enableAdjustRes = false;
+        trtc.setVideoEncoderParam(encoder);
+        TRTCCloudDef.TRTCNetworkQosParam qos = new TRTCCloudDef.TRTCNetworkQosParam();
+        qos.preference = TRTCCloudDef.TRTC_VIDEO_QOS_PREFERENCE_CLEAR;
+        qos.controlMode = TRTCCloudDef.VIDEO_QOS_CONTROL_CLIENT;
+        trtc.setNetworkQosParam(qos);
         trtc.startLocalPreview(true, preview);
         trtc.startLocalAudio(TRTCCloudDef.TRTC_AUDIO_QUALITY_SPEECH);
         TRTCCloudDef.TRTCParams params = new TRTCCloudDef.TRTCParams();
@@ -146,6 +177,10 @@ final class TrtcSessionController {
 
     void leave() {
         joinGeneration++;
+        if (expertUserId != null) {
+            trtc.stopRemoteView(expertUserId, TRTCCloudDef.TRTC_VIDEO_STREAM_TYPE_BIG);
+            listener.onExpertVideoAvailable(expertUserId, false);
+        }
         if (active || joining) {
             trtc.exitRoom();
         }
@@ -153,6 +188,7 @@ final class TrtcSessionController {
         trtc.stopLocalPreview();
         active = false;
         joining = false;
+        expertUserId = null;
     }
 
     void release() {

@@ -46,6 +46,9 @@ public final class ExpertCollabCoordinator implements
     private final TextView expertText;
     private final Button primaryButton;
     private final TXCloudVideoView preview;
+    private final FrameLayout expertVideoFrame;
+    private final TXCloudVideoView expertPreview;
+    private final TextView expertVideoLabel;
     private final ImageView freezeImage;
     private final AnnotationOverlayView annotationOverlay;
     private CollabSocketClient signaling;
@@ -77,6 +80,26 @@ public final class ExpertCollabCoordinator implements
 
         annotationOverlay = new AnnotationOverlayView(activity);
         root.addView(annotationOverlay, matchParent());
+
+        expertVideoFrame = new FrameLayout(activity);
+        expertVideoFrame.setBackgroundColor(Color.rgb(69, 212, 131));
+        expertVideoFrame.setPadding(dp(2), dp(2), dp(2), dp(2));
+        expertVideoFrame.setVisibility(View.GONE);
+        expertPreview = new TXCloudVideoView(activity);
+        expertPreview.setBackgroundColor(Color.rgb(9, 13, 17));
+        expertVideoFrame.addView(expertPreview, matchParent());
+        expertVideoLabel = label(13, Color.WHITE);
+        expertVideoLabel.setBackgroundColor(Color.argb(205, 9, 13, 17));
+        expertVideoLabel.setPadding(dp(8), dp(3), dp(8), dp(3));
+        expertVideoFrame.addView(expertVideoLabel, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.START));
+        FrameLayout.LayoutParams expertVideoParams = new FrameLayout.LayoutParams(
+                dp(300), dp(180), Gravity.TOP | Gravity.END);
+        expertVideoParams.topMargin = dp(82);
+        expertVideoParams.rightMargin = dp(20);
+        root.addView(expertVideoFrame, expertVideoParams);
 
         LinearLayout topBar = new LinearLayout(activity);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -131,7 +154,7 @@ public final class ExpertCollabCoordinator implements
         }
         started = true;
         signaling = new CollabSocketClient(serverUrl, DEVICE_ID, DEVICE_NAME, this);
-        trtcSession = new TrtcSessionController(activity, preview, serverUrl, DEVICE_ID, this);
+        trtcSession = new TrtcSessionController(activity, preview, expertPreview, serverUrl, DEVICE_ID, this);
         signaling.connect();
         renderState();
     }
@@ -182,11 +205,16 @@ public final class ExpertCollabCoordinator implements
             host.showExpertStatus("专家协同服务正在初始化");
             return;
         }
+        CollabStateMachine.State previous = stateMachine.getState();
         CollabStateMachine.State next = stateMachine.onPrimaryAction();
         if (next == CollabStateMachine.State.CALLING) {
-            sessionId = null;
-            annotationOverlay.clearAnnotations();
-            clearFreeze();
+            if (previous == CollabStateMachine.State.FAILED) {
+                endCurrentCall(true);
+            } else {
+                sessionId = null;
+                annotationOverlay.clearAnnotations();
+                clearFreeze();
+            }
             signaling.requestCall();
         } else if (next == CollabStateMachine.State.ENDED) {
             endCurrentCall(true);
@@ -263,7 +291,7 @@ public final class ExpertCollabCoordinator implements
             try {
                 stateMachine.onAccepted(expertId);
                 renderState();
-                trtcSession.join(acceptedSessionId);
+                trtcSession.join(acceptedSessionId, expertId);
             } catch (RuntimeException error) {
                 onMediaError(error.getMessage());
             }
@@ -379,11 +407,20 @@ public final class ExpertCollabCoordinator implements
                 return;
             }
             stateMachine.onFailure();
-            if (trtcSession != null) {
-                trtcSession.leave();
-            }
+            endCurrentCall(true);
             renderState();
             statusText.setText(reason == null || reason.isEmpty() ? "音视频连接失败" : reason);
+        });
+    }
+
+    @Override
+    public void onExpertVideoAvailable(String expertId, boolean available) {
+        ui(() -> {
+            if (released) {
+                return;
+            }
+            expertVideoLabel.setText("专家 · " + expertId);
+            expertVideoFrame.setVisibility(available ? View.VISIBLE : View.GONE);
         });
     }
 
@@ -396,6 +433,7 @@ public final class ExpertCollabCoordinator implements
         }
         annotationOverlay.clearAnnotations();
         clearFreeze();
+        expertVideoFrame.setVisibility(View.GONE);
         sessionId = null;
     }
 

@@ -23,9 +23,10 @@ for (const [relativePath, expectedHash] of baseline626) {
 const buildPath = path.join(root, "air3-dingdang-expert-integrated-app", "app", "build.gradle");
 assert.ok(existsSync(buildPath), "integrated preview app/build.gradle is missing");
 const build = readFileSync(buildPath, "utf8");
-assert.match(build, /applicationId "com\.codex\.air3nativecamera\.dingdangexpert\.follow\.preview"/);
-assert.match(build, /versionCode 627/);
-assert.match(build, /versionName "6\.2\.7-expert-preview"/);
+assert.match(build, /previewApplicationId[^\n]+"com\.codex\.air3nativecamera\.dingdangexpert\.follow\.preview"/);
+assert.match(build, /previewVersionCode[^\n]+"627"/);
+assert.match(build, /previewVersionName[^\n]+"6\.2\.7-expert-preview"/);
+assert.match(build, /applicationId previewApplicationId/);
 assert.doesNotMatch(build, /TRTC_SDK_SECRET/);
 
 const buildScriptPath = path.join(root, "scripts", "build-dingdang-integrated-preview.ps1");
@@ -36,6 +37,7 @@ assert.ok(existsSync(installScriptPath), "integrated preview install script is m
 const buildScript = readFileSync(buildScriptPath, "utf8");
 const installScript = readFileSync(installScriptPath, "utf8");
 assert.match(buildScript, /collabServerUrl/);
+assert.match(buildScript, /ApplicationId must remain in the protected integrated preview namespace/);
 assert.match(buildScript, /assembleDebug/);
 assert.match(installScript, /com\.codex\.air3nativecamera\.dingdangexpert\.follow\.preview/);
 assert.match(installScript, /com\.codex\.air3nativecamera\.dingdangexpert\.follow/);

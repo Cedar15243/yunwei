@@ -39,6 +39,7 @@ interface ExpertStageProps {
   onScreenshot?: () => void;
   onToggleFreeze?: () => void;
   role: ExpertRole;
+  localVideoViewRef?: RefObject<HTMLDivElement | null>;
   videoViewRef?: RefObject<HTMLDivElement | null>;
 }
 
@@ -64,6 +65,7 @@ export function ExpertStage({
   onScreenshot,
   onToggleFreeze,
   role,
+  localVideoViewRef,
   videoViewRef,
 }: ExpertStageProps) {
   const [muted, setMuted] = useState(false);
@@ -94,6 +96,10 @@ export function ExpertStage({
         ) : null}
         <div className="live-indicator"><span /> {liveLabel}</div>
         <div className="role-indicator">{roleLabel}</div>
+        <div className={call?.status === "in_call" && role === "primary" ? "expert-self-preview" : "expert-self-preview expert-self-preview--hidden"}>
+          <div ref={localVideoViewRef} aria-label="专家本地视频" />
+          <span>我的画面</span>
+        </div>
         {call === null || call === undefined ? (
           <>
             <div className="demo-annotation demo-annotation--arrow" aria-hidden="true" />

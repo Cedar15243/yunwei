@@ -1,5 +1,9 @@
 param(
-  [string]$CollabServerUrl = ""
+  [string]$CollabServerUrl = "",
+  [string]$ApplicationId = "com.codex.air3nativecamera.dingdangexpert.follow.preview",
+  [int]$VersionCode = 627,
+  [string]$VersionName = "6.2.7-expert-preview",
+  [string]$AppLabel = "叮当AI运维专家·协同测试"
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,6 +27,12 @@ if (-not $CollabServerUrl) {
 
 if ($CollabServerUrl -notmatch "^https?://[^/]+(?::\d+)?$") {
   throw "CollabServerUrl must be an HTTP(S) origin without a path"
+}
+if ($ApplicationId -notmatch "^com\.codex\.air3nativecamera\.dingdangexpert\.follow\.preview(?:\.[a-z][a-z0-9]*)*$") {
+  throw "ApplicationId must remain in the protected integrated preview namespace"
+}
+if ($VersionCode -lt 627 -or -not $VersionName.Trim() -or -not $AppLabel.Trim()) {
+  throw "Integrated preview version and label are invalid"
 }
 
 if (-not $env:OPS_GLASSES_API_KEY) {
@@ -55,7 +65,13 @@ $env:PATH = (Join-Path $env:JAVA_HOME "bin") + ";" + $env:PATH
 
 Push-Location $projectRoot
 try {
-  & $gradle ":app:testDebugUnitTest" "assembleDebug" "-PcollabServerUrl=$CollabServerUrl" "--console=plain"
+  & $gradle ":app:testDebugUnitTest" "assembleDebug" `
+    "-PcollabServerUrl=$CollabServerUrl" `
+    "-PpreviewApplicationId=$ApplicationId" `
+    "-PpreviewVersionCode=$VersionCode" `
+    "-PpreviewVersionName=$VersionName" `
+    "-PpreviewAppLabel=$AppLabel" `
+    "--console=plain"
   if ($LASTEXITCODE -ne 0) {
     throw "Integrated preview Gradle build failed"
   }
@@ -68,5 +84,6 @@ if (-not (Test-Path -LiteralPath $apk)) {
 }
 
 Write-Output "Integrated preview build passed."
+Write-Output "Package: $ApplicationId ($VersionCode / $VersionName)"
 Write-Output "Collaboration server: $CollabServerUrl"
 Write-Output $apk

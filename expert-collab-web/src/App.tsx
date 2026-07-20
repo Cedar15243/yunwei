@@ -47,6 +47,7 @@ function resolveExpertIdentity(): { id: string; name: string } {
 export function App({ initialRole, live }: AppProps) {
   const liveEnabled = live ?? initialRole === undefined;
   const videoViewRef = useRef<HTMLDivElement>(null);
+  const localVideoViewRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<CollaborationController | null>(null);
   const signalingRef = useRef<CollabSocket | null>(null);
   const [call, setCall] = useState<CollaborationSnapshot>(waitingSnapshot);
@@ -58,7 +59,7 @@ export function App({ initialRole, live }: AppProps) {
   const [snapshots, setSnapshots] = useState<Array<{ id: string; label: string; time: string; url: string }>>([]);
 
   useEffect(() => {
-    if (!liveEnabled || !videoViewRef.current) {
+    if (!liveEnabled || !videoViewRef.current || !localVideoViewRef.current) {
       return;
     }
 
@@ -67,10 +68,13 @@ export function App({ initialRole, live }: AppProps) {
     const signaling = new CollabSocket(socket, { senderId: identity.id });
     const controller = new CollaborationController({
       signaling,
-      trtc: new TrtcClient(),
+      trtc: new TrtcClient({
+        onLocalVideoError: () => setActionError("专家摄像头未授权，语音协同继续"),
+      }),
       expertId: identity.id,
       expertName: identity.name,
       videoView: videoViewRef.current,
+      localVideoView: localVideoViewRef.current,
     });
     const canvasTransport: AnnotationTransport = {
       send(type, payload) {
@@ -178,6 +182,7 @@ export function App({ initialRole, live }: AppProps) {
           onScreenshot={() => void createSnapshot()}
           onToggleFreeze={() => void toggleFreeze()}
           role={role}
+          localVideoViewRef={localVideoViewRef}
           videoViewRef={videoViewRef}
         />
         <SessionPanel role={role} snapshots={liveEnabled ? snapshots : undefined} />
