@@ -46,7 +46,7 @@ describe("TrtcClient", () => {
     expect(cameraErrors).toEqual(["Permission denied by system"]);
   });
 
-  it("waits for the glasses main video publication before subscribing", async () => {
+  it("keeps the expert connected while waiting for the glasses main video", async () => {
     const calls: string[] = [];
     const remoteVideoHandlers: Array<(event: { userId: string; streamType: unknown }) => void> = [];
     const sdk = {
@@ -84,7 +84,7 @@ describe("TrtcClient", () => {
       mainStreamType: "main",
     });
 
-    const joining = client.join({
+    await client.join({
       sessionId: "session-1",
       userId: "expert-wang",
       glassesUserId: "glasses-01",
@@ -92,7 +92,7 @@ describe("TrtcClient", () => {
       localVideoView: document.createElement("div"),
       publishVideo: false,
     });
-    await vi.waitFor(() => expect(calls).toContain("audio:start"));
+    expect(calls).toContain("audio:start");
 
     expect(calls).not.toContain("video:glasses-01");
     expect(remoteVideoHandlers).toHaveLength(1);
@@ -101,9 +101,39 @@ describe("TrtcClient", () => {
     expect(calls).not.toContain("video:glasses-01");
 
     remoteVideoHandlers.forEach((handler) => handler({ userId: "glasses-01", streamType: "main" }));
-    await joining;
+    await vi.waitFor(() => expect(calls).toContain("video:glasses-01"));
 
     expect(calls).toEqual(["enter", "audio:start", "video-listener:off", "video:glasses-01"]);
+  });
+
+  it("does not leave the room when glasses video is not published in time", async () => {
+    const calls: string[] = [];
+    const sdk: TrtcSdk = {
+      async enterRoom() { calls.push("enter"); },
+      async startLocalAudio() { calls.push("audio:start"); },
+      async startLocalVideo() { calls.push("camera:start"); },
+      async startRemoteVideo() { calls.push("video:remote"); },
+      onRemoteVideoAvailable() {},
+      offRemoteVideoAvailable() { calls.push("video-listener:off"); },
+      async exitRoom() { calls.push("exit"); },
+    };
+    const client = new TrtcClient({
+      createSdk: () => sdk,
+      getCredential: async (userId) => ({ sdkAppId: 1600152353, userId, userSig: "sig" }),
+      remoteVideoTimeoutMs: 1,
+    });
+
+    await client.join({
+      sessionId: "session-1",
+      userId: "expert-wang",
+      glassesUserId: "glasses-01",
+      videoView: document.createElement("div"),
+      localVideoView: document.createElement("div"),
+      publishVideo: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(calls).toEqual(["enter", "audio:start", "camera:start", "video-listener:off"]);
   });
 
   it("joins, publishes microphone, subscribes to glasses video, then leaves", async () => {

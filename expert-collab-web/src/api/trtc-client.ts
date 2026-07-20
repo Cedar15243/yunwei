@@ -134,9 +134,8 @@ export class TrtcClient {
         userSig: credential.userSig,
         strRoomId: options.sessionId,
       });
-      const [, videoAvailable] = await Promise.all([
+      await Promise.all([
         sdk.startLocalAudio(),
-        remoteVideoReady.promise,
         options.publishVideo
           ? sdk.startLocalVideo({ view: options.localVideoView }).then(() => {
               this.localVideoStarted = true;
@@ -145,15 +144,21 @@ export class TrtcClient {
             })
           : Promise.resolve(),
       ]);
-      if (!videoAvailable) {
-        throw new Error("TRTC video wait cancelled");
-      }
-      await sdk.startRemoteVideo({
-        userId: options.glassesUserId,
-        streamType: this.mainStreamType,
-        view: options.videoView,
+      void remoteVideoReady.promise.then(async (videoAvailable) => {
+        if (!videoAvailable || this.sdk !== sdk) {
+          return;
+        }
+        await sdk.startRemoteVideo({
+          userId: options.glassesUserId,
+          streamType: this.mainStreamType,
+          view: options.videoView,
+        });
+        if (this.sdk === sdk) {
+          this.remoteUserId = options.glassesUserId;
+        }
+      }).catch(() => {
+        // A delayed glasses video must not terminate an otherwise active voice call.
       });
-      this.remoteUserId = options.glassesUserId;
     } catch (error) {
       remoteVideoReady.cancel();
       await sdk.exitRoom();
