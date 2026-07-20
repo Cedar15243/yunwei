@@ -56,6 +56,7 @@ public final class ExpertCollabCoordinator implements
     private String sessionId;
     private boolean started;
     private boolean released;
+    private boolean initialCallRequested;
 
     public ExpertCollabCoordinator(Activity activity, String serverUrl, Host host) {
         if (activity == null || host == null || serverUrl == null || serverUrl.trim().isEmpty()) {
@@ -266,8 +267,11 @@ public final class ExpertCollabCoordinator implements
     @Override
     public void onSignalingConnected() {
         ui(() -> {
-            if (!released && stateMachine.getState() == CollabStateMachine.State.IDLE) {
-                statusText.setText("专家协同 · 设备在线");
+            if (!released
+                    && !initialCallRequested
+                    && stateMachine.getState() == CollabStateMachine.State.IDLE) {
+                initialCallRequested = true;
+                onPrimaryAction();
             }
         });
     }

@@ -75,4 +75,18 @@ assert.ok(
   "integrated expert mode must clean up a failed session before requesting a replacement call",
 );
 
+const signalingConnectedStart = coordinator.indexOf("public void onSignalingConnected()");
+const signalingConnectedEnd = coordinator.indexOf("\n    @Override", signalingConnectedStart);
+const signalingConnected = coordinator.slice(signalingConnectedStart, signalingConnectedEnd);
+assert.ok(
+  coordinator.includes("private boolean initialCallRequested;"),
+  "integrated expert mode must guard its initial automatic call",
+);
+assert.ok(
+  signalingConnected.includes("!initialCallRequested") &&
+    signalingConnected.includes("initialCallRequested = true;") &&
+    signalingConnected.includes("onPrimaryAction();"),
+  "opening expert mode must automatically call once after signaling connects",
+);
+
 console.log("Integrated host contract validation passed.");
