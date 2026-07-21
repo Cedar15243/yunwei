@@ -31,6 +31,8 @@ public final class ExpertCollabCoordinator implements
         void requestExitExpertMode();
 
         void showExpertStatus(String message);
+
+        void prepareExpertMedia();
     }
 
     private static final String DEVICE_ID = "glasses-01";
@@ -174,6 +176,18 @@ public final class ExpertCollabCoordinator implements
         host.requestExitExpertMode();
     }
 
+    /** A waiting call has no TRTC microphone yet, so local voice exit remains safe. */
+    public boolean canUseForegroundVoiceControl() {
+        if (released) {
+            return false;
+        }
+        CollabStateMachine.State state = stateMachine.getState();
+        return state == CollabStateMachine.State.IDLE
+                || state == CollabStateMachine.State.CALLING
+                || state == CollabStateMachine.State.FAILED
+                || state == CollabStateMachine.State.ENDED;
+    }
+
     public void release() {
         if (released) {
             return;
@@ -296,6 +310,7 @@ public final class ExpertCollabCoordinator implements
             try {
                 stateMachine.onAccepted(expertId);
                 renderState();
+                host.prepareExpertMedia();
                 trtcSession.join(acceptedSessionId, expertId);
             } catch (RuntimeException error) {
                 onMediaError(error.getMessage());

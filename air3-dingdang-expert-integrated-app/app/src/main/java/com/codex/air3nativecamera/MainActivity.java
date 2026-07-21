@@ -24,6 +24,7 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.AudioFormat;
+import android.media.ToneGenerator;
 import android.media.AudioRecord;
 import android.media.ExifInterface;
 import android.media.Image;
@@ -54,6 +55,12 @@ import android.widget.TextView;
 import com.codex.air3nativecamera.features.FeatureEntry;
 import com.codex.air3nativecamera.features.FeatureRegistry;
 import com.codex.air3nativecamera.mode.IntegratedModeController;
+import com.codex.air3nativecamera.voice.LegacyVoiceCommandRouter;
+import com.codex.air3nativecamera.voice.VoiceCommandRouter;
+import com.codex.air3nativecamera.voice.VoiceAsrSessionGate;
+import com.codex.air3nativecamera.voice.VoiceEventStateMachine;
+import com.codex.air3nativecamera.voice.WakeWordEngine;
+import com.codex.air3nativecamera.voice.WakeWordEngines;
 import com.codex.expertcollab.ExpertCollabCoordinator;
 
 import org.json.JSONArray;
@@ -102,6 +109,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         SHOW_RECORDS
     }
     private enum VoiceStreamState { IDLE, LISTENING, PARTIAL_READY, FINAL_READY, AI_PENDING, AI_DONE, VOICE_UNCLEAR }
+    private enum VoiceSessionPurpose { NONE, WAKE, COMMAND }
 
     private interface ChatAiClient {
         void send(String prompt, String imageId, byte[] jpegBytes, StreamingCallback callback);
@@ -148,12 +156,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final String DINGDANG_BACKEND_API_KEY = GeneratedConfig.DINGDANG_BACKEND_API_KEY;
     private static final String APP_ID = GeneratedConfig.APP_ID;
     private static final String APP_LABEL = GeneratedConfig.APP_LABEL;
+    private static final boolean VOICE_PREVIEW_ENABLED =
+            "com.codex.air3nativecamera.dingdangexpert.follow.preview.voice".equals(APP_ID);
+    private static final boolean OFFLINE_WAKE_ENABLED = GeneratedConfig.IFLYTEK_OFFLINE_WAKE_ENABLED;
+    private static final boolean VOICE_WORKFLOW_ENABLED = VOICE_PREVIEW_ENABLED || OFFLINE_WAKE_ENABLED;
     private static final String DIRECT_ASR_MODEL = "fun-asr-realtime";
     private static final int JPEG_QUALITY = GeneratedConfig.FAST_UPLOAD ? 82 : 92;
     private static final int UPLOAD_MAX_IMAGE_EDGE = GeneratedConfig.FAST_UPLOAD ? 1280 : 1600;
     private static final int PREVIEW_MAX_IMAGE_EDGE = 480;
     private static final long VOICE_RECORDING_MS = 30000L;
-    private static final long VOICE_AUTO_WAKE_RECORDING_MS = 6000L;
+    private static final long VOICE_AUTO_WAKE_RECORDING_MS = 10000L;
     private static final long VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L;
     private static final long VOICE_AUTO_STOP_SILENCE_MS = 1500L;
     private static final long VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 1800L;
@@ -162,6 +174,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final long GPT_REQUEST_WATCHDOG_MS = 240000L;
     private static final long WAKE_PREFIX_GRACE_MS = 4000L;
     private static final long FOREGROUND_WAKE_RETRY_DELAY_MS = 900L;
+    private static final long VOICE_EVENT_DESCRIPTION_TIMEOUT_MS = 8000L;
     private static final int MAX_VOICE_COMMAND_CHARS = 16;
     private static final int VOICE_SILENCE_RMS_THRESHOLD = 520;
     private static final int VOICE_SAMPLE_RATE_HZ = 16000;
@@ -185,8 +198,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     + "3. \u6700\u540e\u5237\u65b0\u8fd9\u4e2a\u5730\u5740\u9a8c\u8bc1\uff1a\n"
                     + WEBSITE_RECOVERY_DEMO_URL;
     private static final String WEBSITE_RECOVERY_DEMO_AI_GUARD =
-            "\u7f51\u7ad9\u6062\u590d\u6f14\u793a Skill\uff1a\u5982\u679c\u7528\u6237\u8bed\u97f3\u5305\u542b\u7f51\u7ad9\u4e0a\u4e0d\u53bb\u3001\u7f51\u7ad9\u6253\u4e0d\u5f00\u3001\u8fd9\u4e2a\u7f51\u7ad9\u3001502\u3001\u9875\u9762\u65e0\u6cd5\u6b63\u5e38\u8fd0\u884c\uff0c\u6216\u56fe\u7247 OCR \u8bc6\u522b\u5230 HTTP ERROR 502\u3001bb.chinacedar.top\uff0c\u53ea\u6309\u56fa\u5b9a\u6f14\u793a\u6d41\u7a0b\u56de\u7b54\uff0c\u4e0d\u8981\u8be2\u95ee\u5bb9\u5668\u540d\u3001\u670d\u52a1\u5668\u540d\u3001\u8fdb\u7a0b\u540d\uff0c\u4e0d\u8981\u5217\u591a\u4e2a\u53ef\u80fd\u539f\u56e0\u3002\u56fa\u5b9a\u8bf4\uff1a\u8fd9\u662f\u7f51\u7ad9 502 \u6545\u969c\uff0c\u6309\u64cd\u4f5c\u6d41\u7a0b\u91cd\u542f\u7f51\u7ad9\u670d\u52a1\u5373\u53ef\u3002\u7136\u540e\u7ed9\u51fa systemctl is-active nginx\u3001systemctl restart nginx\u3001\u5237\u65b0 "
-                    + WEBSITE_RECOVERY_DEMO_URL + " \u9a8c\u8bc1\u3002";
+            "网站恢复演示 Skill：仅当用户明确说“网站恢复演示”，或图片清晰识别到 "
+                    + "bb.chinacedar.top 的 HTTP ERROR 502 时，才使用固定演示流程。固定流程是："
+                    + "说明这是网站 502 故障，执行 systemctl is-active nginx、systemctl restart nginx，"
+                    + "再刷新 " + WEBSITE_RECOVERY_DEMO_URL + " 验证。其他 502 或证据不足的情况，"
+                    + "必须说明无法确认根因，并先要求补充告警、日志或现场信息。";
     private static final String[] WEBSITE_RECOVERY_VOICE_KEYWORDS = {
             "\u7f51\u7ad9\u4e0a\u4e0d\u53bb",
             "\u7f51\u7ad9\u6253\u4e0d\u5f00",
@@ -209,6 +225,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     };
     private static final String[] VOICE_COMMAND_RETAKE_WORDS = {
             "\u91cd\u62cd", "\u91cd\u65b0\u62cd", "\u518d\u62cd", "\u91cd\u65b0\u7167", "\u518d\u7167"
+    };
+    private static final String[] VOICE_COMMAND_PHOTO_EXTENDED_WORDS = {
+            "\u62cd\u7167\u7247", "\u62cd\u4e00\u5f20\u7167\u7247", "\u62cd\u4e2a\u7167\u7247"
     };
     private static final String[] VOICE_COMMAND_SEND_WORDS = {
             "\u53d1\u9001", "\u5f00\u59cb\u5206\u6790", "\u5e2e\u6211\u5206\u6790", "\u5c31\u8fd9\u5f20", "\u7528\u8fd9\u5f20"
@@ -239,6 +258,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private final ArrayList<ChatMessage> chatMessages = new ArrayList<>();
     private final ArrayList<ChatProject> chatProjects = new ArrayList<>();
     private final FeatureRegistry featureRegistry = FeatureRegistry.createDefault();
+    private final LegacyVoiceCommandRouter legacyVoiceCommandRouter = new LegacyVoiceCommandRouter();
+    private final VoiceCommandRouter voiceCommandRouter = new VoiceCommandRouter();
+    private final VoiceEventStateMachine voiceEventStateMachine = new VoiceEventStateMachine();
+    private final VoiceAsrSessionGate voiceAsrSessionGate = new VoiceAsrSessionGate();
 
     private ScreenMode screenMode = ScreenMode.CHAT;
     private FrameLayout root;
@@ -262,6 +285,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private TextView menuButton;
     private TextView cameraStatusText;
     private ScrollView chatScrollView;
+    private String chatStatus = "在线";
 
     private HandlerThread cameraThread;
     private Handler cameraHandler;
@@ -292,7 +316,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private Runnable voiceTranscriptStableStopRunnable;
     private boolean voiceAutoListenArmed;
     private boolean voiceStartedFromAutoWindow;
+    private VoiceSessionPurpose voiceSessionPurpose = VoiceSessionPurpose.NONE;
+    private boolean wakeFeedbackDelivered;
     private long wakePrefixGraceUntilMs;
+    private WakeWordEngine wakeWordEngine;
 
     private byte[] composerImageBytes;
     private String composerImageId = "";
@@ -300,11 +327,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private Bitmap composerImagePreviewBitmap;
     private boolean composerImageUploadFailed;
     private boolean sendAfterImageUpload;
+    private long composerImageGeneration;
+    private byte[] lastDirectAiContextImage;
     private String composerTranscript = "";
     private int streamingAssistantIndex = -1;
     private int liveTranscriptMessageIndex = -1;
     private Runnable chatStreamRenderRunnable;
     private Runnable foregroundAutoVoiceStartRunnable;
+    private Runnable voiceEventDescriptionTimeoutRunnable;
     private long lastChatStreamRenderAtMs;
     private boolean scrollChatToBottom;
     private int chatScrollRequestId;
@@ -333,6 +363,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         chatAiClient = createChatAiClient();
         directAsrClient = new DirectAsrClient(DIRECT_ASR_ENDPOINT, DIRECT_ASR_API_KEY);
         realtimeAsrClient = createRealtimeAsrClient();
+        wakeWordEngine = WakeWordEngines.create(
+                getApplicationContext(),
+                OFFLINE_WAKE_ENABLED,
+                GeneratedConfig.IFLYTEK_APP_ID,
+                GeneratedConfig.IFLYTEK_API_KEY,
+                GeneratedConfig.IFLYTEK_API_SECRET);
         restoreChatProjects();
         buildUi();
         modeController = new IntegratedModeController(new IntegratedModeController.Hooks() {
@@ -344,7 +380,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             @Override
             public void stopLegacyVoice() {
                 cancelForegroundVoiceListening();
+                cancelVoiceEventDescriptionTimeout();
                 stopVoiceRecording(false, "expert_enter");
+                resetVoiceSessionForForegroundWake();
             }
 
             @Override
@@ -377,6 +415,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
             @Override
             public void resumeLegacyVoice() {
+                resetVoiceSessionForForegroundWake();
                 scheduleForegroundVoiceListening("expert_exit");
             }
         });
@@ -525,7 +564,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         if (isBackShortcutKey(keyCode)) {
             if (screenMode == ScreenMode.CAMERA) {
-                renderChatScreen();
+                returnToChatFromCameraFlow();
                 return true;
             }
             if (screenMode == ScreenMode.CHAT) {
@@ -740,7 +779,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         stateText.setTextColor(Color.rgb(78, 85, 94));
         stateText.setTextSize(15);
         stateText.setGravity(Gravity.RIGHT);
-        stateText.setVisibility(View.GONE);
+        stateText.setMaxLines(2);
+        stateText.setVisibility(View.VISIBLE);
+        topBar.addView(stateText, new LinearLayout.LayoutParams(dp(230), ViewGroup.LayoutParams.WRAP_CONTENT));
 
         menuButton = iconButton("☰");
         menuButton.setTextSize(28);
@@ -921,7 +962,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             @Override
             public void onClick(View view) {
                 setProjectRailVisible(false);
-                titleText.setText("更多运维 · 接口已预留");
+                setChatStatus("更多运维能力筹备中");
             }
         });
         menuButton.setOnClickListener(new View.OnClickListener() {
@@ -949,7 +990,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         backCamera.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                renderChatScreen();
+                returnToChatFromCameraFlow();
             }
         });
         captureCamera.setOnClickListener(new View.OnClickListener() {
@@ -1014,6 +1055,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private boolean isProjectRailVisible() {
         return projectRail != null && projectRail.getVisibility() == View.VISIBLE;
+    }
+
+    private void setChatStatus(String status) {
+        chatStatus = status == null || status.trim().length() == 0 ? "在线" : status.trim();
+        if (stateText != null) {
+            stateText.setText(chatStatus);
+            stateText.setVisibility(View.VISIBLE);
+        }
     }
 
     private void setProjectRailVisible(boolean visible) {
@@ -1186,12 +1235,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 false));
         chatProjects.add(0, project);
         currentProjectIndex = 0;
-        composerImageBytes = null;
-        composerImageId = "";
-        composerImagePreviewBase64 = "";
-        composerImagePreviewBitmap = null;
-        composerImageUploadFailed = false;
-        sendAfterImageUpload = false;
+        clearComposerImage();
+        lastDirectAiContextImage = null;
         composerTranscript = "";
         streamingAssistantIndex = -1;
         gptRequestGeneration++;
@@ -1209,12 +1254,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         saveCurrentProjectFromMessages();
         currentProjectIndex = index;
-        composerImageBytes = null;
-        composerImageId = "";
-        composerImagePreviewBase64 = "";
-        composerImagePreviewBitmap = null;
-        composerImageUploadFailed = false;
-        sendAfterImageUpload = false;
+        clearComposerImage();
+        lastDirectAiContextImage = null;
         composerTranscript = "";
         streamingAssistantIndex = -1;
         liveTranscriptMessageIndex = -1;
@@ -1319,7 +1360,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             enterExpertMode();
             return;
         }
-        titleText.setText(title + " · 下一阶段启用");
+        renderChatScreen();
+        setChatStatus(title + "筹备中");
     }
 
     @Override
@@ -1330,6 +1372,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     @Override
     public void showExpertStatus(String message) {
         Log.i(KEY_LOG_TAG, "Expert mode status=" + (message == null ? "" : message));
+    }
+
+    @Override
+    public void prepareExpertMedia() {
+        cancelForegroundVoiceListening();
+        stopVoiceRecording(false, "expert_media_start");
+        resetVoiceSessionForForegroundWake();
     }
 
     private void enterExpertMode() {
@@ -1356,6 +1405,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 ViewGroup.LayoutParams.MATCH_PARENT));
         expertLayer.setVisibility(View.VISIBLE);
         expertCoordinator.start();
+        scheduleForegroundVoiceListening("expert_waiting");
     }
 
     private void releaseExpertCoordinator() {
@@ -1382,7 +1432,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 cameraOverlay.setVisibility(View.GONE);
                 previewView.setVisibility(View.GONE);
                 titleText.setText(APP_LABEL + " · 当前项目 · " + activeProject().title);
-                stateText.setText(recordingVoice ? "语音识别中" : "在线");
+                setChatStatus(recordingVoice ? "语音识别中" : chatStatus);
                 renderProjectList();
                 renderMessages();
                 renderComposer();
@@ -1769,8 +1819,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         if (recordingVoice) {
             if (composerTranscript.trim().length() == 0) {
-                transcriptDraftText.setVisibility(View.GONE);
-                transcriptDraftText.setText("");
+                transcriptDraftText.setVisibility(View.VISIBLE);
+                transcriptDraftText.setText(voiceListeningHint());
+                transcriptDraftText.setTextColor(Color.rgb(78, 85, 94));
             } else {
                 transcriptDraftText.setVisibility(View.VISIBLE);
                 transcriptDraftText.setText(composerTranscript);
@@ -1801,12 +1852,23 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
     }
 
+    private String voiceListeningHint() {
+        if (voiceEventStateMachine.state() == VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION) {
+            return "请说明现场问题";
+        }
+        if (voiceSessionPurpose == VoiceSessionPurpose.COMMAND) {
+            return "请说指令或问题";
+        }
+        return "正在聆听";
+    }
+
     private void enterCameraScreen(String source) {
         renderCameraScreen();
     }
 
     private void requestVoicePhotoCapture() {
         pendingVoicePhotoCapture = true;
+        cameraStatusText.setText("\u8bed\u97f3\u62cd\u7167\uff0c\u6b63\u5728\u51c6\u5907\u76f8\u673a");
         if (screenMode != ScreenMode.CAMERA) {
             enterCameraScreen("voice-command");
         }
@@ -1832,6 +1894,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private void confirmCapturedPhoto(byte[] jpegBytes) {
         Log.i(KEY_LOG_TAG, "Photo captured bytes=" + (jpegBytes == null ? 0 : jpegBytes.length));
+        final long imageGeneration = ++composerImageGeneration;
         composerImageBytes = jpegBytes;
         composerImageId = "";
         composerImagePreviewBase64 = createImagePreviewBase64(jpegBytes);
@@ -1839,9 +1902,56 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         composerImageUploadFailed = false;
         showComposerAttachment("正在上传");
         renderChatScreen();
-        uploadImageForChat(jpegBytes);
+        uploadImageForChat(jpegBytes, imageGeneration);
         voiceStreamState = VoiceStreamState.IDLE;
+        if (VOICE_WORKFLOW_ENABLED
+                && voiceEventStateMachine.onPhotoCaptured() == VoiceEventStateMachine.Signal.START_DESCRIPTION) {
+            beginVoiceEventDescription();
+            return;
+        }
         scheduleForegroundVoiceListening("photo-captured");
+    }
+
+    private void beginVoiceEventDescription() {
+        cancelVoiceEventDescriptionTimeout();
+        setChatStatus("请说明现场问题");
+        composerTranscript = "";
+        renderComposer();
+        startToggleVoiceRecording();
+        voiceEventDescriptionTimeoutRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (voiceEventStateMachine.state() != VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION) {
+                    return;
+                }
+                stopVoiceRecording(false, "event_description_timeout");
+                submitVoiceEvent(voiceEventStateMachine.onDescriptionTimeout());
+            }
+        };
+        mainHandler.postDelayed(voiceEventDescriptionTimeoutRunnable, VOICE_EVENT_DESCRIPTION_TIMEOUT_MS);
+    }
+
+    private void cancelVoiceEventDescriptionTimeout() {
+        if (voiceEventDescriptionTimeoutRunnable != null) {
+            mainHandler.removeCallbacks(voiceEventDescriptionTimeoutRunnable);
+            voiceEventDescriptionTimeoutRunnable = null;
+        }
+    }
+
+    private void submitVoiceEvent(VoiceEventStateMachine.Signal signal) {
+        if (signal != VoiceEventStateMachine.Signal.SUBMIT_TO_AI) {
+            return;
+        }
+        cancelVoiceEventDescriptionTimeout();
+        String description = voiceEventStateMachine.eventDescription();
+        composerTranscript = description.length() == 0
+                ? "\u8bf7\u7ed3\u5408\u8fd9\u5f20\u73b0\u573a\u7167\u7247\u7ed9\u51fa\u6392\u67e5\u5efa\u8bae"
+                : description;
+        voiceEventStateMachine.reset();
+        voiceStreamState = VoiceStreamState.AI_PENDING;
+        setChatStatus("已听清，正在分析");
+        renderComposer();
+        sendComposerToAi();
     }
 
     private void showComposerAttachment(String label) {
@@ -1856,9 +1966,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         });
     }
 
-    private void uploadImageForChat(final byte[] jpegBytes) {
+    private void clearComposerImage() {
+        composerImageGeneration++;
+        composerImageBytes = null;
+        composerImageId = "";
+        composerImagePreviewBase64 = "";
+        composerImagePreviewBitmap = null;
+        composerImageUploadFailed = false;
+        sendAfterImageUpload = false;
+    }
+
+    private void uploadImageForChat(final byte[] jpegBytes, final long imageGeneration) {
         if (DIRECT_GPT_ENABLED || backendChatClient == null || jpegBytes == null || jpegBytes.length == 0) {
-            onBackendImageUploaded("local-photo", jpegBytes);
+            onBackendImageUploaded("local-photo", jpegBytes, imageGeneration);
             return;
         }
         backendChatClient.uploadImageForChat(backendSessionIdForActiveProject(), jpegBytes, new BackendImageUploadCallback() {
@@ -1867,9 +1987,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 mainHandler.post(new Runnable() {
                     @Override
                     public void run() {
+                        if (imageGeneration != composerImageGeneration) {
+                            return;
+                        }
                         activeProject().backendSessionId = sessionId;
                         persistChatProjects();
-                        onBackendImageUploaded(imageId, jpegBytes);
+                        onBackendImageUploaded(imageId, jpegBytes, imageGeneration);
                     }
                 });
             }
@@ -1879,6 +2002,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 mainHandler.post(new Runnable() {
                     @Override
                     public void run() {
+                        if (imageGeneration != composerImageGeneration) {
+                            return;
+                        }
                         composerImageId = "";
                         composerImageUploadFailed = true;
                         showComposerAttachment("上传失败：" + safeMessage(error));
@@ -1888,7 +2014,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         });
     }
 
-    private void onBackendImageUploaded(String imageId, byte[] imageBytes) {
+    private void onBackendImageUploaded(String imageId, byte[] imageBytes, long imageGeneration) {
+        if (imageGeneration != composerImageGeneration) {
+            return;
+        }
         Log.i(KEY_LOG_TAG, "Photo context ready imageId=" + (imageId == null ? "" : imageId)
                 + " bytes=" + (imageBytes == null ? 0 : imageBytes.length));
         composerImageBytes = imageBytes;
@@ -1983,22 +2112,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return true;
         }
         if (command == VoiceCommand.TAKE_PHOTO) {
-            if (screenMode == ScreenMode.CAMERA) {
-                requestVoicePhotoCapture();
-            } else {
-                enterCameraScreen("voice-open-camera-before-photo");
-                voiceStreamState = VoiceStreamState.IDLE;
-                scheduleForegroundVoiceListening("camera-opened");
+            if (VOICE_WORKFLOW_ENABLED) {
+                voiceEventStateMachine.onCommand(VoiceCommandRouter.Command.PHOTO);
             }
+            requestVoicePhotoCapture();
             return true;
         }
         if (command == VoiceCommand.RETAKE_PHOTO) {
-            composerImageBytes = null;
-            composerImagePreviewBase64 = "";
-            composerImagePreviewBitmap = null;
-            composerImageId = "";
-            composerImageUploadFailed = false;
-            sendAfterImageUpload = false;
+            clearComposerImage();
             requestVoicePhotoCapture();
             return true;
         }
@@ -2011,9 +2132,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return true;
         }
         if (command == VoiceCommand.BACK_TO_CHAT) {
-            renderChatScreen();
-            voiceStreamState = VoiceStreamState.IDLE;
-            scheduleForegroundVoiceListening("voice-command-back");
+            if (screenMode == ScreenMode.EXPERT) {
+                exitExpertMode();
+            } else {
+                returnToChatFromCameraFlow();
+            }
             return true;
         }
         if (command == VoiceCommand.START_VOICE) {
@@ -2055,48 +2178,123 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return false;
     }
 
+    private boolean handleVoicePreviewInteraction(String text) {
+        VoiceCommandRouter.Command command = voiceCommandRouter.route(text);
+        if (command == VoiceCommandRouter.Command.NONE) {
+            if (voiceEventStateMachine.state() == VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION) {
+                submitVoiceEvent(voiceEventStateMachine.onDescriptionFinal(text));
+                return true;
+            }
+            return false;
+        }
+        clearLiveTranscriptMessageIfStreaming();
+        if (screenMode == ScreenMode.EXPERT
+                && (command == VoiceCommandRouter.Command.BACK
+                || command == VoiceCommandRouter.Command.CANCEL)) {
+            exitExpertMode();
+            return true;
+        }
+        VoiceEventStateMachine.Signal signal = voiceEventStateMachine.onCommand(command);
+        if (signal == VoiceEventStateMachine.Signal.CAPTURE_PHOTO) {
+            if (command == VoiceCommandRouter.Command.RETAKE) {
+                clearComposerImage();
+            }
+            requestVoicePhotoCapture();
+            return true;
+        }
+        if (signal == VoiceEventStateMachine.Signal.SUBMIT_TO_AI) {
+            submitVoiceEvent(signal);
+            return true;
+        }
+        if (signal == VoiceEventStateMachine.Signal.CANCEL_EVENT) {
+            cancelVoiceEventDescriptionTimeout();
+            composerTranscript = "";
+            clearComposerImage();
+            setChatStatus("已取消当前事件");
+            renderComposer();
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.EXPERT) {
+            enterExpertMode();
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.BACK) {
+            if (screenMode == ScreenMode.EXPERT) {
+                exitExpertMode();
+            } else {
+                returnToChatFromCameraFlow();
+            }
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.INSPECTION) {
+            openFeature("equipment_inspection", "设备巡检", false);
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.RECORD) {
+            openFeature("field_records", "现场记录", false);
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.DEVICE) {
+            openFeature("asset_records", "设备档案", false);
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.KNOWLEDGE) {
+            openFeature("knowledge_base", "运维知识库", false);
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.WORK_ORDER) {
+            openFeature("work_orders", "运维工单", false);
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.SAFETY) {
+            openFeature("safe_operations", "安全作业", false);
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.REPORT) {
+            openFeature("operations_reports", "运维报告", false);
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.TRAINING) {
+            openFeature("training_drills", "培训演练", false);
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.HELP) {
+            setChatStatus("可说：拍照、专家、巡检、记录、知识、工单、返回");
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.NORMAL
+                || command == VoiceCommandRouter.Command.ABNORMAL
+                || command == VoiceCommandRouter.Command.NEXT
+                || command == VoiceCommandRouter.Command.PREVIOUS
+                || command == VoiceCommandRouter.Command.APPEND
+                || command == VoiceCommandRouter.Command.RETRY
+                || command == VoiceCommandRouter.Command.SAVE
+                || command == VoiceCommandRouter.Command.CONFIRM
+                || command == VoiceCommandRouter.Command.REPEAT) {
+            setChatStatus("该语音操作将在巡检与记录模块启用");
+            return true;
+        }
+        return true;
+    }
+
+    /** Finishes a camera or voice event flow before returning to the chat surface. */
+    private void returnToChatFromCameraFlow() {
+        cancelForegroundVoiceListening();
+        pendingVoicePhotoCapture = false;
+        cancelVoiceEventDescriptionTimeout();
+        voiceEventStateMachine.reset();
+        composerTranscript = "";
+        stopVoiceRecording(false, "voice_back");
+        closeCamera();
+        stopCameraThread();
+        voiceSessionPurpose = VoiceSessionPurpose.NONE;
+        voiceStreamState = VoiceStreamState.IDLE;
+        renderChatScreen();
+        scheduleForegroundVoiceListening("voice-command-back");
+    }
+
     private VoiceCommand classifyVoiceCommand(String text) {
-        String normalized = compactVoiceCommandCandidate(text);
-        if (!isLikelyVoiceCommandPhrase(normalized)) {
-            return VoiceCommand.NONE;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_EXPERT_WORDS)) {
-            return VoiceCommand.OPEN_EXPERT;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_OPEN_CAMERA_WORDS)) {
-            return VoiceCommand.OPEN_CAMERA;
-        }
-        if (containsAny(normalized, VOICE_COMMAND_RETAKE_WORDS)) {
-            return VoiceCommand.RETAKE_PHOTO;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_PHOTO_WORDS)) {
-            return VoiceCommand.TAKE_PHOTO;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_SEND_WORDS)) {
-            return VoiceCommand.SEND;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_BACK_WORDS)) {
-            return VoiceCommand.BACK_TO_CHAT;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_SPEAK_WORDS)) {
-            return VoiceCommand.START_VOICE;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_NEW_PROJECT_WORDS)) {
-            return VoiceCommand.NEW_PROJECT;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_NEXT_PROJECT_WORDS)) {
-            return VoiceCommand.NEXT_PROJECT;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_PREVIOUS_PROJECT_WORDS)) {
-            return VoiceCommand.PREVIOUS_PROJECT;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_LATEST_PROJECT_WORDS)) {
-            return VoiceCommand.LATEST_PROJECT;
-        }
-        if (matchesVoiceCommand(normalized, VOICE_COMMAND_RECORDS_WORDS)) {
-            return VoiceCommand.SHOW_RECORDS;
-        }
-        return VoiceCommand.NONE;
+        return VoiceCommand.valueOf(legacyVoiceCommandRouter.route(text).name());
     }
 
     private String normalizeVoiceCommandText(String text) {
@@ -2293,13 +2491,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             chatMessages.get(streamingAssistantIndex).streaming = false;
         }
         streamingAssistantIndex = -1;
-        stateText.setText("在线");
+        setChatStatus("在线");
         persistChatProjects();
         scrollChatToBottom = true;
         cancelPendingChatStreamRender();
         renderChatStreamMessagesOnly();
         voiceStreamState = VoiceStreamState.IDLE;
-        cancelForegroundVoiceListening();
+        scheduleForegroundVoiceListening("ai-complete");
     }
 
     private boolean isActiveGptRequest(int requestGeneration) {
@@ -2322,6 +2520,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private void sendComposerToAi() {
         final String prompt = composerTranscript.trim();
         final byte[] image = composerImageBytes;
+        final byte[] imageForAi = DIRECT_GPT_ENABLED && image == null ? lastDirectAiContextImage : image;
         final String imageId = composerImageId;
         ChatMessage contextImage = (!DIRECT_GPT_ENABLED && image == null) ? latestImageMessage() : null;
         final String imagePreviewBase64 = image != null ? composerImagePreviewBase64 : "";
@@ -2329,7 +2528,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (imageId.length() > 0) {
             resolvedImageId = imageId;
         } else if (DIRECT_GPT_ENABLED) {
-            resolvedImageId = image != null ? "local-photo" : "";
+            resolvedImageId = imageForAi != null ? "local-photo" : "";
         } else if (contextImage != null) {
             resolvedImageId = contextImage.imageId;
         }
@@ -2341,11 +2540,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             if (composerImageUploadFailed) {
                 sendAfterImageUpload = false;
                 showComposerAttachment("上传失败，请检查后端后重试");
-                stateText.setText("照片上传失败");
+                setChatStatus("照片上传失败");
             } else {
                 sendAfterImageUpload = true;
                 showComposerAttachment("正在上传，上传完自动发送");
-                stateText.setText("照片上传中");
+                setChatStatus("照片上传中");
             }
             renderComposer();
             return;
@@ -2373,6 +2572,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         updateCurrentProjectTitle(prompt);
         if (image != null) {
             appendUserImageMessage(effectiveImageId, imagePreviewBase64);
+            lastDirectAiContextImage = Arrays.copyOf(image, image.length);
         }
         if (hasLiveTranscriptMessage()) {
             updateLiveTranscriptMessage(prompt, true);
@@ -2389,11 +2589,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         sendAfterImageUpload = false;
         renderComposer();
         appendAssistantStreamingMessage();
-        stateText.setText("Thinking");
+        setChatStatus("正在分析");
         markGptStreamStart(effectiveImageId, prompt);
         final int requestGeneration = ++gptRequestGeneration;
         scheduleGptRequestWatchdog(requestGeneration);
-        chatAiClient.send(prompt, effectiveImageId, image, new StreamingCallback() {
+        final String requestPrompt = DIRECT_GPT_ENABLED ? buildDirectAiRequestPrompt(prompt) : prompt;
+        chatAiClient.send(requestPrompt, effectiveImageId, imageForAi, new StreamingCallback() {
             @Override
             public void onDelta(String text) {
                 final String delta = text;
@@ -2436,6 +2637,32 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }
         });
         persistChatProjects();
+    }
+
+    private String buildDirectAiRequestPrompt(String prompt) {
+        StringBuilder context = new StringBuilder();
+        int start = Math.max(0, chatMessages.size() - 6);
+        for (int i = start; i < chatMessages.size(); i++) {
+            ChatMessage message = chatMessages.get(i);
+            if (message.streaming || !"text".equals(message.kind) || message.text == null) {
+                continue;
+            }
+            String text = message.text.trim();
+            if (text.length() == 0 || text.equals(prompt)) {
+                continue;
+            }
+            if (text.length() > 320) {
+                text = text.substring(0, 320) + "...";
+            }
+            context.append("user".equals(message.role) ? "现场人员：" : "此前建议：")
+                    .append(text)
+                    .append('\n');
+        }
+        if (context.length() == 0) {
+            return prompt;
+        }
+        return "以下是同一现场事件的已确认上下文，仅在与当前问题相关时参考：\n"
+                + context + "\n当前问题：" + prompt;
     }
 
     private boolean isIdentityQuestion(String text) {
@@ -2568,6 +2795,40 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (!isForegroundWakeListeningEnabled()) {
             return;
         }
+        if (OFFLINE_WAKE_ENABLED) {
+            if (shouldStartOfflineWakeListening() && wakeWordEngine != null) {
+                Log.i(KEY_LOG_TAG, "Offline wake start reason=" + reason);
+                setChatStatus("叮当待命中");
+                wakeWordEngine.start(new WakeWordEngine.Listener() {
+                    @Override
+                    public void onWakeWordDetected() {
+                        mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (shouldStartOfflineWakeListening()) {
+                                    beginVoiceCommandAfterWake();
+                                }
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onEngineUnavailable(final String reason) {
+                        mainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (shouldStartOfflineWakeListening()) {
+                                    setChatStatus(reason);
+                                }
+                            }
+                        });
+                    }
+                });
+            } else if (shouldStartOfflineWakeListening()) {
+                setChatStatus("离线唤醒不可用，请重新打开应用");
+            }
+            return;
+        }
         voiceAutoListenArmed = true;
         if (!shouldStartForegroundVoiceListening()) {
             return;
@@ -2579,6 +2840,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 if (shouldStartForegroundVoiceListening()) {
                     Log.i(KEY_LOG_TAG, "Foreground voice auto start reason=" + reason);
                     voiceStartedFromAutoWindow = true;
+                    voiceSessionPurpose = VoiceSessionPurpose.WAKE;
+                    wakeFeedbackDelivered = false;
                     voiceAutoListenArmed = false;
                     startToggleVoiceRecording();
                 }
@@ -2600,14 +2863,37 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             foregroundAutoVoiceStartRunnable = null;
         }
         voiceAutoListenArmed = false;
+        if (wakeWordEngine != null) {
+            wakeWordEngine.stop();
+        }
+    }
+
+    private void resetVoiceSessionForForegroundWake() {
+        voiceAsrSessionGate.invalidate();
+        voiceSessionPurpose = VoiceSessionPurpose.NONE;
+        voiceStreamState = VoiceStreamState.IDLE;
+        voiceStartedFromAutoWindow = false;
+        wakeFeedbackDelivered = false;
+        wakePrefixGraceUntilMs = 0L;
+    }
+
+    private boolean shouldStartOfflineWakeListening() {
+        return isVoiceControlAvailableOnCurrentScreen()
+                && isForegroundWakeListeningEnabled()
+                && !recordingVoice
+                && voiceStreamState == VoiceStreamState.IDLE
+                && voiceSessionPurpose == VoiceSessionPurpose.NONE
+                && streamingAssistantIndex < 0
+                && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
     }
 
     private boolean shouldStartForegroundVoiceListening() {
-        return (screenMode == ScreenMode.CHAT || screenMode == ScreenMode.CAMERA)
+        return isVoiceControlAvailableOnCurrentScreen()
                 && isForegroundWakeListeningEnabled()
                 && voiceAutoListenArmed
                 && !recordingVoice
                 && voiceStreamState == VoiceStreamState.IDLE
+                && voiceSessionPurpose == VoiceSessionPurpose.NONE
                 && streamingAssistantIndex < 0
                 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
     }
@@ -2617,14 +2903,23 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return false;
         }
         String safeCode = code == null ? "" : code;
-        return (screenMode == ScreenMode.CHAT || screenMode == ScreenMode.CAMERA)
+        return isVoiceControlAvailableOnCurrentScreen()
                 && !safeCode.startsWith("asr_error:")
                 && !"asr_endpoint_missing".equals(safeCode)
                 && !"asr_realtime_unavailable".equals(safeCode);
     }
 
     private static boolean isForegroundWakeListeningEnabled() {
-        return "com.codex.air3nativecamera.dingdangmanager.butler".equals(APP_ID);
+        return "com.codex.air3nativecamera.dingdangmanager.butler".equals(APP_ID)
+                || VOICE_WORKFLOW_ENABLED;
+    }
+
+    private boolean isVoiceControlAvailableOnCurrentScreen() {
+        return screenMode == ScreenMode.CHAT
+                || screenMode == ScreenMode.CAMERA
+                || (screenMode == ScreenMode.EXPERT
+                && expertCoordinator != null
+                && expertCoordinator.canUseForegroundVoiceControl());
     }
 
     private void startToggleVoiceRecording() {
@@ -2639,6 +2934,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         try {
+            if (!autoWindowStart && voiceSessionPurpose == VoiceSessionPurpose.NONE) {
+                voiceSessionPurpose = VoiceSessionPurpose.COMMAND;
+            }
             File file = new File(getFilesDir(), "last_voice_upload.wav");
             int minBufferSize = AudioRecord.getMinBufferSize(
                     VOICE_SAMPLE_RATE_HZ,
@@ -2665,7 +2963,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             realtimeAsrPartialCount = 0;
             realtimeAsrFinished = false;
             startRealtimeAsr();
-            stateText.setText("语音识别中");
+            setChatStatus("语音识别中");
             transcriptDraftText.setText("结束提问");
             startVoiceRecordThread(recorder, file, bufferSize);
             voiceStopRunnable = new Runnable() {
@@ -2684,26 +2982,27 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private void startRealtimeAsr() {
         voiceStreamState = VoiceStreamState.LISTENING;
+        final long asrSessionId = voiceAsrSessionGate.begin();
         Log.i(KEY_LOG_TAG, "Realtime ASR start state=" + voiceStreamState);
         realtimeAsrClient.start(new RealtimeAsrCallback() {
             @Override
             public void onPartial(String text) {
-                onAsrPartial(text);
+                onAsrPartial(asrSessionId, text);
             }
 
             @Override
             public void onFinal(String text) {
-                onAsrFinal(text);
+                onAsrFinal(asrSessionId, text);
             }
 
             @Override
             public void onUnclear(String diagnosticCode) {
-                onVoiceUnclear(diagnosticCode);
+                onVoiceUnclear(asrSessionId, diagnosticCode);
             }
 
             @Override
             public void onError(Exception error) {
-                onVoiceUnclear("asr_error:" + safeMessage(error));
+                onVoiceUnclear(asrSessionId, "asr_error:" + safeMessage(error));
             }
         });
     }
@@ -2721,6 +3020,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private void updateVoiceSilenceAutoStop(byte[] buffer, int read) {
         if (!recordingVoice || voiceAutoStopRequested || buffer == null || read <= 1) {
+            return;
+        }
+        // A wake window must stay open for its full duration. Ambient RMS spikes otherwise
+        // make it stop before the user has started saying the wake phrase.
+        if (voiceStartedFromAutoWindow) {
             return;
         }
         long now = SystemClock.elapsedRealtime();
@@ -2878,16 +3182,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (transcribe) {
             finishRealtimeAsr(stopReason);
         } else if (realtimeAsrClient != null) {
+            voiceAsrSessionGate.invalidate();
             realtimeAsrClient.cancel();
         }
         cleanupVoiceRecordThreadAsync();
         if (!transcribe || voiceFile == null || !voiceFile.exists() || voiceFile.length() <= VOICE_WAV_HEADER_BYTES) {
             voiceStreamState = VoiceStreamState.IDLE;
-            stateText.setText("在线");
+            setChatStatus("在线");
             renderComposer();
             return;
         }
-        stateText.setText("已听清，正在整理");
+        setChatStatus("已听清，正在整理");
         renderComposer();
     }
 
@@ -2919,7 +3224,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         cleanupVoiceRecordThreadAsync();
     }
 
-    private void onAsrPartial(final String text) {
+    private void onAsrPartial(final long asrSessionId, final String text) {
         final String partial = sanitizeTranscriptForDisplay(text);
         if (partial.length() == 0) {
             return;
@@ -2929,12 +3234,20 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         mainHandler.post(new Runnable() {
             @Override
             public void run() {
-                if (voiceStreamState == VoiceStreamState.FINAL_READY || voiceStreamState == VoiceStreamState.AI_PENDING) {
+                if (!voiceAsrSessionGate.accepts(asrSessionId)
+                        || voiceStreamState == VoiceStreamState.FINAL_READY
+                        || voiceStreamState == VoiceStreamState.AI_PENDING) {
                     return;
+                }
+                if (VOICE_PREVIEW_ENABLED && voiceSessionPurpose == VoiceSessionPurpose.WAKE
+                        && isDingdangWakeOnly(partial) && !wakeFeedbackDelivered) {
+                    wakeFeedbackDelivered = true;
+                    setChatStatus("已唤醒，请说指令");
+                    playWakeFeedbackTone();
                 }
                 voiceStreamState = VoiceStreamState.PARTIAL_READY;
                 composerTranscript = partial;
-                stateText.setText("正在听");
+                setChatStatus("正在听");
                 updateLiveTranscriptDraft(partial);
                 scheduleTranscriptStableAutoStop(partial);
                 renderComposer();
@@ -2942,16 +3255,20 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         });
     }
 
-    private void onAsrFinal(final String text) {
+    private void onAsrFinal(final long asrSessionId, final String text) {
         final String finalText = sanitizeTranscriptForDisplay(text);
         Log.i(KEY_LOG_TAG, "Realtime ASR final text=" + finalText);
         mainHandler.post(new Runnable() {
             @Override
             public void run() {
+                if (!voiceAsrSessionGate.accepts(asrSessionId) || realtimeAsrFinished) {
+                    return;
+                }
                 realtimeAsrFinished = true;
                 boolean autoWindowFinal = voiceStartedFromAutoWindow;
                 if (finalText.length() == 0) {
-                    onVoiceUnclear("empty_final_text");
+                    realtimeAsrFinished = false;
+                    onVoiceUnclear(asrSessionId, "empty_final_text");
                     return;
                 }
                 if (isIgnorableVoiceUtterance(finalText)) {
@@ -2959,46 +3276,58 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     stopVoiceCaptureAfterAsrFinal();
                     voiceStreamState = VoiceStreamState.IDLE;
                     voiceStartedFromAutoWindow = false;
-                    onVoiceUnclear("voice-filler-retry");
+                    onVoiceUnclear(asrSessionId, "voice-filler-retry");
                     return;
                 }
                 if (autoWindowFinal && isDingdangWakeOnly(finalText)) {
-                    wakePrefixGraceUntilMs = SystemClock.elapsedRealtime() + WAKE_PREFIX_GRACE_MS;
+                    voiceAsrSessionGate.invalidate();
                     composerTranscript = "";
                     stopVoiceCaptureAfterAsrFinal();
                     voiceStreamState = VoiceStreamState.IDLE;
                     voiceStartedFromAutoWindow = false;
                     clearLiveTranscriptMessageIfStreaming();
-                    scheduleForegroundVoiceListening("wake-prefix-grace");
+                    if (VOICE_PREVIEW_ENABLED) {
+                        beginVoiceCommandAfterWake();
+                    } else {
+                        wakePrefixGraceUntilMs = SystemClock.elapsedRealtime() + WAKE_PREFIX_GRACE_MS;
+                        voiceSessionPurpose = VoiceSessionPurpose.NONE;
+                        scheduleForegroundVoiceListening("wake-prefix-grace");
+                    }
                     return;
                 }
                 boolean missingWakePrefix = autoWindowFinal && !hasDingdangWakePrefix(finalText);
                 boolean hasWakePrefix = !missingWakePrefix;
                 boolean graceCommand = autoWindowFinal && !hasWakePrefix && hasWakePrefixGrace()
-                        && classifyVoiceCommand(finalText) != VoiceCommand.NONE;
+                        && !VOICE_PREVIEW_ENABLED && classifyVoiceCommand(finalText) != VoiceCommand.NONE;
                 if (missingWakePrefix && !graceCommand) {
                     wakePrefixGraceUntilMs = 0L;
                     composerTranscript = "";
                     stopVoiceCaptureAfterAsrFinal();
                     voiceStreamState = VoiceStreamState.IDLE;
                     voiceStartedFromAutoWindow = false;
-                    onVoiceUnclear("wake_prefix_required");
+                    voiceSessionPurpose = VoiceSessionPurpose.NONE;
+                    onVoiceUnclear(asrSessionId, "wake_prefix_required");
                     return;
                 }
+                voiceAsrSessionGate.invalidate();
                 stopVoiceCaptureAfterAsrFinal();
                 voiceStartedFromAutoWindow = false;
+                voiceSessionPurpose = VoiceSessionPurpose.NONE;
                 voiceStreamState = VoiceStreamState.FINAL_READY;
                 String effectiveFinalText = hasWakePrefix ? stripDingdangWakePrefix(finalText) : finalText;
                 if (graceCommand) {
                     wakePrefixGraceUntilMs = 0L;
                 }
                 composerTranscript = effectiveFinalText;
+                if (VOICE_WORKFLOW_ENABLED && handleVoicePreviewInteraction(effectiveFinalText)) {
+                    return;
+                }
                 if (handleVoiceCommand(effectiveFinalText)) {
                     return;
                 }
                 updateLiveTranscriptMessage(finalText, true);
                 voiceStreamState = VoiceStreamState.AI_PENDING;
-                stateText.setText("已听清，正在分析");
+                setChatStatus("已听清，正在分析");
                 renderComposer();
                 sendComposerToAi();
             }
@@ -3009,7 +3338,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         composerTranscript = sanitizeTranscriptForDisplay(partial);
     }
 
-    private void onVoiceUnclear(final String diagnosticCode) {
+    private void onVoiceUnclear(final long asrSessionId, final String diagnosticCode) {
         final String code = diagnosticCode == null || diagnosticCode.trim().length() == 0
                 ? "voice_unclear"
                 : diagnosticCode.trim();
@@ -3017,22 +3346,34 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         mainHandler.post(new Runnable() {
             @Override
             public void run() {
+                if (!voiceAsrSessionGate.accepts(asrSessionId)) {
+                    return;
+                }
+                voiceAsrSessionGate.invalidate();
+                if (VOICE_WORKFLOW_ENABLED
+                        && voiceEventStateMachine.state() == VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION
+                        && composerTranscript.trim().length() > 0) {
+                    submitVoiceEvent(voiceEventStateMachine.onDescriptionFinal(composerTranscript));
+                    return;
+                }
                 if (realtimeAsrFinished && composerTranscript.trim().length() > 0) {
                     if (!voiceStartedFromAutoWindow && shouldSendDraftOnAsrFinished(code)) {
                         stopVoiceCaptureAfterAsrFinal();
                         voiceStartedFromAutoWindow = false;
+                        voiceSessionPurpose = VoiceSessionPurpose.NONE;
                         voiceStreamState = VoiceStreamState.AI_PENDING;
-                        stateText.setText("宸插惉娓咃紝姝ｅ湪鍒嗘瀽");
+                        setChatStatus("已听清，正在分析");
                         renderComposer();
                         sendComposerToAi();
                     }
                     return;
                 }
                 stopVoiceCaptureAfterAsrFinal();
+                voiceSessionPurpose = VoiceSessionPurpose.NONE;
                 voiceStreamState = VoiceStreamState.VOICE_UNCLEAR;
                 composerTranscript = voiceStatusForDiagnostic(code);
                 clearLiveTranscriptMessageIfStreaming();
-                stateText.setText("在线");
+                setChatStatus("在线");
                 renderComposer();
                 voiceStreamState = VoiceStreamState.IDLE;
                 if (shouldContinueForegroundWakeListening(code)) {
@@ -3042,6 +3383,39 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 }
             }
         });
+    }
+
+    private void beginVoiceCommandAfterWake() {
+        cancelForegroundVoiceListening();
+        voiceSessionPurpose = VoiceSessionPurpose.COMMAND;
+        wakeFeedbackDelivered = true;
+        setChatStatus("已唤醒，请说指令");
+        playWakeFeedbackTone();
+        mainHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!isVoiceControlAvailableOnCurrentScreen() || recordingVoice
+                        || voiceSessionPurpose != VoiceSessionPurpose.COMMAND) {
+                    return;
+                }
+                startToggleVoiceRecording();
+            }
+        }, 180L);
+    }
+
+    private void playWakeFeedbackTone() {
+        try {
+            ToneGenerator tone = new ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 80);
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 120);
+            mainHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    tone.release();
+                }
+            }, 180L);
+        } catch (Exception ignored) {
+            // Visual wake feedback remains available when the device cannot play a tone.
+        }
     }
 
     private boolean shouldSendDraftOnAsrFinished(String code) {
@@ -3297,6 +3671,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                             try {
                                 session.setRepeatingRequest(request.build(), null, cameraHandler);
                                 configurePreviewTransform(previewView.getWidth(), previewView.getHeight());
+                                if (pendingVoicePhotoCapture) {
+                                    mainHandler.post(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            capturePendingVoicePhotoIfReady();
+                                        }
+                                    });
+                                }
                             } catch (CameraAccessException ignored) {
                             }
                         }
@@ -3864,7 +4246,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             JSONArray messages = new JSONArray();
             JSONObject system = new JSONObject();
             system.put("role", "system");
-            system.put("content", "你是" + APP_LABEL + "，面向现场运维人员。必须结合图片和用户问题给出简洁、可执行的中文建议。当用户询问你是什么模型、由谁研发、哪家公司提供或底层模型信息时，只回答：我是华方智联研发的" + APP_LABEL + "模型，专注现场运维场景，可以结合眼镜拍摄的现场画面和语音问题，给出简洁、可执行的排查建议。不要透露底层模型名称、供应商或接口信息。");
+            system.put("content", "你是" + APP_LABEL + "，面向现场运维人员。回答必须使用简洁中文，按“风险判断、已观察到的依据、下一步操作、何时呼叫专家”四项输出，每项不超过两句。只能根据用户文字和实际提供的图片作答；没有图片、图片模糊或证据不足时必须明确说明，不能编造现场观察。涉及人身安全、带电、旋转、高温高压、泄漏、动火或无法确认的风险时，第一条先要求停止操作、保持安全距离并按现场规程升级，不能给出绕过安全措施的步骤。当用户询问你是什么模型、由谁研发、哪家公司提供或底层模型信息时，只回答：我是华方智联研发的" + APP_LABEL + "模型，专注现场运维场景，可以结合眼镜拍摄的现场画面和语音问题，给出简洁、可执行的排查建议。不要透露底层模型名称、供应商或接口信息。");
             system.put("content", system.optString("content", "") + "\n\n" + WEBSITE_RECOVERY_DEMO_AI_GUARD);
             messages.put(system);
             JSONObject user = new JSONObject();
