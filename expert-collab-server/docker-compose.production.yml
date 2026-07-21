@@ -1,0 +1,18 @@
+services:
+  expert-collab:
+    build: .
+    container_name: dingdang-expert-collab
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      COLLAB_HOST: 0.0.0.0
+      COLLAB_PORT: 8787
+      COLLAB_ORIGIN: https://bb.chinacedar.top
+      COLLAB_FREEZE_DIR: /data/freezes
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ./data/freezes:/data/freezes
+    mem_limit: 384m
+    cpus: "0.75"

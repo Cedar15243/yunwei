@@ -48,7 +48,7 @@ public final class VoiceCommandRouter {
         register(Command.SAFETY, "安全");
         register(Command.REPORT, "报告");
         register(Command.TRAINING, "培训", "演练");
-        register(Command.HELP, "帮助");
+        register(Command.HELP, "帮助", "语音命令", "怎么操作");
         register(Command.BACK, "返回", "返回聊天", "退出相机", "不拍了");
         register(Command.NORMAL, "正常");
         register(Command.ABNORMAL, "异常");

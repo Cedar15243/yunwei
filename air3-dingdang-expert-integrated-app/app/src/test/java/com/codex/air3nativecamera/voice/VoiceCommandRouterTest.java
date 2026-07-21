@@ -22,6 +22,8 @@ public final class VoiceCommandRouterTest {
         assertRoute("报告", VoiceCommandRouter.Command.REPORT);
         assertRoute("培训", VoiceCommandRouter.Command.TRAINING);
         assertRoute("帮助", VoiceCommandRouter.Command.HELP);
+        assertRoute("语音命令", VoiceCommandRouter.Command.HELP);
+        assertRoute("怎么操作", VoiceCommandRouter.Command.HELP);
         assertRoute("返回", VoiceCommandRouter.Command.BACK);
         assertRoute("返回聊天", VoiceCommandRouter.Command.BACK);
         assertRoute("退出相机", VoiceCommandRouter.Command.BACK);
@@ -45,6 +47,7 @@ public final class VoiceCommandRouterTest {
     public void stripsWakeWordAndKeepsEventNarrationOutOfControlRouting() {
         assertRoute("叮当，专家", VoiceCommandRouter.Command.EXPERT);
         assertRoute("叮当拍照", VoiceCommandRouter.Command.PHOTO);
+        assertRoute("叮当，语音命令", VoiceCommandRouter.Command.HELP);
         assertRoute("平台页面报错五零二，需要排查原因", VoiceCommandRouter.Command.NONE);
     }
 

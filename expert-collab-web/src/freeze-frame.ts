@@ -2,7 +2,7 @@ type CanvasFactory = () => HTMLCanvasElement;
 
 export function resolveCollabHttpOrigin(): string {
   return import.meta.env.VITE_COLLAB_HTTP_URL
-    ?? `${window.location.protocol}//${window.location.hostname}:8787`;
+    ?? window.location.origin;
 }
 
 export function captureFreezeFrame(

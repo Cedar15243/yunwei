@@ -1,0 +1,21 @@
+bb.chinacedar.top {
+    encode gzip zstd
+
+    handle /health {
+        reverse_proxy 127.0.0.1:8787
+    }
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8787
+    }
+
+    handle /collab {
+        reverse_proxy 127.0.0.1:8787
+    }
+
+    handle {
+        root * /srv/dingdang-expert-collab/web
+        try_files {path} /index.html
+        file_server
+    }
+}

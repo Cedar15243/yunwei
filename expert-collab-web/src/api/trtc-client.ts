@@ -87,7 +87,7 @@ async function createBrowserSdk(): Promise<TrtcSdk> {
 
 async function requestCredential(userId: string): Promise<TrtcCredential> {
   const serverOrigin = import.meta.env.VITE_COLLAB_HTTP_URL
-    ?? `${window.location.protocol}//${window.location.hostname}:8787`;
+    ?? window.location.origin;
   const response = await fetch(`${serverOrigin}/api/trtc/credential`, {
     method: "POST",
     headers: { "content-type": "application/json" },

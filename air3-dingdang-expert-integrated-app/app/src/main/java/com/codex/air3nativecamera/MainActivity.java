@@ -184,7 +184,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final String CHAT_PROJECT_PREFS = "dingdang_chat_projects";
     private static final String CHAT_PROJECTS_JSON = "projects_json";
     private static final String CURRENT_PROJECT_INDEX = "current_project_index";
-    private static final String HOME_WELCOME_MESSAGE = "先点我拍照记录现场，再点我说话描述问题。我会结合画面和语音，给出现场排查建议。";
+    private static final String HOME_WELCOME_MESSAGE = "说“叮当，拍照”记录现场，再直接说明问题。我会结合画面和语音给出排查建议。";
     private static final String AI_IDENTITY_RESPONSE = "我是华方智联研发的" + APP_LABEL
             + "模型，专注现场运维场景。你可以通过眼镜拍摄现场画面，再用语音说明问题，我会结合图片和问题给出简洁、可执行的排查建议。";
 
@@ -266,6 +266,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private ScreenMode screenMode = ScreenMode.CHAT;
     private FrameLayout root;
     private FrameLayout expertLayer;
+    private FrameLayout commandOverlay;
     private TextureView previewView;
     private LinearLayout chatLayer;
     private LinearLayout cameraOverlay;
@@ -284,6 +285,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private AudioWaveView voiceWaveView;
     private TextView menuButton;
     private TextView cameraStatusText;
+    private TextView cameraCaptureButton;
+    private TextView cameraBackButton;
+    private TextView commandTitleText;
+    private TextView commandContextText;
+    private TextView commandListText;
     private ScrollView chatScrollView;
     private String chatStatus = "在线";
 
@@ -530,6 +536,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private boolean handleHardwareShortcut(int keyCode) {
         Log.i(KEY_LOG_TAG, "handleHardwareShortcut keyCode=" + keyCode + " screen=" + screenMode);
+        if (isCommandOverlayVisible()) {
+            if (isBackShortcutKey(keyCode) || isConfirmKey(keyCode)) {
+                hideCommandOverlay();
+            }
+            return true;
+        }
         if (screenMode == ScreenMode.EXPERT) {
             if (isBackShortcutKey(keyCode)) {
                 exitExpertMode();
@@ -769,9 +781,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         titleText = new TextView(this);
         titleText.setText("新对话");
         titleText.setTextColor(Color.rgb(18, 18, 18));
-        titleText.setTextSize(28);
+        titleText.setTextSize(22);
         titleText.setTypeface(Typeface.DEFAULT_BOLD);
         titleText.setGravity(Gravity.CENTER);
+        titleText.setSingleLine(true);
         topBar.addView(titleText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         stateText = new TextView(this);
@@ -873,20 +886,20 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        cameraButton = assistantHomeAction("点我拍照", false);
-        cameraButton.setContentDescription("点我拍照");
+        cameraButton = assistantHomeAction("现场拍摄", false);
+        cameraButton.setContentDescription("现场拍摄");
         LinearLayout.LayoutParams cameraParams = new LinearLayout.LayoutParams(dp(202), dp(64));
         cameraParams.rightMargin = dp(24);
         controlsRow.addView(cameraButton, cameraParams);
 
-        voiceButton = assistantHomeAction("点我说话", true);
-        voiceButton.setContentDescription("点我说话");
+        voiceButton = assistantHomeAction("语音提问", true);
+        voiceButton.setContentDescription("语音提问");
         controlsRow.addView(voiceButton, new LinearLayout.LayoutParams(dp(202), dp(64)));
 
         cameraOverlay = new LinearLayout(this);
         cameraOverlay.setOrientation(LinearLayout.VERTICAL);
-        cameraOverlay.setGravity(Gravity.BOTTOM);
-        cameraOverlay.setPadding(24, 24, 24, 24);
+        cameraOverlay.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        cameraOverlay.setPadding(dp(28), dp(24), dp(28), dp(28));
         cameraOverlay.setVisibility(View.GONE);
         root.addView(cameraOverlay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -900,31 +913,35 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
         cameraStatusText = new TextView(this);
-        cameraStatusText.setText("对准现场后拍照");
+        cameraStatusText.setText("取景中 · 说“拍照”");
         cameraStatusText.setTextColor(Color.WHITE);
-        cameraStatusText.setTextSize(22);
+        cameraStatusText.setTextSize(18);
         cameraStatusText.setGravity(Gravity.CENTER);
-        cameraStatusText.setPadding(20, 14, 20, 14);
-        cameraStatusText.setBackground(roundRect(Color.argb(180, 0, 0, 0), Color.TRANSPARENT, 20));
+        cameraStatusText.setPadding(dp(20), dp(10), dp(20), dp(10));
+        cameraStatusText.setBackground(roundRect(Color.argb(190, 0, 0, 0), Color.TRANSPARENT, 16));
         cameraOverlay.addView(cameraStatusText, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        LinearLayout cameraActions = new LinearLayout(this);
-        cameraActions.setOrientation(LinearLayout.HORIZONTAL);
-        cameraActions.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams cameraActionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        cameraActionParams.topMargin = 14;
-        cameraOverlay.addView(cameraActions, cameraActionParams);
+        cameraCaptureButton = iconButton("●");
+        cameraCaptureButton.setContentDescription("拍摄现场照片");
+        cameraCaptureButton.setTextColor(Color.WHITE);
+        cameraCaptureButton.setTextSize(34);
+        cameraCaptureButton.setBackground(roundRect(Color.argb(218, 21, 125, 94), Color.WHITE, 30));
+        LinearLayout.LayoutParams cameraCaptureParams = new LinearLayout.LayoutParams(dp(60), dp(60));
+        cameraCaptureParams.topMargin = dp(14);
+        cameraOverlay.addView(cameraCaptureButton, cameraCaptureParams);
 
-        TextView backCamera = actionPill("返回聊天");
-        TextView captureCamera = actionPill("拍照");
-        TextView useCamera = actionPill("使用照片");
-        cameraActions.addView(backCamera, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        cameraActions.addView(captureCamera, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        cameraActions.addView(useCamera, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        cameraBackButton = iconButton("‹");
+        cameraBackButton.setContentDescription("返回 AI 对话");
+        cameraBackButton.setTextColor(Color.WHITE);
+        cameraBackButton.setTextSize(42);
+        cameraBackButton.setBackground(roundRect(Color.argb(184, 0, 0, 0), Color.TRANSPARENT, 28));
+        cameraBackButton.setVisibility(View.GONE);
+        FrameLayout.LayoutParams cameraBackParams = new FrameLayout.LayoutParams(dp(58), dp(58), Gravity.TOP | Gravity.LEFT);
+        cameraBackParams.leftMargin = dp(24);
+        cameraBackParams.topMargin = dp(24);
+        root.addView(cameraBackButton, cameraBackParams);
 
         newProjectButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -987,28 +1004,24 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 }
             }
         });
-        backCamera.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                returnToChatFromCameraFlow();
-            }
-        });
-        captureCamera.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                captureStillImage();
-            }
-        });
-        useCamera.setOnClickListener(new View.OnClickListener() {
+        cameraCaptureButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 if (composerImageBytes == null) {
-                    cameraStatusText.setText("请先拍照");
+                    captureStillImage();
                 } else {
                     renderChatScreen();
                 }
             }
         });
+        cameraBackButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                returnToChatFromCameraFlow();
+            }
+        });
+
+        buildCommandOverlay();
 
         setContentView(root);
         root.setFocusableInTouchMode(true);
@@ -1025,6 +1038,98 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         button.setClickable(true);
         button.setDefaultFocusHighlightEnabled(false);
         return button;
+    }
+
+    /** A non-navigating overlay keeps voice help available without losing the active task. */
+    private void buildCommandOverlay() {
+        commandOverlay = new FrameLayout(this);
+        commandOverlay.setBackgroundColor(Color.argb(222, 8, 16, 20));
+        commandOverlay.setVisibility(View.GONE);
+        commandOverlay.setClickable(true);
+        root.addView(commandOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(34), dp(28), dp(34), dp(26));
+        card.setBackground(roundRect(Color.rgb(250, 253, 251), Color.rgb(210, 224, 216), 16));
+        FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(
+                dp(760), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        commandOverlay.addView(card, cardParams);
+
+        commandTitleText = new TextView(this);
+        commandTitleText.setText("语音命令");
+        commandTitleText.setTextColor(Color.rgb(18, 58, 45));
+        commandTitleText.setTextSize(28);
+        commandTitleText.setTypeface(Typeface.DEFAULT_BOLD);
+        card.addView(commandTitleText, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        commandContextText = new TextView(this);
+        commandContextText.setTextColor(Color.rgb(47, 95, 76));
+        commandContextText.setTextSize(17);
+        LinearLayout.LayoutParams contextParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        contextParams.topMargin = dp(8);
+        card.addView(commandContextText, contextParams);
+
+        commandListText = new TextView(this);
+        commandListText.setTextColor(Color.rgb(32, 40, 37));
+        commandListText.setTextSize(19);
+        commandListText.setLineSpacing(dp(5), 1f);
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        listParams.topMargin = dp(18);
+        card.addView(commandListText, listParams);
+
+        TextView closeHint = new TextView(this);
+        closeHint.setText("说“返回”继续当前任务");
+        closeHint.setTextColor(Color.rgb(47, 95, 76));
+        closeHint.setTextSize(17);
+        closeHint.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        closeParams.topMargin = dp(22);
+        card.addView(closeHint, closeParams);
+
+        commandOverlay.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                hideCommandOverlay();
+            }
+        });
+    }
+
+    private boolean isCommandOverlayVisible() {
+        return commandOverlay != null && commandOverlay.getVisibility() == View.VISIBLE;
+    }
+
+    private void showCommandOverlay() {
+        if (commandOverlay == null) {
+            return;
+        }
+        String context;
+        String commands;
+        if (screenMode == ScreenMode.CAMERA) {
+            context = "当前：现场拍摄";
+            commands = "拍照  立即拍摄现场\n重拍  放弃当前照片后重拍\n使用照片 / 确认  带回 AI 对话\n返回 / 不拍了  退出相机\n\n通用\n专家  呼叫在线专家\n语音命令  再次查看本页";
+        } else if (screenMode == ScreenMode.EXPERT) {
+            context = "当前：专家协同";
+            commands = "返回  仅关闭本页并继续通话\n挂断  结束本次专家协同\n\n通用\n拍照  记录现场并发起 AI 分析\n语音命令  再次查看本页";
+        } else {
+            context = "当前：AI 智能运维指导";
+            commands = "拍照  拍摄现场，随后直接说问题\n专家  呼叫在线专家协同\n巡检 / 记录 / 设备 / 工单 / 知识 / 报告\n返回  收起当前辅助页面\n\n拍摄后\n重拍  重新取景\n使用照片 / 确认  带图提问\n补充 / 重说  继续输入问题";
+        }
+        commandContextText.setText(context);
+        commandListText.setText(commands);
+        commandOverlay.setVisibility(View.VISIBLE);
+    }
+
+    private void hideCommandOverlay() {
+        if (commandOverlay != null) {
+            commandOverlay.setVisibility(View.GONE);
+        }
     }
 
     private TextView actionPill(String text) {
@@ -1202,8 +1307,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (text == null) {
             return false;
         }
-        return text.contains("先点我拍照记录现场")
-                && text.contains("再点我说话描述问题")
+        return (text.contains("先点我拍照记录现场") && text.contains("再点我说话描述问题"))
+                || (text.contains("叮当，拍照") && text.contains("直接说明问题"))
                 && text.contains("语音转成文字")
                 && text.contains("GPT");
     }
@@ -1398,6 +1503,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         chatLayer.setVisibility(View.GONE);
         previewView.setVisibility(View.GONE);
         cameraOverlay.setVisibility(View.GONE);
+        cameraBackButton.setVisibility(View.GONE);
         expertLayer.removeAllViews();
         expertCoordinator = new ExpertCollabCoordinator(this, BuildConfig.COLLAB_SERVER_URL, this);
         expertLayer.addView(expertCoordinator.createView(), new FrameLayout.LayoutParams(
@@ -1430,8 +1536,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 expertLayer.setVisibility(View.GONE);
                 chatLayer.setVisibility(View.VISIBLE);
                 cameraOverlay.setVisibility(View.GONE);
+                cameraBackButton.setVisibility(View.GONE);
                 previewView.setVisibility(View.GONE);
-                titleText.setText(APP_LABEL + " · 当前项目 · " + activeProject().title);
+                titleText.setText("AI 运维指导 · " + activeProject().title);
                 setChatStatus(recordingVoice ? "语音识别中" : chatStatus);
                 renderProjectList();
                 renderMessages();
@@ -1452,12 +1559,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 chatLayer.setVisibility(View.GONE);
                 previewView.setVisibility(View.VISIBLE);
                 cameraOverlay.setVisibility(View.VISIBLE);
-                cameraStatusText.setText(composerImageBytes == null ? "对准现场后拍照" : "照片已添加，返回后可继续语音提问");
+                cameraBackButton.setVisibility(View.VISIBLE);
+                boolean hasPhoto = composerImageBytes != null;
+                cameraStatusText.setText(hasPhoto
+                        ? "已拍摄 · 说“使用照片”继续"
+                        : "取景中 · 说“拍照”");
+                cameraCaptureButton.setText(hasPhoto ? "✓" : "●");
+                cameraCaptureButton.setContentDescription(hasPhoto ? "使用当前现场照片" : "拍摄现场照片");
             }
         });
         if (cameraDevice == null && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCameraFlow();
         }
+        scheduleForegroundVoiceListening("camera-screen");
     }
 
     private void renderMessages() {
@@ -1568,7 +1682,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         header.setPadding(0, 0, 0, dp(16));
 
         ChatMessage lastUser = lastUserMessage();
-        if (lastUser != null) {
+        if (lastUser != null && chatMessages.size() <= 1) {
             LinearLayout lastCard = new LinearLayout(this);
             lastCard.setOrientation(LinearLayout.VERTICAL);
             lastCard.setPadding(dp(28), dp(18), dp(28), dp(18));
@@ -1615,7 +1729,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             View spacer = new View(this);
             header.addView(spacer, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(88)));
+                    dp(42)));
         }
 
         TextView logo = new TextView(this);
@@ -1625,14 +1739,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         logo.setTypeface(Typeface.DEFAULT_BOLD);
         logo.setGravity(Gravity.CENTER);
         logo.setBackground(roundRect(Color.rgb(16, 128, 96), Color.TRANSPARENT, 28));
-        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(56), dp(56));
-        logoParams.bottomMargin = dp(14);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+        logoParams.bottomMargin = dp(8);
         header.addView(logo, logoParams);
 
         TextView hello = new TextView(this);
-        hello.setText(APP_LABEL);
-        hello.setTextColor(Color.BLACK);
-        hello.setTextSize(34);
+        hello.setText("叮当AI运维专家");
+        hello.setTextColor(Color.rgb(239, 249, 247));
+        hello.setTextSize(25);
         hello.setTypeface(Typeface.DEFAULT_BOLD);
         hello.setGravity(Gravity.CENTER);
         header.addView(hello, new LinearLayout.LayoutParams(
@@ -1640,8 +1754,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView powered = new TextView(this);
-        powered.setText("拍照看现场，语音说问题，AI 给出下一步");
-        powered.setTextColor(Color.rgb(96, 96, 96));
+        powered.setText("现场诊断 · 语音优先");
+        powered.setTextColor(Color.rgb(133, 176, 173));
         powered.setTextSize(18);
         powered.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams poweredParams = new LinearLayout.LayoutParams(
@@ -1650,16 +1764,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         poweredParams.topMargin = dp(8);
         header.addView(powered, poweredParams);
 
+        header.addView(buildHudWorkSurface(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(248)));
+
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        actionsParams.topMargin = dp(36);
+        actionsParams.topMargin = dp(24);
 
-        TextView photo = assistantHomeAction("点我拍照", false);
-        photo.setContentDescription("点我拍照");
+        TextView photo = assistantHomeAction("现场拍摄", false);
+        photo.setContentDescription("现场拍摄");
         photo.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -1668,8 +1785,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         });
         actions.addView(photo, new LinearLayout.LayoutParams(dp(202), dp(78)));
 
-        TextView speak = assistantHomeAction(recordingVoice ? "结束提问" : "点我说话", true);
-        speak.setContentDescription(recordingVoice ? "结束提问" : "点我说话");
+        TextView speak = assistantHomeAction(recordingVoice ? "结束提问" : "语音提问", true);
+        speak.setContentDescription(recordingVoice ? "结束提问" : "语音提问");
         speak.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -1690,6 +1807,128 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return header;
     }
 
+    private View buildHudWorkSurface() {
+        LinearLayout surface = new LinearLayout(this);
+        surface.setOrientation(LinearLayout.HORIZONTAL);
+        surface.setPadding(dp(28), dp(24), dp(28), dp(18));
+
+        FrameLayout povPanel = new FrameLayout(this);
+        povPanel.setBackground(roundRect(Color.rgb(13, 33, 45), Color.rgb(45, 107, 111), 12));
+        LinearLayout.LayoutParams povParams = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.MATCH_PARENT, 1.25f);
+        povParams.rightMargin = dp(16);
+        surface.addView(povPanel, povParams);
+
+        ChatMessage latestImage = latestImageMessage();
+        Bitmap latestSnapshot = composerImagePreviewBitmap;
+        if (latestSnapshot == null && composerImagePreviewBase64.length() > 0) {
+            latestSnapshot = decodeImagePreviewBitmap(composerImagePreviewBase64);
+            composerImagePreviewBitmap = latestSnapshot;
+        }
+        if (latestSnapshot == null && latestImage != null) {
+            if (latestImage.imagePreviewBitmap == null && latestImage.imagePreviewBase64.length() > 0) {
+                latestImage.imagePreviewBitmap = decodeImagePreviewBitmap(latestImage.imagePreviewBase64);
+            }
+            if (latestImage.imagePreviewBitmap != null) {
+                latestSnapshot = latestImage.imagePreviewBitmap;
+            }
+        }
+        if (latestSnapshot != null) {
+            ImageView snapshot = new ImageView(this);
+            snapshot.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            snapshot.setImageBitmap(latestSnapshot);
+            povPanel.addView(snapshot, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+
+        TextView povLabel = hudLabel(latestSnapshot == null ? "POV · 相机待命" : "POV · 最近现场帧");
+        FrameLayout.LayoutParams povLabelParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.LEFT);
+        povLabelParams.leftMargin = dp(14);
+        povLabelParams.topMargin = dp(14);
+        povPanel.addView(povLabel, povLabelParams);
+
+        TextView povFooter = new TextView(this);
+        povFooter.setText(latestSnapshot == null ? "说“叮当，拍照”开始采集" : "已同步到本次诊断");
+        povFooter.setTextColor(Color.rgb(220, 239, 235));
+        povFooter.setTextSize(15);
+        povFooter.setPadding(dp(14), dp(8), dp(14), dp(8));
+        povFooter.setBackground(roundRect(Color.argb(188, 4, 14, 20), Color.TRANSPARENT, 8));
+        FrameLayout.LayoutParams povFooterParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.LEFT);
+        povFooterParams.leftMargin = dp(14);
+        povFooterParams.bottomMargin = dp(14);
+        povPanel.addView(povFooter, povFooterParams);
+
+        LinearLayout diagnosticsPanel = new LinearLayout(this);
+        diagnosticsPanel.setOrientation(LinearLayout.VERTICAL);
+        diagnosticsPanel.setPadding(dp(22), dp(18), dp(22), dp(16));
+        diagnosticsPanel.setBackground(roundRect(Color.rgb(15, 38, 49), Color.rgb(45, 107, 111), 12));
+        surface.addView(diagnosticsPanel, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        TextView diagnosisTitle = new TextView(this);
+        diagnosisTitle.setText("诊断流");
+        diagnosisTitle.setTextColor(Color.rgb(103, 231, 195));
+        diagnosisTitle.setTextSize(17);
+        diagnosisTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        diagnosticsPanel.addView(diagnosisTitle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView diagnosisState = new TextView(this);
+        diagnosisState.setText(chatStatus);
+        diagnosisState.setTextColor(Color.rgb(239, 249, 247));
+        diagnosisState.setTextSize(20);
+        diagnosisState.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams diagnosisStateParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        diagnosisStateParams.topMargin = dp(12);
+        diagnosticsPanel.addView(diagnosisState, diagnosisStateParams);
+
+        TextView diagnosisDetail = new TextView(this);
+        String lastAdvice = lastAssistantAdvice();
+        diagnosisDetail.setText(lastAdvice.length() == 0
+                ? "等待现场语音或快照输入"
+                : lastAdvice);
+        diagnosisDetail.setTextColor(Color.rgb(163, 195, 192));
+        diagnosisDetail.setTextSize(15);
+        diagnosisDetail.setMaxLines(4);
+        LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        detailParams.topMargin = dp(8);
+        diagnosticsPanel.addView(diagnosisDetail, detailParams);
+
+        TextView routeLabel = hudLabel("语音控制在线");
+        diagnosticsPanel.addView(routeLabel, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return surface;
+    }
+
+    private TextView hudLabel(String text) {
+        TextView label = new TextView(this);
+        label.setText(text);
+        label.setTextColor(Color.rgb(103, 231, 195));
+        label.setTextSize(14);
+        label.setTypeface(Typeface.DEFAULT_BOLD);
+        label.setPadding(dp(10), dp(6), dp(10), dp(6));
+        label.setBackground(roundRect(Color.argb(190, 9, 52, 57), Color.rgb(53, 144, 133), 7));
+        return label;
+    }
+
+    private String lastAssistantAdvice() {
+        for (int i = chatMessages.size() - 1; i >= 0; i--) {
+            ChatMessage message = chatMessages.get(i);
+            if ("assistant".equals(message.role) && "text".equals(message.kind)
+                    && message.text != null && message.text.trim().length() > 0) {
+                String text = message.text.trim().replace('\n', ' ');
+                return text.length() > 86 ? text.substring(0, 86) + "..." : text;
+            }
+        }
+        return "";
+    }
+
     private boolean shouldShowHomeActions() {
         return !shouldShowComposerPanel();
     }
@@ -1698,7 +1937,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (recordingVoice || composerImageBytes != null || hasLiveTranscriptMessage() || streamingAssistantIndex >= 0) {
             return true;
         }
-        if (composerTranscript.trim().length() > 0 && !"点我说话".equals(composerTranscript.trim())) {
+        if (composerTranscript.trim().length() > 0 && !"语音提问".equals(composerTranscript.trim())) {
             return true;
         }
         return chatMessages.size() > 0;
@@ -1707,14 +1946,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private TextView assistantHomeAction(String label, boolean primary) {
         TextView action = new TextView(this);
         action.setText(label);
-        action.setTextColor(primary ? Color.WHITE : Color.rgb(22, 125, 96));
+        action.setTextColor(primary ? Color.rgb(3, 26, 24) : Color.rgb(173, 241, 223));
         action.setTextSize(21);
         action.setTypeface(Typeface.DEFAULT_BOLD);
         action.setGravity(Gravity.CENTER);
         action.setPadding(dp(18), 0, dp(18), 0);
         action.setBackground(primary
-                ? roundRect(Color.rgb(22, 163, 110), Color.rgb(22, 163, 110), 24)
-                : roundRect(Color.WHITE, Color.rgb(181, 224, 207), 24));
+                ? roundRect(Color.rgb(83, 220, 164), Color.rgb(83, 220, 164), 12)
+                : roundRect(Color.rgb(16, 42, 52), Color.rgb(59, 154, 139), 12));
         action.setClickable(true);
         action.setDefaultFocusHighlightEnabled(false);
         return action;
@@ -1761,9 +2000,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             imageView.setAdjustViewBounds(false);
             imageView.setContentDescription("现场照片");
             imageView.setImageBitmap(preview);
+            int bubbleWidth = Math.round(getResources().getDisplayMetrics().widthPixels * 0.72f) - dp(20);
+            int imageHeight = Math.round(bubbleWidth * preview.getHeight() / (float) preview.getWidth());
+            imageHeight = Math.max(dp(120), Math.min(dp(360), imageHeight));
             bubble.addView(imageView, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(156)));
+                    ViewGroup.LayoutParams.MATCH_PARENT, imageHeight));
         }
 
         TextView caption = new TextView(this);
@@ -1803,12 +2044,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             composerImagePreviewBitmap = null;
             attachmentPreviewText.setVisibility(View.GONE);
         } else {
-            attachmentPreviewImage.setVisibility(View.VISIBLE);
+            attachmentPreviewImage.setVisibility(View.GONE);
             if (composerImagePreviewBitmap == null && composerImagePreviewBase64.length() > 0) {
                 composerImagePreviewBitmap = decodeImagePreviewBitmap(composerImagePreviewBase64);
             }
             attachmentPreviewImage.setImageBitmap(composerImagePreviewBitmap);
-            attachmentPreviewText.setVisibility(View.VISIBLE);
+            attachmentPreviewText.setVisibility(View.GONE);
             if (composerImageUploadFailed) {
                 attachmentPreviewText.setText("照片上传失败，请检查后端或重新拍照");
             } else if ("local-photo".equals(composerImageId) || composerImageId.length() > 0) {
@@ -1836,7 +2077,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         } else {
             voiceWaveView.stop();
             voiceWaveView.setVisibility(View.GONE);
-            if (composerTranscript.trim().length() == 0 || "点我说话".equals(composerTranscript.trim())) {
+            if (composerTranscript.trim().length() == 0 || "语音提问".equals(composerTranscript.trim())) {
                 transcriptDraftText.setVisibility(View.GONE);
                 transcriptDraftText.setText("");
             } else {
@@ -1844,8 +2085,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 transcriptDraftText.setText(composerTranscript);
             }
             transcriptDraftText.setTextColor(Color.rgb(120, 120, 120));
-            voiceButton.setText("点我说话");
-            voiceButton.setContentDescription("点我说话");
+            voiceButton.setText("语音提问");
+            voiceButton.setContentDescription("语音提问");
             voiceButton.setTextSize(21);
             voiceButton.setTextColor(Color.WHITE);
             voiceButton.setBackground(roundRect(Color.rgb(22, 163, 110), Color.rgb(22, 163, 110), 24));
@@ -2188,6 +2429,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return false;
         }
         clearLiveTranscriptMessageIfStreaming();
+        if (isCommandOverlayVisible()) {
+            if (command == VoiceCommandRouter.Command.BACK || command == VoiceCommandRouter.Command.CANCEL) {
+                hideCommandOverlay();
+            } else if (command == VoiceCommandRouter.Command.HELP || command == VoiceCommandRouter.Command.REPEAT) {
+                showCommandOverlay();
+            } else {
+                setChatStatus("请先说“返回”继续当前任务");
+            }
+            return true;
+        }
         if (screenMode == ScreenMode.EXPERT
                 && (command == VoiceCommandRouter.Command.BACK
                 || command == VoiceCommandRouter.Command.CANCEL)) {
@@ -2210,8 +2461,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             cancelVoiceEventDescriptionTimeout();
             composerTranscript = "";
             clearComposerImage();
-            setChatStatus("已取消当前事件");
-            renderComposer();
+            if (screenMode == ScreenMode.CAMERA) {
+                returnToChatFromCameraFlow();
+            } else {
+                setChatStatus("已取消当前事件");
+                renderComposer();
+            }
             return true;
         }
         if (command == VoiceCommandRouter.Command.EXPERT) {
@@ -2259,7 +2514,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return true;
         }
         if (command == VoiceCommandRouter.Command.HELP) {
-            setChatStatus("可说：拍照、专家、巡检、记录、知识、工单、返回");
+            showCommandOverlay();
             return true;
         }
         if (command == VoiceCommandRouter.Command.NORMAL
@@ -3615,7 +3870,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return fallback;
         }
         Size[] sizes = map.getOutputSizes(SurfaceTexture.class);
-        return chooseLargestUnder(sizes, 1280, 720, fallback);
+        return chooseBestPreviewSize(sizes, fallback);
     }
 
     private Size chooseCaptureSize(CameraManager manager, String id) throws CameraAccessException {
@@ -3626,7 +3881,59 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return fallback;
         }
         Size[] sizes = map.getOutputSizes(ImageFormat.JPEG);
+        return chooseBestCaptureSize(sizes, fallback);
+    }
+
+    private Size chooseBestPreviewSize(Size[] sizes, Size fallback) {
+        Size exact1080p = findExactSize(sizes, 1920, 1080);
+        if (exact1080p != null) {
+            return exact1080p;
+        }
+        Size best16By9 = chooseLargestMatchingAspect(sizes, 1920, 1080, 16f / 9f);
+        if (best16By9 != null) {
+            return best16By9;
+        }
         return chooseLargestUnder(sizes, 1920, 1080, fallback);
+    }
+
+    private Size chooseBestCaptureSize(Size[] sizes, Size fallback) {
+        Size highQuality16By9 = chooseLargestMatchingAspect(sizes, 2560, 1440, 16f / 9f);
+        if (highQuality16By9 != null) {
+            return highQuality16By9;
+        }
+        return chooseLargestUnder(sizes, 2560, 1440, fallback);
+    }
+
+    private Size findExactSize(Size[] sizes, int width, int height) {
+        if (sizes == null) {
+            return null;
+        }
+        for (Size size : sizes) {
+            if (size.getWidth() == width && size.getHeight() == height) {
+                return size;
+            }
+        }
+        return null;
+    }
+
+    private Size chooseLargestMatchingAspect(Size[] sizes, int maxWidth, int maxHeight, float aspect) {
+        if (sizes == null || sizes.length == 0) {
+            return null;
+        }
+        Size best = null;
+        for (Size size : sizes) {
+            if (size.getWidth() > maxWidth || size.getHeight() > maxHeight) {
+                continue;
+            }
+            float candidateAspect = size.getWidth() / (float) size.getHeight();
+            if (Math.abs(candidateAspect - aspect) > 0.025f) {
+                continue;
+            }
+            if (best == null || size.getWidth() * size.getHeight() > best.getWidth() * best.getHeight()) {
+                best = size;
+            }
+        }
+        return best;
     }
 
     private Size chooseLargestUnder(Size[] sizes, int maxWidth, int maxHeight, Size fallback) {
@@ -3707,19 +4014,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         float viewRatio = viewWidth / (float) viewHeight;
         float bufferRatio = bufferWidth / bufferHeight;
-        float scaleX = 1f;
-        float scaleY = 1f;
-        if (bufferRatio > viewRatio) {
-            scaleX = bufferRatio / viewRatio;
-        } else {
-            scaleY = viewRatio / bufferRatio;
-        }
+        // Center-crop with one uniform scale; independent X/Y scales distort the camera image.
+        float uniformScale = Math.max(viewWidth / bufferWidth, viewHeight / bufferHeight);
         Matrix matrix = new Matrix();
-        matrix.setScale(scaleX, scaleY, viewWidth / 2f, viewHeight / 2f);
+        matrix.setScale(uniformScale, uniformScale, viewWidth / 2f, viewHeight / 2f);
         previewView.setTransform(matrix);
         Log.i(KEY_LOG_TAG, "Camera preview transform view=" + viewWidth + "x" + viewHeight
                 + " preview=" + previewSize.getWidth() + "x" + previewSize.getHeight()
-                + " scaleX=" + scaleX + " scaleY=" + scaleY);
+                + " viewRatio=" + viewRatio + " bufferRatio=" + bufferRatio
+                + " uniformScale=" + uniformScale);
     }
 
     private void captureStillImage() {
@@ -3806,9 +4109,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (oriented != bitmap) {
             bitmap.recycle();
         }
-        Bitmap scaled = scaleBitmapToMaxEdge(oriented, UPLOAD_MAX_IMAGE_EDGE);
-        if (scaled != oriented) {
+        // The Air3 camera can emit a portrait JPEG while its TextureView is landscape.
+        // Crop to the live view's aspect ratio so the AI evidence matches what the wearer saw.
+        Bitmap framed = cropBitmapToPreviewAspect(oriented);
+        if (framed != oriented) {
             oriented.recycle();
+        }
+        Bitmap scaled = scaleBitmapToMaxEdge(framed, UPLOAD_MAX_IMAGE_EDGE);
+        if (scaled != framed) {
+            framed.recycle();
         }
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         try {
@@ -3817,6 +4126,29 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         } finally {
             scaled.recycle();
         }
+    }
+
+    private Bitmap cropBitmapToPreviewAspect(Bitmap bitmap) {
+        if (bitmap == null || previewSize == null || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+            return bitmap;
+        }
+        float targetAspect = previewSize.getWidth() / (float) previewSize.getHeight();
+        float sourceAspect = bitmap.getWidth() / (float) bitmap.getHeight();
+        if (Math.abs(sourceAspect - targetAspect) < 0.02f) {
+            return bitmap;
+        }
+        int cropWidth = bitmap.getWidth();
+        int cropHeight = bitmap.getHeight();
+        if (sourceAspect > targetAspect) {
+            cropWidth = Math.round(bitmap.getHeight() * targetAspect);
+        } else {
+            cropHeight = Math.round(bitmap.getWidth() / targetAspect);
+        }
+        cropWidth = Math.max(1, Math.min(cropWidth, bitmap.getWidth()));
+        cropHeight = Math.max(1, Math.min(cropHeight, bitmap.getHeight()));
+        int left = (bitmap.getWidth() - cropWidth) / 2;
+        int top = (bitmap.getHeight() - cropHeight) / 2;
+        return Bitmap.createBitmap(bitmap, left, top, cropWidth, cropHeight);
     }
 
     private Bitmap applyExifOrientation(Bitmap bitmap, byte[] jpegBytes) {
@@ -4246,8 +4578,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             JSONArray messages = new JSONArray();
             JSONObject system = new JSONObject();
             system.put("role", "system");
-            system.put("content", "你是" + APP_LABEL + "，面向现场运维人员。回答必须使用简洁中文，按“风险判断、已观察到的依据、下一步操作、何时呼叫专家”四项输出，每项不超过两句。只能根据用户文字和实际提供的图片作答；没有图片、图片模糊或证据不足时必须明确说明，不能编造现场观察。涉及人身安全、带电、旋转、高温高压、泄漏、动火或无法确认的风险时，第一条先要求停止操作、保持安全距离并按现场规程升级，不能给出绕过安全措施的步骤。当用户询问你是什么模型、由谁研发、哪家公司提供或底层模型信息时，只回答：我是华方智联研发的" + APP_LABEL + "模型，专注现场运维场景，可以结合眼镜拍摄的现场画面和语音问题，给出简洁、可执行的排查建议。不要透露底层模型名称、供应商或接口信息。");
-            system.put("content", system.optString("content", "") + "\n\n" + WEBSITE_RECOVERY_DEMO_AI_GUARD);
+            system.put("content", "你是" + APP_LABEL + "，面向现场运维人员。只回答用户当前问题，使用简洁中文。需要说明多个要点时，用“1. 2. 3.”逐项列出；有几项已确认的结论就写几项，不设固定条数，绝不为了凑编号补充推测、假设或无关内容。问题只需要一个明确结论时，直接回答一句结论即可。不要使用固定的“风险判断、已观察到的依据、下一步操作、何时呼叫专家”模板，也不要无关地提及网站恢复、HTTP 502 或呼叫专家。只能根据用户文字和实际提供的图片作答；没有图片、图片模糊或证据不足时明确说明，不能编造现场观察。仅在涉及人身安全、带电、旋转、高温高压、泄漏、动火或无法确认的风险时，第一条要求停止操作、保持安全距离并按现场规程升级，不能给出绕过安全措施的步骤。当用户询问你是什么模型、由谁研发、哪家公司提供或底层模型信息时，只回答：我是华方智联研发的" + APP_LABEL + "模型，专注现场运维场景，可以结合眼镜拍摄的现场画面和语音问题，给出简洁、可执行的排查建议。不要透露底层模型名称、供应商或接口信息。若上下文中包含旧的固定格式建议，忽略其格式，仅按本指令回答当前问题。");
             messages.put(system);
             JSONObject user = new JSONObject();
             user.put("role", "user");
@@ -4435,8 +4766,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                         payload.put("image_id", imageId);
                         payload.put("final_text", finalText);
                         payload.put("client_context", new JSONObject()
-                                .put("source", "dingdang-android")
-                                .put("skill", WEBSITE_RECOVERY_DEMO_AI_GUARD));
+                                .put("source", "dingdang-android"));
                         connection = openBackendConnection(backendDiagnoseStreamUrl(sessionId), "POST", "application/json; charset=utf-8");
                         connection.setRequestProperty("Accept", "text/event-stream");
                         output = connection.getOutputStream();

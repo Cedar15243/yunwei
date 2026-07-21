@@ -33,7 +33,7 @@ function resolveWebsocketUrl(): string {
     return import.meta.env.VITE_COLLAB_WS_URL;
   }
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.hostname}:8787/collab`;
+  return `${protocol}//${window.location.host}/collab`;
 }
 
 function resolveExpertIdentity(): { id: string; name: string } {
@@ -57,6 +57,7 @@ export function App({ initialRole, live }: AppProps) {
   const [freezeUrl, setFreezeUrl] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [snapshots, setSnapshots] = useState<Array<{ id: string; label: string; time: string; url: string }>>([]);
+  const [serviceStatus, setServiceStatus] = useState<"connecting" | "connected" | "disconnected">("connecting");
 
   useEffect(() => {
     if (!liveEnabled || !videoViewRef.current || !localVideoViewRef.current) {
@@ -100,10 +101,19 @@ export function App({ initialRole, live }: AppProps) {
       }
     });
     const start = () => controller.start();
-    socket.addEventListener("open", start);
+    const markConnected = () => {
+      setServiceStatus("connected");
+      start();
+    };
+    const markDisconnected = () => setServiceStatus("disconnected");
+    socket.addEventListener("open", markConnected);
+    socket.addEventListener("close", markDisconnected);
+    socket.addEventListener("error", markDisconnected);
 
     return () => {
-      socket.removeEventListener("open", start);
+      socket.removeEventListener("open", markConnected);
+      socket.removeEventListener("close", markDisconnected);
+      socket.removeEventListener("error", markDisconnected);
       unsubscribe();
       unsubscribeFreeze();
       signaling.close();
@@ -125,6 +135,12 @@ export function App({ initialRole, live }: AppProps) {
       sessionId,
     });
   };
+
+  const serviceStatusLabel = serviceStatus === "connected"
+    ? "协同服务已连接"
+    : serviceStatus === "connecting"
+      ? "正在连接协同服务"
+      : "协同服务未连接";
 
   const toggleFreeze = async (): Promise<void> => {
     const sessionId = controllerRef.current?.getSnapshot().sessionId;
@@ -165,11 +181,11 @@ export function App({ initialRole, live }: AppProps) {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="brand-lockup"><span className="brand-mark" /><strong>叮当专家协同</strong><span>演示工作台</span></div>
-        <div className="service-status"><ShieldCheck aria-hidden="true" size={16} /><span>TRTC 免费试用 · 后付费关闭</span></div>
+        <div className="brand-lockup"><strong>叮当云 AI 专家协同</strong><span>设备远程运维工作台</span></div>
+        <div className={`service-status service-status--${serviceStatus}`}><ShieldCheck aria-hidden="true" size={16} /><span>{serviceStatusLabel}</span></div>
       </header>
       <div className="workspace-grid">
-        <ContactRail />
+        <ContactRail call={liveEnabled ? call : null} />
         <ExpertStage
           call={liveEnabled ? call : null}
           annotationAuthorId={annotationAuthorId}
@@ -186,7 +202,7 @@ export function App({ initialRole, live }: AppProps) {
           localVideoViewRef={localVideoViewRef}
           videoViewRef={videoViewRef}
         />
-        <SessionPanel role={role} snapshots={liveEnabled ? snapshots : undefined} />
+        <SessionPanel call={liveEnabled ? call : null} role={role} snapshots={liveEnabled ? snapshots : undefined} />
       </div>
     </div>
   );

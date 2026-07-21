@@ -80,10 +80,23 @@ export function ExpertStage({
     ? "LIVE · Air3 第一视角 · 00:04:18"
     : call.status === "in_call"
       ? "LIVE · Air3 第一视角"
-      : "专家在线 · 等待现场呼叫";
+      : call.status === "ringing" || call.status === "invited"
+        ? "现场设备正在呼叫"
+        : call.status === "connecting"
+          ? "正在建立安全音视频连接"
+          : call.status === "taken"
+            ? "已由其他专家接听"
+            : call.status === "failed"
+              ? "协同连接失败"
+              : "专家在线 · 等待现场呼叫";
   const roleLabel = call === null || call === undefined
     ? role === "primary" ? "主专家：王工 · 标注权" : "旁听语音"
-    : call.status === "in_call" ? role === "primary" ? "主专家 · 标注权" : "旁听语音" : "未进入会话";
+    : call.status === "in_call" ? role === "primary" ? "主专家 · 标注权" : "旁听语音"
+      : call.status === "ringing" ? "请接听现场呼叫"
+        : call.status === "connecting" ? "会话建立中"
+          : call.status === "taken" ? "本次会话已被接听"
+            : call.status === "failed" ? "请重新连接"
+              : "未进入会话";
 
   return (
     <main className="expert-stage" aria-label="专家协同视频工作区">
@@ -94,6 +107,10 @@ export function ExpertStage({
           <div className="video-fallback" aria-hidden="true">
             <div className="equipment-line equipment-line--left" />
             <div className="equipment-line equipment-line--right" />
+            <div className="video-fallback__copy">
+              <span>现场视频待接入</span>
+              <small>专家工作台已就绪</small>
+            </div>
           </div>
         ) : null}
         <div className="live-indicator"><span /> {liveLabel}</div>
