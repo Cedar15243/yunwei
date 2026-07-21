@@ -9,6 +9,8 @@ def previewVersionName = project.findProperty("previewVersionName") ?: "6.2.7-ex
 def previewAppLabel = project.findProperty("previewAppLabel") ?: "叮当AI运维专家·协同测试"
 def generatedConfigDir = layout.buildDirectory.dir("generated/source/dingdang")
 def directGptEnabled = System.getenv("AIR3_APK_DIRECT_GPT")?.trim() == "1"
+def iflytekOfflineWakeEnabled = System.getenv("AIR3_APK_IFLYTEK_OFFLINE_WAKE")?.trim() == "1"
+def iflytekAikitRoot = System.getenv("IFLYTEK_AIKIT_ROOT")?.trim()
 
 def requiredEnvironment = { String name ->
     def value = System.getenv(name)?.trim()
@@ -54,6 +56,10 @@ android {
 
     sourceSets {
         main.java.srcDir generatedConfigDir
+        if (iflytekOfflineWakeEnabled) {
+            main.java.srcDir "src/offlineWake/java"
+            main.assets.srcDir new File(iflytekAikitRoot, "resource")
+        }
     }
 
     compileOptions {
@@ -66,6 +72,7 @@ tasks.register("generateDingdangConfig") {
     inputs.property("previewApplicationId", previewApplicationId)
     inputs.property("previewAppLabel", previewAppLabel)
     inputs.property("directGptEnabled", directGptEnabled)
+    inputs.property("iflytekOfflineWakeEnabled", iflytekOfflineWakeEnabled)
     outputs.dir generatedConfigDir
     doLast {
         def opsKey = requiredEnvironment("OPS_GLASSES_API_KEY")
@@ -78,6 +85,15 @@ tasks.register("generateDingdangConfig") {
         def directAsrApiKey = directGptEnabled
                 ? requiredEnvironment("DIRECT_ASR_API_KEY")
                 : optionalEnvironment("DIRECT_ASR_API_KEY", "")
+        def iflytekAppId = iflytekOfflineWakeEnabled
+                ? requiredEnvironment("IFLYTEK_APP_ID")
+                : optionalEnvironment("IFLYTEK_APP_ID", "")
+        def iflytekApiKey = iflytekOfflineWakeEnabled
+                ? requiredEnvironment("IFLYTEK_API_KEY")
+                : optionalEnvironment("IFLYTEK_API_KEY", "")
+        def iflytekApiSecret = iflytekOfflineWakeEnabled
+                ? requiredEnvironment("IFLYTEK_API_SECRET")
+                : optionalEnvironment("IFLYTEK_API_SECRET", "")
         def eventsEndpoint = optionalEnvironment(
                 "OPS_GLASSES_EVENTS_ENDPOINT",
                 "https://zasgzaatthvfglhbxpgo.supabase.co/functions/v1/ops-glasses/sessions/events")
@@ -103,6 +119,10 @@ final class GeneratedConfig {
     static final String DIRECT_GPT_API_KEY = "${javaString(directGptApiKey)}";
     static final String DIRECT_ASR_ENDPOINT = "${javaString(directAsrEndpoint)}";
     static final String DIRECT_ASR_API_KEY = "${javaString(directAsrApiKey)}";
+    static final boolean IFLYTEK_OFFLINE_WAKE_ENABLED = ${iflytekOfflineWakeEnabled};
+    static final String IFLYTEK_APP_ID = "${javaString(iflytekAppId)}";
+    static final String IFLYTEK_API_KEY = "${javaString(iflytekApiKey)}";
+    static final String IFLYTEK_API_SECRET = "${javaString(iflytekApiSecret)}";
 
     private GeneratedConfig() {}
 }
@@ -118,5 +138,15 @@ tasks.named("preBuild").configure {
 dependencies {
     implementation "com.tencent.liteav:LiteAVSDK_TRTC:13.4.0.20477"
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    if (iflytekOfflineWakeEnabled) {
+        if (!iflytekAikitRoot) {
+            throw new GradleException("IFLYTEK_AIKIT_ROOT is required for the offline wake build")
+        }
+        def aiKitAar = new File(iflytekAikitRoot, "SDK/AIKit.aar")
+        if (!aiKitAar.isFile()) {
+            throw new GradleException("AIKit.aar is missing from IFLYTEK_AIKIT_ROOT")
+        }
+        implementation files(aiKitAar)
+    }
     testImplementation "junit:junit:4.13.2"
 }
