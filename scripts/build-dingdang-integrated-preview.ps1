@@ -4,7 +4,8 @@ param(
   [int]$VersionCode = 627,
   [string]$VersionName = "6.2.7-expert-preview",
   [string]$AppLabel = "叮当AI运维专家·协同测试",
-  [switch]$DirectAi
+  [switch]$DirectAi,
+  [switch]$OfflineWake
 )
 
 $ErrorActionPreference = "Stop"
@@ -110,6 +111,19 @@ if ($DirectAi) {
     -Required
 } else {
   Remove-Item Env:AIR3_APK_DIRECT_GPT -ErrorAction SilentlyContinue
+}
+
+if ($OfflineWake) {
+  $env:AIR3_APK_IFLYTEK_OFFLINE_WAKE = "1"
+  $env:IFLYTEK_APP_ID = Read-ConfigOrEnv -Name "IFLYTEK_APP_ID" -FileName "iflytek_app_id.local" -Required
+  $env:IFLYTEK_API_KEY = Read-ConfigOrEnv -Name "IFLYTEK_API_KEY" -FileName "iflytek_api_key.local" -Required
+  $env:IFLYTEK_API_SECRET = Read-ConfigOrEnv -Name "IFLYTEK_API_SECRET" -FileName "iflytek_api_secret.local" -Required
+  $env:IFLYTEK_AIKIT_ROOT = Join-Path $repoRoot "tmp\iflytek-aikit-min\AIKit_AEE_Android_IVW_e867a88f2_1.0.44_SDK2.2.17_rc6"
+  if (-not (Test-Path -LiteralPath (Join-Path $env:IFLYTEK_AIKIT_ROOT "SDK\AIKit.aar"))) {
+    throw "AIKit offline wake SDK is missing from the local ignored directory"
+  }
+} else {
+  Remove-Item Env:AIR3_APK_IFLYTEK_OFFLINE_WAKE -ErrorAction SilentlyContinue
 }
 
 $env:JAVA_HOME = Join-Path $unityAndroid "OpenJDK"
