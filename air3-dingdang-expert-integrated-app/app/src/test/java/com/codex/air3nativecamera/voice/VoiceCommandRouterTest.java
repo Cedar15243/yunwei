@@ -1,6 +1,8 @@
 package com.codex.air3nativecamera.voice;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -124,6 +126,15 @@ public final class VoiceCommandRouterTest {
         assertRoute("小叮当，下一步", VoiceCommandRouter.Command.NEXT);
         assertRoute("翻下一页", VoiceCommandRouter.Command.NEXT_PAGE);
         assertRoute("上一屏", VoiceCommandRouter.Command.PREVIOUS_PAGE);
+    }
+
+    @Test
+    public void recognizesUnambiguousControlsForFastAsrCompletion() {
+        assertTrue(router.isFastControlCommand("返回首页"));
+        assertTrue(router.isFastControlCommand("小叮当，呼叫专家"));
+        assertTrue(router.isFastControlCommand("打开 AI 能力中心"));
+        assertFalse(router.isFastControlCommand("返回"));
+        assertFalse(router.isFastControlCommand("服务器无法启动"));
     }
 
     private void assertRoute(String phrase, VoiceCommandRouter.Command expected) {

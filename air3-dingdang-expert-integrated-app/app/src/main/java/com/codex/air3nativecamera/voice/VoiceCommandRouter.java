@@ -123,6 +123,52 @@ public final class VoiceCommandRouter {
         return commands.containsKey(normalized) ? commands.get(normalized) : Command.NONE;
     }
 
+    /** Short, unambiguous controls can finish ASR sooner than open-ended task narration. */
+    public boolean isFastControlCommand(String text) {
+        String normalized = normalize(text);
+        Command command = route(text);
+        if (command == Command.NONE) {
+            return false;
+        }
+        // Do not cut off a plain "返回" before the operator can finish "返回首页" or
+        // "返回上一页". The longer forms are explicit enough to use the fast window.
+        if (command == Command.BACK && normalized.equals("返回")) {
+            return false;
+        }
+        switch (command) {
+            case PHOTO:
+            case VIDEO_START:
+            case VIDEO_STOP:
+            case DIAGNOSIS:
+            case EXPERT:
+            case CAPABILITY_CENTER:
+            case INSPECTION:
+            case KNOWLEDGE:
+            case DEVICE:
+            case AGENT_CENTER:
+            case HELP:
+            case GLASSES_TUTORIAL:
+            case HOME:
+            case NEXT:
+            case PREVIOUS:
+            case NEXT_PAGE:
+            case PREVIOUS_PAGE:
+            case RETRY:
+            case RETAKE:
+            case IMAGE_ONLY:
+            case CONFIRM:
+            case CANCEL:
+            case REPEAT:
+            case FINISH:
+            case GUIDANCE:
+                return true;
+            case BACK:
+                return normalized.length() > 2;
+            default:
+                return false;
+        }
+    }
+
     public static String normalize(String text) {
         if (text == null) {
             return "";

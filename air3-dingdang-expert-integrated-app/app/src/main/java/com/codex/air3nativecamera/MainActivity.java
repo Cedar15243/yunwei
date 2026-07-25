@@ -189,6 +189,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final long VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L;
     private static final long VOICE_AUTO_STOP_SILENCE_MS = 1500L;
     private static final long VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 1800L;
+    private static final long VOICE_AUTO_STOP_COMMAND_STABLE_MS = 650L;
     private static final long VOICE_RECORD_THREAD_JOIN_MS = 700L;
     private static final long VOICE_ASR_FINISH_TIMEOUT_MS = 8000L;
     private static final int HUD_DIAGNOSIS_PAGE_SIZE = 130;
@@ -5334,6 +5335,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             mainHandler.removeCallbacks(voiceTranscriptStableStopRunnable);
         }
         final long transcriptAtMs = voiceLastTranscriptAtMs;
+        final long stableDelayMs = voiceTranscriptStableStopDelayMs(
+                voiceCommandRouter.isFastControlCommand(cleaned));
         voiceTranscriptStableStopRunnable = new Runnable() {
             @Override
             public void run() {
@@ -5344,15 +5347,22 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 if (voiceLastTranscriptAtMs != transcriptAtMs) {
                     return;
                 }
-                if (now - transcriptAtMs < VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS) {
+                if (now - transcriptAtMs < stableDelayMs) {
                     return;
                 }
                 voiceAutoStopRequested = true;
-                Log.i(KEY_LOG_TAG, "Voice auto stop by transcript stable stableMs=" + (now - transcriptAtMs));
+                Log.i(KEY_LOG_TAG, "Voice auto stop by transcript stable stableMs="
+                        + (now - transcriptAtMs) + " delayMs=" + stableDelayMs);
                 finishToggleVoiceRecording("transcript_stable_auto_stop");
             }
         };
-        mainHandler.postDelayed(voiceTranscriptStableStopRunnable, VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS);
+        mainHandler.postDelayed(voiceTranscriptStableStopRunnable, stableDelayMs);
+    }
+
+    static long voiceTranscriptStableStopDelayMs(boolean fastControlCommand) {
+        return fastControlCommand
+                ? VOICE_AUTO_STOP_COMMAND_STABLE_MS
+                : VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS;
     }
 
     private int pcm16Rms(byte[] buffer, int read) {

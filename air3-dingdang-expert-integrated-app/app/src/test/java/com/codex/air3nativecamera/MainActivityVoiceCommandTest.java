@@ -135,6 +135,12 @@ public final class MainActivityVoiceCommandTest {
     }
 
     @Test
+    public void usesAShortStableWindowForVoiceControlsOnly() {
+        assertEquals(650L, MainActivity.voiceTranscriptStableStopDelayMs(true));
+        assertEquals(1800L, MainActivity.voiceTranscriptStableStopDelayMs(false));
+    }
+
+    @Test
     public void waitsForOfflineWakeToReleaseTheMicrophoneBeforeStartingAsr() {
         assertTrue(MainActivity.shouldWaitForWakeAudioRelease(true, 0));
         assertTrue(MainActivity.shouldWaitForWakeAudioRelease(true, 19));
