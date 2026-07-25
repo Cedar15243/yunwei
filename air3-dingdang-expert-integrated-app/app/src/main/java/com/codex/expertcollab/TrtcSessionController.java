@@ -24,6 +24,11 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 
 final class TrtcSessionController {
+    // Prioritize readable equipment labels and control-panel text in the expert console.
+    private static final int EXPERT_VIDEO_BITRATE_KBPS = 2800;
+    private static final int EXPERT_VIDEO_MIN_BITRATE_KBPS = 1200;
+    private static final int EXPERT_VIDEO_FPS = 24;
+
     interface Listener {
         void onMediaConnected();
         void onConnectionLost();
@@ -169,11 +174,11 @@ final class TrtcSessionController {
     private void enterRoom(String sessionId, int sdkAppId, String signedUserId, String userSig) {
         joining = true;
         TRTCCloudDef.TRTCVideoEncParam encoder = new TRTCCloudDef.TRTCVideoEncParam();
-        encoder.videoResolution = TRTCCloudDef.TRTC_VIDEO_RESOLUTION_1280_720;
+        encoder.videoResolution = TRTCCloudDef.TRTC_VIDEO_RESOLUTION_1920_1080;
         encoder.videoResolutionMode = TRTCCloudDef.TRTC_VIDEO_RESOLUTION_MODE_LANDSCAPE;
-        encoder.videoFps = 24;
-        encoder.videoBitrate = 1800;
-        encoder.minVideoBitrate = 1000;
+        encoder.videoFps = EXPERT_VIDEO_FPS;
+        encoder.videoBitrate = EXPERT_VIDEO_BITRATE_KBPS;
+        encoder.minVideoBitrate = EXPERT_VIDEO_MIN_BITRATE_KBPS;
         encoder.enableAdjustRes = false;
         trtc.setVideoEncoderParam(encoder);
         TRTCCloudDef.TRTCNetworkQosParam qos = new TRTCCloudDef.TRTCNetworkQosParam();

@@ -43,16 +43,21 @@ public final class VoiceEventStateMachine {
             state = State.CAPTURE_REQUESTED;
             return Signal.CAPTURE_PHOTO;
         }
-        if (command == VoiceCommandRouter.Command.CANCEL) {
+        if (command == VoiceCommandRouter.Command.CANCEL && state != State.IDLE) {
             reset();
             return Signal.CANCEL_EVENT;
         }
-        if ((command == VoiceCommandRouter.Command.FINISH || command == VoiceCommandRouter.Command.SUBMIT)
-                && hasPhoto && eventDescription.length() > 0) {
+        if (command == VoiceCommandRouter.Command.IMAGE_ONLY && hasPhoto) {
             state = State.AI_READY;
             return Signal.SUBMIT_TO_AI;
         }
         return Signal.NONE;
+    }
+
+    /** Starts a photo evidence turn for touch and hardware capture paths as well as voice. */
+    public void beginPhotoCapture() {
+        reset();
+        state = State.CAPTURE_REQUESTED;
     }
 
     public Signal onPhotoCaptured() {
@@ -69,6 +74,9 @@ public final class VoiceEventStateMachine {
             return Signal.NONE;
         }
         eventDescription = transcript == null ? "" : transcript.trim();
+        if (eventDescription.length() == 0) {
+            return Signal.NONE;
+        }
         state = State.AI_READY;
         return Signal.SUBMIT_TO_AI;
     }

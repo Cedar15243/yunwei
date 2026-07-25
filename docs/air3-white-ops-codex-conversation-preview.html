@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>叮当 AI 运维助手 - 首页与对话效果稿</title>
+  <style>
+    :root{--ink:#1c2d29;--muted:#71817c;--line:#d8e6e1;--canvas:#f4f8f7;--paper:#ffffff;--mint:#eaf7f2;--mint-2:#f7fbf9;--green:#0b8d68;--green-dark:#087054;--user:#edf7f3;--shadow:0 8px 22px rgba(25,67,55,.07)}
+    *{box-sizing:border-box}body{margin:0;min-width:320px;background:var(--canvas);color:var(--ink);font-family:"Microsoft YaHei","Noto Sans SC",sans-serif}.app{min-height:100vh;background:linear-gradient(90deg,rgba(11,141,104,.022) 1px,transparent 1px) 0 0/96px 96px,linear-gradient(rgba(11,141,104,.022) 1px,transparent 1px) 0 0/96px 96px,var(--canvas)}button{font:inherit}.topbar{height:70px;padding:0 clamp(22px,4vw,72px);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);background:rgba(255,255,255,.95)}.title,.actions,.state{display:flex;align-items:center}.title{gap:12px}.back,.menu{width:38px;height:38px;border:0;border-radius:7px;background:transparent;color:#344640;font-size:28px;cursor:pointer}.back:hover,.menu:hover{background:var(--mint-2)}.title strong{display:block;font-size:18px}.title small{display:block;margin-top:3px;color:var(--muted);font-size:12px}.actions{gap:16px}.state{gap:7px;color:#4d7569;font-size:13px}.dot{width:8px;height:8px;border-radius:50%;background:#2b976f;box-shadow:0 0 0 4px rgba(43,151,111,.12)}.menu{font-size:23px}.switcher{position:fixed;right:28px;bottom:24px;z-index:4;display:flex;padding:4px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.96);box-shadow:var(--shadow)}.switcher button{height:34px;padding:0 13px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:13px;cursor:pointer}.switcher button.active{background:var(--mint);color:var(--green-dark);font-weight:700}
+    .home{width:min(1000px,calc(100% - 32px));margin:0 auto;padding:112px 0 100px;text-align:center}.brand-large{width:64px;height:64px;margin:0 auto 20px;display:grid;place-items:center;border:1px solid #bde5d6;border-radius:14px;background:var(--mint);color:var(--green);font-size:31px;font-weight:800}.home h1{margin:0;color:#263b35;font-size:30px;line-height:1.35}.home>p{margin:13px 0 0;color:var(--muted);font-size:16px}.askbar{width:min(880px,100%);height:72px;margin:31px auto 0;padding:8px 10px 8px 8px;display:flex;align-items:center;border:1px solid #d4e4de;border-radius:10px;background:var(--paper);box-shadow:0 5px 14px rgba(33,77,65,.04)}.askbar button{border:0;background:transparent;cursor:pointer}.ask-add{width:52px;height:52px;color:#40534d;font-size:31px}.ask-copy{flex:1;padding:0 10px;color:#83938e;text-align:left;font-size:17px}.ask-mic{width:52px;height:52px;border-radius:50%!important;background:var(--green)!important;color:#fff;font-size:20px}.quick{display:flex;justify-content:center;gap:10px;margin-top:14px}.quick button{border:0;background:transparent;color:#6f8880;padding:8px 12px;font-size:14px;cursor:pointer}.quick button:hover{color:var(--green);text-decoration:underline}.home-status{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:28px;color:#72847f;font-size:13px}.home-status i{width:7px;height:7px;border-radius:50%;background:#2b976f}
+    .conversation{width:min(840px,calc(100% - 32px));margin:0 auto;padding:42px 0 130px}.thread-intro{display:flex;align-items:center;gap:10px;margin:0 0 30px}.brand-small{width:32px;height:32px;display:grid;place-items:center;border-radius:8px;background:var(--green);color:#fff;font-weight:800}.thread-intro b{font-size:15px}.thread-intro span{display:block;margin-top:3px;color:var(--muted);font-size:12px}.message{display:grid;grid-template-columns:32px minmax(0,1fr);gap:13px;margin:0 0 28px}.avatar{width:32px;height:32px;display:grid;place-items:center;border-radius:50%;background:#e7efec;color:#587069;font-size:14px}.avatar.ai{background:var(--mint);color:var(--green);font-weight:800}.message-main{min-width:0}.message-meta{display:flex;align-items:center;gap:9px;margin-bottom:8px;color:var(--muted);font-size:12px}.message-meta b{color:#445852;font-size:13px}.message p{margin:0;color:#273a34;font-size:16px;line-height:1.78}.user-message{grid-template-columns:minmax(0,1fr) 32px}.user-message .avatar{grid-column:2;grid-row:1}.user-message .message-main{grid-column:1;grid-row:1;text-align:right}.user-message .message-meta{justify-content:flex-end}.user-text{display:inline-block;max-width:690px;padding:13px 16px;border:1px solid #d3e9df;border-radius:8px;background:var(--user);text-align:left}.attachment{display:flex;align-items:center;gap:13px;max-width:610px;margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);text-align:left;box-shadow:var(--shadow)}.shot{position:relative;flex:0 0 142px;aspect-ratio:16/9;overflow:hidden;border-radius:5px;background:linear-gradient(130deg,#b9c6c0 0 30%,#54776e 30% 33%,#dcc9ab 33% 64%,#8da89e 64%)}.shot:after{content:"";position:absolute;inset:22% 21% 19% 47%;border:2px solid rgba(255,255,255,.8)}.attachment b{display:block;color:#384d46;font-size:13px}.attachment span{display:block;margin-top:5px;color:var(--muted);font-size:12px}.assistant-answer{max-width:740px}.answer-lead{margin-bottom:14px!important;font-weight:700}.steps{display:grid;gap:12px;margin:0;padding:0;list-style:none}.steps li{position:relative;padding-left:35px;color:#2d403a;font-size:15px;line-height:1.75}.steps b{position:absolute;left:0;top:1px;width:23px;height:23px;display:grid;place-items:center;border-radius:50%;background:var(--mint);color:var(--green-dark);font-size:12px}.answer-footer{margin-top:17px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}.composer-wrap{position:fixed;right:0;bottom:0;left:0;padding:0 clamp(16px,4vw,72px) 20px;pointer-events:none}.composer{width:min(840px,100%);height:70px;margin:0 auto;padding:8px 10px 8px 8px;display:flex;align-items:center;border:1px solid #cfe2da;border-radius:10px;background:rgba(255,255,255,.98);box-shadow:0 12px 28px rgba(21,68,54,.12);pointer-events:auto}.composer .ask-copy{font-size:15px}.composer-status{display:flex;align-items:center;gap:7px;margin-right:12px;color:#6a8179;font-size:12px;white-space:nowrap}.composer-status i{width:6px;height:6px;border-radius:50%;background:#2b976f}@media(max-width:680px){.topbar{height:60px;padding:0 16px}.title small{display:none}.state{font-size:12px}.home{padding-top:72px}.home h1{font-size:26px}.home>p{font-size:14px}.askbar{height:64px}.ask-copy{font-size:14px}.quick{gap:2px}.quick button{padding:8px 7px;font-size:13px}.conversation{padding-top:28px}.message{gap:10px}.message p{font-size:14px}.attachment{gap:9px}.shot{flex-basis:108px}.composer-status{display:none}.switcher{right:12px;bottom:10px}.composer-wrap{padding:0 12px 12px}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="title"><button class="back" aria-label="返回">‹</button><div><strong>现场设备诊断</strong><small>AI 智能运维指导</small></div></div>
+      <div class="actions"><div class="state"><i class="dot"></i><span>Air3 · 叮当待命中</span></div><button class="menu" aria-label="运维工作台">☰</button></div>
+    </header>
+
+    <main class="home" id="home">
+      <div class="brand-large">D</div><h1>叮当，今天要处理什么问题？</h1><p>直接说出现场情况，或拍照后补充问题描述</p>
+      <div class="askbar"><button class="ask-add" aria-label="现场拍摄">+</button><span class="ask-copy">说“叮当”后，直接开始描述</span><button class="ask-mic" aria-label="语音提问">🎙</button></div>
+      <div class="quick"><button>现场拍摄</button><button>呼叫专家</button><button>语音命令</button></div>
+      <div class="home-status"><i></i><span>叮当待命中</span></div>
+    </main>
+
+    <main class="conversation" id="conversation" hidden>
+      <div class="thread-intro"><div class="brand-small">D</div><div><b>叮当 AI 运维助手</b><span>现场设备诊断</span></div></div>
+      <article class="message user-message"><div class="message-main"><div class="message-meta"><span>10:42</span><b>你</b></div><div class="user-text"><p>请结合现场照片分析控制柜告警的可能原因。</p></div><div class="attachment"><div class="shot"></div><div><b>现场抓拍</b><span>控制柜正面 · 已附加到本次提问</span></div></div></div><div class="avatar">你</div></article>
+      <article class="message"><div class="avatar ai">D</div><div class="message-main assistant-answer"><div class="message-meta"><b>叮当</b><span>10:42</span></div><p class="answer-lead">从照片看，先按以下顺序确认，避免直接复位告警。</p><ol class="steps"><li><b>1</b>确认红色告警灯对应的模块编号，并记录当前指示灯状态。</li><li><b>2</b>检查 24V 辅助电源与端子排连接，重点观察是否存在松动或电压波动。</li><li><b>3</b>核对最近是否有参数修改、线缆更换或上电操作；发现变化后语音补充给我。</li></ol><div class="answer-footer">可继续说“叮当，补充现场情况”，或直接拍摄新的现场照片。</div></div></article>
+    </main>
+
+    <div class="composer-wrap" id="composer" hidden><div class="composer"><button class="ask-add" aria-label="现场拍摄">+</button><span class="ask-copy">说“叮当”后，继续补充现场情况</span><span class="composer-status"><i></i>叮当待命中</span><button class="ask-mic" aria-label="语音提问">🎙</button></div></div>
+    <div class="switcher"><button id="homeButton" onclick="showState('home')">首页状态</button><button id="conversationButton" class="active" onclick="showState('conversation')">开始对话后</button></div>
+  </div>
+  <script>
+    function showState(state) {
+      const home = state === 'home';
+      document.getElementById('home').hidden = !home;
+      document.getElementById('conversation').hidden = home;
+      document.getElementById('composer').hidden = home;
+      document.getElementById('homeButton').classList.toggle('active', home);
+      document.getElementById('conversationButton').classList.toggle('active', !home);
+    }
+    showState('conversation');
+  </script>
+</body>
+</html>

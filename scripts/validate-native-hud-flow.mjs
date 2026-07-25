@@ -2,6 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 const root = process.cwd();
+const integratedLauncherIconPath = path.join(
+  root,
+  "air3-dingdang-expert-integrated-app/app/src/main/res/drawable/ic_launcher.png",
+);
+const integratedHudBrandIconPath = path.join(
+  root,
+  "air3-dingdang-expert-integrated-app/app/src/main/assets/brand-icon.png",
+);
 const activityPath = path.join(
   root,
   "air3-native-camera-test/app/src/main/java/com/codex/air3nativecamera/MainActivity.java",
@@ -573,6 +581,290 @@ if (!dispatchKeyBody.includes("event.getRepeatCount() == 0") ||
 const cameraShortcutBody = methodBlock("private boolean isCameraShortcutKey(");
 if (!cameraShortcutBody.includes("isSystemReservedCameraKey(keyCode)")) {
   throw new Error("camera/DVR key events that reach the app must map to the in-app camera shortcut");
+}
+
+const integratedRoot = path.join(root, "air3-dingdang-expert-integrated-app/app/src/main");
+const integratedActivity = fs.readFileSync(path.join(
+  integratedRoot,
+  "java/com/codex/air3nativecamera/MainActivity.java",
+), "utf8");
+const integratedHud = fs.readFileSync(path.join(integratedRoot, "assets/voice-first-hud.html"), "utf8");
+const integratedHudPresentation = fs.readFileSync(path.join(
+  integratedRoot,
+  "java/com/codex/air3nativecamera/ui/hud/HudWebPresentation.java",
+), "utf8");
+const integratedVoiceRouter = fs.readFileSync(path.join(
+  integratedRoot,
+  "java/com/codex/air3nativecamera/voice/VoiceCommandRouter.java",
+), "utf8");
+const integratedWakeEngine = fs.readFileSync(path.join(
+  root,
+  "air3-dingdang-expert-integrated-app/app/src/offlineWake/java/com/codex/air3nativecamera/voice/IflytekWakeWordEngine.java",
+), "utf8");
+if (integratedHud.includes("backdrop-filter:")) {
+  throw new Error("Air3 HUD must not use backdrop-filter because its WebView continuously rerasterizes blurred layers");
+}
+const integratedExpertCoordinator = fs.readFileSync(path.join(
+  integratedRoot,
+  "java/com/codex/expertcollab/ExpertCollabCoordinator.java",
+), "utf8");
+
+for (const marker of [
+  "shouldKeepEstablishedTaskSurface(hudTaskWorkspaceActive, completedResponseCount",
+  "HUD_CONVERSATION_PAGE_SIZE = 180",
+  "buildCurrentQuestionInstruction(prompt)",
+  'register(Command.HOME, "返回首页", "回首页", "回到首页", "退回首页", "返回主页", "首页")',
+]) {
+  const source = marker.startsWith("register(") ? integratedVoiceRouter : integratedActivity;
+  if (!source.includes(marker)) {
+    throw new Error(`integrated HUD flow missing marker: ${marker}`);
+  }
+}
+
+if (integratedHud.includes("localPages") || integratedHud.includes("localPageIndex")) {
+  throw new Error("integrated HUD must use MaintenanceTask as its only conversation pagination source");
+}
+if (!integratedHud.includes("#conversation .answer{flex:1 1 0;height:auto") ||
+    !integratedHud.includes("max-height:none;overflow:hidden")) {
+  throw new Error("integrated HUD conversation answer must stay inside one non-scrolling viewport");
+}
+if (!integratedHud.includes("#capabilities.active{display:flex") ||
+    !integratedHud.includes("grid-template-columns:repeat(3,minmax(0,1fr))") ||
+    !integratedHud.includes("grid-template-rows:repeat(3,minmax(0,1fr))") ||
+    !integratedHud.includes("#capabilities .box{overflow:hidden")) {
+  throw new Error("capability center must fit all abilities in one 1080p HUD viewport");
+}
+if (!integratedHud.includes(".app:has(#operationDetail.active) .view{padding:42px 28px 48px}")) {
+  throw new Error("local operation detail must fit one Air3 viewport without document scrolling");
+}
+if (!integratedHud.includes("#operationItems:has(.operation-item:nth-child(3):last-child){grid-template-columns:repeat(3,minmax(0,1fr))}")) {
+  throw new Error("three-item operation details must use one row to fit the Air3 viewport");
+}
+if (!integratedHud.includes("#listening.active{min-height:0;height:100%;overflow:hidden;display:flex")) {
+  throw new Error("first-turn listening must stay inside one Air3 viewport");
+}
+if (!integratedHud.includes("没有听清|说话时间太短|语音服务未连接")) {
+  throw new Error("voice recovery prompts must not replace the operator's task question");
+}
+const capabilitySection = integratedHud.slice(
+  integratedHud.indexOf('<section id="capabilities"'),
+  integratedHud.indexOf("</section>", integratedHud.indexOf('<section id="capabilities"')),
+);
+const capabilityOrder = [
+  "AI 故障诊断", "专家协同", "现场拍照", "短视频取证", "巡检任务",
+  "维修任务", "华方知识库", "设备记忆", "AI Agent 中心",
+];
+let previousCapability = -1;
+for (const title of capabilityOrder) {
+  const index = capabilitySection.indexOf(`<strong>${title}</strong>`);
+  if (index <= previousCapability) {
+    throw new Error(`capability center order is incorrect at: ${title}`);
+  }
+  previousCapability = index;
+}
+if ((capabilitySection.match(/class="cap"/g) || []).length !== 9 ||
+    integratedHud.includes("add('skill_center'") ||
+    capabilitySection.includes("语音提问</strong>")) {
+  throw new Error("capability center must contain the requested nine single-screen entries only");
+}
+if (!fs.existsSync(integratedLauncherIconPath) || !fs.existsSync(integratedHudBrandIconPath) ||
+    fs.statSync(integratedLauncherIconPath).size < 10000 ||
+    !integratedHud.includes('<img src="brand-icon.png" alt="">') ||
+    integratedHud.includes("AR 现场副驾驶")) {
+  throw new Error("standby header and Android launcher must use the supplied Dingdang brand icon");
+}
+if (!integratedHud.includes("#standby .core:after{") ||
+    !integratedHud.includes("#standby .core:before{") ||
+    !integratedHud.includes("background:#fafffd") ||
+    !integratedHud.includes('<svg class="mic-icon" viewBox="0 0 24 24"') ||
+    !integratedHud.includes('d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"') ||
+    !integratedHud.includes("#standby .core .mic-icon{") ||
+    integratedHud.includes("#standby .core .mic:before{")) {
+  throw new Error("standby microphone must use one symmetric vector icon inside the approved breathing core");
+}
+if (!integratedHud.includes("var LOW_POWER_HUD_TICK_MS=250") ||
+    !integratedHud.includes("setInterval(updateLowPowerHudMotion,LOW_POWER_HUD_TICK_MS)") ||
+    !integratedHud.includes("document.visibilityState!=='visible'") ||
+    !integratedHud.includes("animation:none!important") ||
+    !integratedHud.includes("--hud-breathe-scale") ||
+    !integratedHud.includes("--hud-pulse-opacity")) {
+  throw new Error("HUD motion must use a visibility-aware 250 ms low-power clock");
+}
+for (const continuousAnimation of [
+  "animation:standby-core-breathe",
+  "animation:lowPowerBreathe",
+  "animation:lowPowerTaskBreathe",
+  "animation:lowPowerPresence",
+]) {
+  if (integratedHud.includes(continuousAnimation)) {
+    throw new Error(`Air3 HUD must not continuously rasterize: ${continuousAnimation}`);
+  }
+}
+if (!integratedHud.includes('<section id="photoDraft"') ||
+    !integratedHud.includes("照片待发送") ||
+    !integratedHud.includes("照片将等待 30 秒") ||
+    !integratedHud.includes("超时无输入将自动仅发送图片") ||
+    !integratedHud.includes(".css-mic{") ||
+    !integratedHud.includes("button.textContent=''") ||
+    !integratedActivity.includes('hudPresentation.showState("photoDraft")')) {
+  throw new Error("captured photos need a single-screen draft, automatic fallback, and centered CSS microphone");
+}
+if (!integratedHud.includes('<section id="voiceGuide"') ||
+    !integratedHud.includes("先说“小叮当”") ||
+    !integratedHud.includes("返回首页") ||
+    !integratedHud.includes("眼镜使用教学") ||
+    !integratedHud.includes('class="learning-links"') ||
+    !integratedHud.includes('<b>语音帮助</b><small>可说“打开语音帮助”</small>') ||
+    !integratedHud.includes('<b>眼镜使用教学</b><small>可说“打开眼镜使用教学”</small>') ||
+    integratedHud.includes('class="help-actions"') ||
+    !integratedHud.includes("#standby.active{min-height:min(680px,calc(100vh - 188px))}") ||
+    !integratedHud.includes("#standby .quick-actions{gap:42px;margin-top:27px}") ||
+    !integratedHud.includes("#standby .learning-links{display:flex;width:max-content;max-width:100%;align-items:center;justify-content:center;gap:58px;margin:20px auto 0}") ||
+    !integratedHud.includes('class="ability" data-a="openCapabilities"') ||
+    !integratedHud.includes('class="camera" data-a="capturePhoto"') ||
+    !integratedHud.includes('class="expert" data-a="openExpert"') ||
+    !integratedHud.includes('data-a="openVoiceGuide"') ||
+    !integratedHud.includes(".guide-grid{") ||
+    !integratedHudPresentation.includes("void openVoiceGuide();") ||
+    !integratedHudPresentation.includes("actions.openVoiceGuide()") ||
+    !integratedHudPresentation.includes('"voiceGuide".equals(value)') ||
+    !integratedVoiceRouter.includes('"打开语音帮助"') ||
+    !integratedVoiceRouter.includes('"打开眼镜使用教学"') ||
+    !integratedActivity.includes("private void openHudVoiceGuide()") ||
+    !integratedActivity.includes('hudPresentation.showState("voiceGuide")')) {
+  throw new Error("HUD must provide a complete, discoverable voice command guide and return hints");
+}
+if (!integratedHud.includes('<section id="glassesGuide"') ||
+    !integratedHud.includes('data-a="openGlassesTutorial"') ||
+    !integratedHudPresentation.includes("void openGlassesTutorial();") ||
+    !integratedHudPresentation.includes("actions.openGlassesTutorial()") ||
+    !integratedHudPresentation.includes('"glassesGuide".equals(value)') ||
+    !integratedVoiceRouter.includes("GLASSES_TUTORIAL") ||
+    !integratedActivity.includes("private void openHudGlassesTutorial()") ||
+    !integratedActivity.includes('hudPresentation.showState("glassesGuide")')) {
+  throw new Error("voice help and glasses tutorial must be independent single-screen HUD states");
+}
+if (!integratedWakeEngine.includes("finally {") ||
+    !integratedWakeEngine.includes("releaseRecorderFromAudioThread(currentRecorder)") ||
+    !integratedWakeEngine.includes("completeAudioSession()") ||
+    !integratedWakeEngine.includes("audioThread != null") ||
+    !integratedActivity.includes("shouldWaitForWakeAudioRelease")) {
+  throw new Error("offline wake audio must be fully released before ASR acquires the microphone");
+}
+if (!integratedWakeEngine.includes('wdec_param_nCmThreshold", "0 0:1000"') ||
+    !integratedWakeEngine.includes("Wake result handle=")) {
+  throw new Error("offline wake must use the field threshold and log every AIKit wake payload");
+}
+const startToggleVoiceBody = integratedMethod("private void startToggleVoiceRecording(");
+if (!integratedActivity.includes("OFFLINE_WAKE_COMMAND") ||
+    !integratedActivity.includes("shouldRejectOfflineWakeAtStandby") ||
+    !startToggleVoiceBody.includes("if (!offlineWakeCommandStart)") ||
+    !startToggleVoiceBody.includes("activateHudTaskWorkspace();")) {
+  throw new Error("offline wake commands must be gated at standby without activating the task workspace");
+}
+const wakeWriteAudio = integratedWakeEngine.slice(
+  integratedWakeEngine.indexOf("private void writeAudio("),
+  integratedWakeEngine.indexOf("private void notifyUnavailable(")
+);
+if (!integratedWakeEngine.includes("AiRequest.Builder audioRequestBuilder") ||
+    wakeWriteAudio.includes("AiRequest.builder()") ||
+    wakeWriteAudio.includes("AiAudio.get(")) {
+  throw new Error("offline wake audio frames must reuse one AIKit builder without per-frame AiAudio holders");
+}
+if (!integratedExpertCoordinator.includes("waitingSurface") ||
+    !integratedExpertCoordinator.includes("setWaitingSurfaceVisible") ||
+    !integratedExpertCoordinator.includes("state == CollabStateMachine.State.IN_CALL")) {
+  throw new Error("expert collaboration must use a light waiting surface until real video is connected");
+}
+if (!integratedActivity.includes("WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON")) {
+  throw new Error("Air3 foreground HUD must keep the display awake during field operation");
+}
+
+function integratedMethod(signature) {
+  const start = integratedActivity.indexOf(signature);
+  if (start < 0) {
+    throw new Error(`integrated HUD missing method: ${signature}`);
+  }
+  const next = integratedActivity.indexOf("\n    private ", start + 1);
+  return integratedActivity.slice(start, next < 0 ? integratedActivity.length : next);
+}
+
+const integratedSync = integratedMethod("private void syncHudPresentation(");
+if (integratedSync.indexOf("shouldKeepEstablishedTaskSurface(") >
+    integratedSync.indexOf('showState("listening")')) {
+  throw new Error("established task workspace must take priority over full-screen listening");
+}
+const integratedHome = integratedMethod("private void returnToHudStandby(");
+if (!integratedHome.includes("hudTaskWorkspaceActive = false") ||
+    !integratedHome.includes("hudTaskMessageStartIndex = chatMessages.size()")) {
+  throw new Error("global home navigation must leave the foreground task surface");
+}
+if (!integratedHome.includes("if (hudPresentation != null && screenMode == ScreenMode.CHAT)") ||
+    !integratedHome.includes('hudPresentation.showState("standby")') ||
+    integratedHome.indexOf('hudPresentation.showState("standby")') >
+      integratedHome.indexOf("renderChatScreen();")) {
+  throw new Error("HUD home navigation must show standby first without rebuilding the hidden native chat tree");
+}
+const integratedVoiceInteraction = integratedMethod("private boolean handleVoicePreviewInteraction(");
+if (integratedVoiceInteraction.indexOf("Command.HOME") >
+    integratedVoiceInteraction.indexOf("isCapabilityCenterVisible()") ||
+    integratedVoiceInteraction.indexOf("Command.HOME") >
+    integratedVoiceInteraction.indexOf("isCommandOverlayVisible()")) {
+  throw new Error("global voice home must take priority over capability and command overlays");
+}
+const integratedVoiceHome = integratedMethod("private void returnToHudHomeFromVoice(");
+for (const marker of [
+  "hideCommandOverlay()", "hideCapabilityCenter()", "exitExpertMode()",
+  'returnToHudStandby("语音待命")', 'scheduleForegroundVoiceListening("voice-command-home")',
+]) {
+  if (!integratedVoiceHome.includes(marker)) {
+    throw new Error(`global voice home cleanup missing marker: ${marker}`);
+  }
+}
+const integratedGuidanceVoice = integratedMethod("private boolean handleHudGuidanceVoiceCommand(");
+if (!integratedGuidanceVoice.includes("VoiceCommandRouter.Command.ABNORMAL") ||
+    !integratedGuidanceVoice.includes('setChatStatus("请描述当前步骤的异常情况")') ||
+    !integratedGuidanceVoice.includes("startToggleVoiceRecording();")) {
+  throw new Error("repair abnormal command must stay in guidance and open a recoverable description turn");
+}
+const integratedCameraBack = integratedMethod("private void returnToChatFromCameraFlow(");
+if (integratedCameraBack.includes("hudTaskWorkspaceActive = false") ||
+    integratedCameraBack.includes("hudTaskMessageStartIndex = chatMessages.size()")) {
+  throw new Error("returning from task photo capture must preserve the active task surface");
+}
+if (!integratedActivity.includes("finishHandledVoiceCommand(\"preview-command\")") ||
+    !integratedActivity.includes("finishHandledVoiceCommand(\"legacy-command\")") ||
+    !integratedActivity.includes("voiceStreamState = VoiceStreamState.IDLE;\n        scheduleForegroundVoiceListening(reason);")) {
+  throw new Error("handled local voice commands must return FINAL_READY to IDLE before rearming offline wake");
+}
+const beginDiagnosisBody = integratedMethod("private void beginVoiceDiagnosisConversation(");
+if (beginDiagnosisBody.indexOf("voiceSessionPurpose = VoiceSessionPurpose.COMMAND;") < 0 ||
+    beginDiagnosisBody.indexOf("voiceSessionPurpose = VoiceSessionPurpose.COMMAND;") >
+      beginDiagnosisBody.indexOf("mainHandler.postDelayed(")) {
+  throw new Error("diagnosis capture must reserve microphone ownership before command completion can rearm offline wake");
+}
+const beginWakeCommandBody = integratedMethod("private void beginVoiceCommandAfterWake(");
+if (beginWakeCommandBody.includes("playWakeFeedbackTone();")) {
+  throw new Error("wake feedback tone must not play before offline wake has released the microphone");
+}
+const integratedStartVoiceBody = integratedMethod("private void startToggleVoiceRecording(");
+if (integratedStartVoiceBody.indexOf("recorder.startRecording();") >
+      integratedStartVoiceBody.indexOf("playWakeFeedbackTone();") ||
+    !integratedStartVoiceBody.includes("if (offlineWakeCommandStart)")) {
+  throw new Error("wake feedback must play only after ASR AudioRecord has started");
+}
+for (const latencyMarker of [
+  "Voice latency stage=wake_detected",
+  "Voice latency stage=wake_audio_released",
+  "Voice latency stage=audio_record_started",
+  "Voice latency stage=asr_started",
+  "Voice latency stage=asr_first_partial",
+  "Voice latency stage=asr_final",
+  "voiceFlowElapsedMs=",
+]) {
+  if (!integratedActivity.includes(latencyMarker)) {
+    throw new Error(`voice performance audit missing marker: ${latencyMarker}`);
+  }
 }
 
 console.log("Native chat flow validation passed.");

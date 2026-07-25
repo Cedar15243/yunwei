@@ -20,7 +20,7 @@ public final class VoiceEventStateMachineTest {
     }
 
     @Test
-    public void photoWithoutDescriptionSubmitsAfterTimeout() {
+    public void photoWithoutDescriptionSubmitsAsImageOnlyAfterTheVisibleWaitWindow() {
         VoiceEventStateMachine state = new VoiceEventStateMachine();
 
         state.onCommand(router.route("拍照"));
@@ -29,13 +29,61 @@ public final class VoiceEventStateMachineTest {
         assertEquals(VoiceEventStateMachine.Signal.SUBMIT_TO_AI, state.onDescriptionTimeout());
         assertEquals(VoiceEventStateMachine.State.AI_READY, state.state());
         assertEquals("", state.eventDescription());
+        assertEquals(true, state.hasPhoto());
+    }
+
+    @Test
+    public void emptyDescriptionDoesNotSubmitThePendingPhoto() {
+        VoiceEventStateMachine state = new VoiceEventStateMachine();
+
+        state.onCommand(router.route("拍照"));
+        state.onPhotoCaptured();
+
+        assertEquals(VoiceEventStateMachine.Signal.NONE, state.onDescriptionFinal("   "));
+        assertEquals(VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION, state.state());
+        assertEquals(true, state.hasPhoto());
+    }
+
+    @Test
+    public void manualPhotoCaptureAlsoWaitsForDescription() {
+        VoiceEventStateMachine state = new VoiceEventStateMachine();
+
+        state.beginPhotoCapture();
+
+        assertEquals(VoiceEventStateMachine.Signal.START_DESCRIPTION, state.onPhotoCaptured());
+        assertEquals(VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION, state.state());
+        assertEquals(true, state.hasPhoto());
+    }
+
+    @Test
+    public void confirmDoesNotSendAPhotoWithoutDescription() {
+        VoiceEventStateMachine state = new VoiceEventStateMachine();
+
+        state.onCommand(router.route("拍照"));
+        state.onPhotoCaptured();
+
+        assertEquals(VoiceEventStateMachine.Signal.NONE, state.onCommand(router.route("确认")));
+        assertEquals(VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION, state.state());
+        assertEquals("", state.eventDescription());
+    }
+
+    @Test
+    public void explicitImageOnlyCommandSubmitsPhotoWithoutInventingDescription() {
+        VoiceEventStateMachine state = new VoiceEventStateMachine();
+
+        state.onCommand(router.route("拍照"));
+        state.onPhotoCaptured();
+
+        assertEquals(VoiceEventStateMachine.Signal.SUBMIT_TO_AI, state.onCommand(router.route("仅发送图片")));
+        assertEquals(VoiceEventStateMachine.State.AI_READY, state.state());
+        assertEquals("", state.eventDescription());
     }
 
     @Test
     public void narrationIsNotMisclassifiedAsAnalysisCommand() {
         assertEquals(VoiceCommandRouter.Command.NONE, router.route("我想分析这个问题"));
-        assertEquals(VoiceCommandRouter.Command.EXPERT, router.route("叮当，专家"));
-        assertEquals(VoiceCommandRouter.Command.PHOTO, router.route("叮当拍照"));
+        assertEquals(VoiceCommandRouter.Command.EXPERT, router.route("小叮当，专家"));
+        assertEquals(VoiceCommandRouter.Command.PHOTO, router.route("小叮当拍照"));
     }
 
     @Test
@@ -61,6 +109,14 @@ public final class VoiceEventStateMachineTest {
         assertEquals(VoiceEventStateMachine.Signal.CANCEL_EVENT, state.onCommand(router.route("取消")));
         assertEquals(VoiceEventStateMachine.State.IDLE, state.state());
         assertEquals(false, state.hasPhoto());
+    }
+
+    @Test
+    public void cancelOutsidePhotoWorkflowDoesNotClearChatContext() {
+        VoiceEventStateMachine state = new VoiceEventStateMachine();
+
+        assertEquals(VoiceEventStateMachine.Signal.NONE, state.onCommand(router.route("取消")));
+        assertEquals(VoiceEventStateMachine.State.IDLE, state.state());
     }
 
     @Test

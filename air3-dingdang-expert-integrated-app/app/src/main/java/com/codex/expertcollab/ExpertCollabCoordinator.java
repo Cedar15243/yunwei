@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -44,6 +45,8 @@ public final class ExpertCollabCoordinator implements
     private final CollabStateMachine stateMachine = new CollabStateMachine();
     private final OkHttpClient imageClient = new OkHttpClient();
     private final FrameLayout root;
+    private final LinearLayout waitingSurface;
+    private final LinearLayout topBar;
     private final TextView statusText;
     private final TextView expertText;
     private final Button primaryButton;
@@ -51,6 +54,7 @@ public final class ExpertCollabCoordinator implements
     private final FrameLayout expertVideoFrame;
     private final TXCloudVideoView expertPreview;
     private final TextView expertVideoLabel;
+    private final TextView reticle;
     private final ImageView freezeImage;
     private final AnnotationOverlayView annotationOverlay;
     private CollabSocketClient signaling;
@@ -69,7 +73,7 @@ public final class ExpertCollabCoordinator implements
         this.host = host;
 
         root = new FrameLayout(activity);
-        root.setBackgroundColor(Color.rgb(9, 13, 17));
+        root.setBackgroundColor(Color.rgb(237, 243, 241));
 
         preview = new TXCloudVideoView(activity);
         preview.setBackgroundColor(Color.rgb(17, 29, 34));
@@ -80,6 +84,40 @@ public final class ExpertCollabCoordinator implements
         freezeImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
         freezeImage.setVisibility(View.GONE);
         root.addView(freezeImage, matchParent());
+
+        waitingSurface = new LinearLayout(activity);
+        waitingSurface.setGravity(Gravity.CENTER);
+        waitingSurface.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable waitingBackground = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{Color.rgb(249, 252, 251), Color.rgb(228, 242, 236)});
+        waitingSurface.setBackground(waitingBackground);
+        LinearLayout waitingPanel = new LinearLayout(activity);
+        waitingPanel.setGravity(Gravity.CENTER);
+        waitingPanel.setOrientation(LinearLayout.VERTICAL);
+        waitingPanel.setPadding(dp(54), dp(34), dp(54), dp(34));
+        GradientDrawable panelBackground = new GradientDrawable();
+        panelBackground.setColor(Color.argb(224, 255, 255, 255));
+        panelBackground.setStroke(dp(1), Color.rgb(176, 215, 201));
+        panelBackground.setCornerRadius(dp(12));
+        waitingPanel.setBackground(panelBackground);
+        TextView waitingMark = label(28, Color.rgb(7, 139, 104));
+        waitingMark.setGravity(Gravity.CENTER);
+        waitingMark.setText("●");
+        waitingPanel.addView(waitingMark, new LinearLayout.LayoutParams(dp(64), dp(48)));
+        TextView waitingTitle = label(30, Color.rgb(16, 44, 36));
+        waitingTitle.setGravity(Gravity.CENTER);
+        waitingTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        waitingTitle.setText("AR 远程专家协同");
+        waitingPanel.addView(waitingTitle, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(58)));
+        TextView waitingHint = label(17, Color.rgb(70, 105, 94));
+        waitingHint.setGravity(Gravity.CENTER);
+        waitingHint.setText("正在建立安全音视频链路\n可说“小叮当，返回首页”退出等待");
+        waitingPanel.addView(waitingHint, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(70)));
+        waitingSurface.addView(waitingPanel, new LinearLayout.LayoutParams(dp(680), dp(260)));
+        root.addView(waitingSurface, matchParent());
 
         annotationOverlay = new AnnotationOverlayView(activity);
         root.addView(annotationOverlay, matchParent());
@@ -104,7 +142,7 @@ public final class ExpertCollabCoordinator implements
         expertVideoParams.rightMargin = dp(20);
         root.addView(expertVideoFrame, expertVideoParams);
 
-        LinearLayout topBar = new LinearLayout(activity);
+        topBar = new LinearLayout(activity);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         topBar.setPadding(dp(24), dp(12), dp(24), dp(12));
         topBar.setBackgroundColor(Color.argb(218, 9, 13, 17));
@@ -120,7 +158,7 @@ public final class ExpertCollabCoordinator implements
                 Gravity.TOP);
         root.addView(topBar, topParams);
 
-        TextView reticle = label(22, Color.argb(150, 255, 255, 255));
+        reticle = label(22, Color.argb(150, 255, 255, 255));
         reticle.setGravity(Gravity.CENTER);
         reticle.setText("+");
         root.addView(reticle, new FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER));
@@ -239,7 +277,11 @@ public final class ExpertCollabCoordinator implements
     }
 
     private void renderState() {
-        switch (stateMachine.getState()) {
+        CollabStateMachine.State state = stateMachine.getState();
+        boolean videoActive = state == CollabStateMachine.State.IN_CALL
+                || state == CollabStateMachine.State.RECONNECTING;
+        setWaitingSurfaceVisible(!videoActive);
+        switch (state) {
             case CALLING:
                 statusText.setText("正在广播呼叫在线专家");
                 expertText.setText("等待接听");
@@ -276,6 +318,20 @@ public final class ExpertCollabCoordinator implements
                 expertText.setText(DEVICE_NAME);
                 primaryButton.setText("呼叫远程专家");
                 break;
+        }
+    }
+
+    private void setWaitingSurfaceVisible(boolean visible) {
+        waitingSurface.setVisibility(visible ? View.VISIBLE : View.GONE);
+        reticle.setVisibility(visible ? View.GONE : View.VISIBLE);
+        if (visible) {
+            topBar.setBackgroundColor(Color.argb(232, 248, 252, 250));
+            statusText.setTextColor(Color.rgb(7, 139, 104));
+            expertText.setTextColor(Color.rgb(49, 93, 79));
+        } else {
+            topBar.setBackgroundColor(Color.argb(218, 9, 13, 17));
+            statusText.setTextColor(Color.rgb(69, 212, 131));
+            expertText.setTextColor(Color.WHITE);
         }
     }
 

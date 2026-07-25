@@ -161,6 +161,15 @@ export function createCollabServer(config: ServerConfig): CollabServer {
             store.registerExpert(message.senderId, name.trim());
           }
           send(socket, envelope("presence.registered", null, { id: message.senderId, kind, name: name.trim() }));
+          if (kind === "expert") {
+            for (const session of store.listPendingCalls()) {
+              const glasses = [...clients.values()].find((peer) => peer.kind === "glasses" && peer.id === session.glassesId);
+              send(socket, envelope("call.requested", session.id, {
+                glassesId: session.glassesId,
+                glassesName: glasses?.name ?? session.glassesId,
+              }));
+            }
+          }
           return;
         }
 

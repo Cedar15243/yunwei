@@ -134,6 +134,38 @@ describe("collaboration server", () => {
     glasses.close();
   });
 
+  it("delivers a pending eye-glasses call to an expert who opens the console later", async () => {
+    const server = await startServer();
+    const glasses = await openSocket(server.websocketUrl);
+
+    glasses.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "glasses-01", seq: 1, sentAt: 1, payload: { kind: "glasses", name: "Air3-01" } }));
+    await nextMessage(glasses);
+    glasses.send(JSON.stringify({ type: "call.requested", sessionId: null, senderId: "glasses-01", seq: 2, sentAt: 2, payload: {} }));
+    await nextMessage(glasses);
+
+    const expertWang = await openSocket(server.websocketUrl);
+    const received = new Promise<Record<string, unknown>[]>((resolve, reject) => {
+      const messages: Record<string, unknown>[] = [];
+      const timeout = setTimeout(() => reject(new Error("websocket messages timeout")), 2_000);
+      expertWang.on("message", (data) => {
+        messages.push(JSON.parse(data.toString()));
+        if (messages.length === 2) {
+          clearTimeout(timeout);
+          resolve(messages);
+        }
+      });
+    });
+    expertWang.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-wang", seq: 1, sentAt: 3, payload: { kind: "expert", name: "Wang" } }));
+
+    const [registered, incoming] = await received;
+    expect(registered.type).toBe("presence.registered");
+    expect(incoming.type).toBe("call.requested");
+    expect((incoming.payload as Record<string, unknown>).glassesId).toBe("glasses-01");
+
+    expertWang.close();
+    glasses.close();
+  });
+
   it("keeps an expert online while another tab with the same identity remains connected", async () => {
     const server = await startServer();
     const firstTab = await openSocket(server.websocketUrl);

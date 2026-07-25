@@ -2,7 +2,8 @@ plugins {
     id "com.android.application"
 }
 
-def collabServerUrl = project.findProperty("collabServerUrl") ?: "http://127.0.0.1:8787"
+// The public reverse proxy is exposed on 2305; port 443 is not available on the deployment host.
+def collabServerUrl = project.findProperty("collabServerUrl") ?: "https://bb.chinacedar.top:2305"
 def previewApplicationId = project.findProperty("previewApplicationId") ?: "com.codex.air3nativecamera.dingdangexpert.follow.preview"
 def previewVersionCode = (project.findProperty("previewVersionCode") ?: "627") as int
 def previewVersionName = project.findProperty("previewVersionName") ?: "6.2.7-expert-preview"
@@ -75,7 +76,11 @@ tasks.register("generateDingdangConfig") {
     inputs.property("iflytekOfflineWakeEnabled", iflytekOfflineWakeEnabled)
     outputs.dir generatedConfigDir
     doLast {
-        def opsKey = requiredEnvironment("OPS_GLASSES_API_KEY")
+        // Direct AI builds do not route requests through the legacy Supabase gateway.
+        // Keep its generated field non-empty without requiring an unrelated production secret.
+        def opsKey = directGptEnabled
+                ? optionalEnvironment("OPS_GLASSES_API_KEY", "direct-ai-local-build")
+                : requiredEnvironment("OPS_GLASSES_API_KEY")
         def directGptApiKey = directGptEnabled
                 ? requiredEnvironment("DIRECT_GPT_API_KEY")
                 : optionalEnvironment("DIRECT_GPT_API_KEY", "")

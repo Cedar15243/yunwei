@@ -27,6 +27,7 @@ public final class IntegratedModeController {
 
     private final Hooks hooks;
     private Mode mode = Mode.CHAT;
+    private Mode modeBeforeExpert = Mode.CHAT;
 
     public IntegratedModeController(Hooks hooks) {
         if (hooks == null) {
@@ -52,6 +53,7 @@ public final class IntegratedModeController {
         if (mode == Mode.EXPERT) {
             return;
         }
+        modeBeforeExpert = mode;
         hooks.persistLegacyState();
         hooks.stopLegacyVoice();
         hooks.closeLegacyCamera();
@@ -65,8 +67,11 @@ public final class IntegratedModeController {
         }
         hooks.releaseExpert();
         hooks.showChat();
-        hooks.startLegacyCamera();
+        if (modeBeforeExpert == Mode.CAMERA) {
+            hooks.startLegacyCamera();
+        }
         hooks.resumeLegacyVoice();
-        mode = Mode.CHAT;
+        mode = modeBeforeExpert;
+        modeBeforeExpert = Mode.CHAT;
     }
 }

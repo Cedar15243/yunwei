@@ -57,6 +57,10 @@ export class SessionStore {
     return [...this.experts.values()].filter((expert) => expert.online && expert.busySessionId === null);
   }
 
+  listPendingCalls(): CollabSession[] {
+    return [...this.sessions.values()].filter((session) => session.status === "calling");
+  }
+
   requestCall(glassesId: string): CollabSession {
     const session: CollabSession = {
       id: this.idFactory(),

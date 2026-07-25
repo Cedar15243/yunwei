@@ -21,7 +21,7 @@ public final class IntegratedModeControllerTest {
     }
 
     @Test
-    public void expertExitReleasesTrtcBeforeRestoringChat() {
+    public void expertExitFromChatReleasesTrtcWithoutRestartingCamera() {
         FakeHooks hooks = new FakeHooks();
         IntegratedModeController controller = new IntegratedModeController(hooks);
         controller.enterExpert();
@@ -29,8 +29,22 @@ public final class IntegratedModeControllerTest {
 
         controller.exitExpert();
 
-        assertEquals(Arrays.asList("releaseExpert", "showChat", "startCamera", "resumeVoice"), hooks.events);
+        assertEquals(Arrays.asList("releaseExpert", "showChat", "resumeVoice"), hooks.events);
         assertEquals(IntegratedModeController.Mode.CHAT, controller.mode());
+    }
+
+    @Test
+    public void expertExitRestoresCameraOnlyWhenExpertStartedFromCameraMode() {
+        FakeHooks hooks = new FakeHooks();
+        IntegratedModeController controller = new IntegratedModeController(hooks);
+        controller.setLegacyMode(IntegratedModeController.Mode.CAMERA);
+        controller.enterExpert();
+        hooks.events.clear();
+
+        controller.exitExpert();
+
+        assertEquals(Arrays.asList("releaseExpert", "showChat", "startCamera", "resumeVoice"), hooks.events);
+        assertEquals(IntegratedModeController.Mode.CAMERA, controller.mode());
     }
 
     @Test
@@ -45,7 +59,7 @@ public final class IntegratedModeControllerTest {
 
         assertEquals(Arrays.asList(
                 "persist", "stopVoice", "closeCamera", "showExpert",
-                "releaseExpert", "showChat", "startCamera", "resumeVoice"), hooks.events);
+                "releaseExpert", "showChat", "resumeVoice"), hooks.events);
     }
 
     private static final class FakeHooks implements IntegratedModeController.Hooks {

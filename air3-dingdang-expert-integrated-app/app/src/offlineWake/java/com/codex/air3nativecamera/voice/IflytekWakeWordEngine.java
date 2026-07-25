@@ -9,7 +9,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
-import com.iflytek.aikit.core.AiAudio;
 import com.iflytek.aikit.core.AiHandle;
 import com.iflytek.aikit.core.AiHelper;
 import com.iflytek.aikit.core.AiListener;
@@ -23,6 +22,7 @@ import com.iflytek.aikit.core.ErrType;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -86,7 +86,9 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
 
     @Override
     public boolean isRunning() {
-        return audioLoopRunning.get();
+        synchronized (lock) {
+            return audioLoopRunning.get() || audioThread != null || recorder != null || handle != null;
+        }
     }
 
     private void initializeSdk() {
@@ -158,7 +160,7 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                     return;
                 }
                 AiRequest.Builder parameters = AiRequest.builder();
-                parameters.param("wdec_param_nCmThreshold", "0 0:800");
+                parameters.param("wdec_param_nCmThreshold", "0 0:1000");
                 parameters.param("gramLoad", true);
                 AiHelper.getInst().registerListener(ABILITY_ID, new AiListener() {
                     @Override
@@ -167,6 +169,17 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                             return;
                         }
                         for (AiResponse response : responses) {
+                            byte[] value = response.getValue();
+                            String payload = value == null
+                                    ? ""
+                                    : new String(value, StandardCharsets.UTF_8);
+                            if (payload.length() > 512) {
+                                payload = payload.substring(0, 512);
+                            }
+                            Log.i(TAG, "Wake result handle=" + handleId
+                                    + " key=" + response.getKey()
+                                    + " status=" + response.getStatus()
+                                    + " payload=" + payload);
                             if ("func_wake_up".equals(response.getKey())
                                     && wakeDelivered.compareAndSet(false, true)) {
                                 final WakeWordEngine.Listener current = listener;
@@ -215,39 +228,50 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
         int minimum = AudioRecord.getMinBufferSize(SAMPLE_RATE_HZ,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
         int bufferSize = Math.max(FRAME_BYTES, minimum);
-        recorder = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE_HZ,
+        final AudioRecord currentRecorder = new AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE_HZ,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
-        recorder.startRecording();
+        recorder = currentRecorder;
+        currentRecorder.startRecording();
         audioLoopRunning.set(true);
         audioThread = new Thread(new Runnable() {
             @Override
             public void run() {
+                AiRequest.Builder audioRequestBuilder = AiRequest.builder();
                 AiStatus status = AiStatus.BEGIN;
                 byte[] pcm = new byte[FRAME_BYTES];
-                while (audioLoopRunning.get()) {
-                    AudioRecord current = recorder;
-                    int read = current == null ? -1 : current.read(pcm, 0, pcm.length);
-                    if (read <= 0) {
-                        continue;
+                try {
+                    while (audioLoopRunning.get()) {
+                        int read = currentRecorder.read(pcm, 0, pcm.length);
+                        if (read <= 0) {
+                            continue;
+                        }
+                        writeAudio(audioRequestBuilder, pcm, read, status);
+                        status = AiStatus.CONTINUE;
                     }
-                    writeAudio(pcm, read, status);
-                    status = AiStatus.CONTINUE;
+                } catch (RuntimeException error) {
+                    if (audioLoopRunning.get()) {
+                        Log.e(TAG, "Offline wake audio loop failed", error);
+                        notifyUnavailable("离线唤醒异常，请稍后重试");
+                    }
+                } finally {
+                    releaseRecorderFromAudioThread(currentRecorder);
+                    completeAudioSession();
                 }
-                endHandle();
             }
         }, "dingdang-aikit-wake");
         audioThread.start();
     }
 
-    private void writeAudio(byte[] pcm, int length, AiStatus status) {
+    private void writeAudio(AiRequest.Builder audioRequestBuilder,
+                            byte[] pcm, int length, AiStatus status) {
         AiHandle current = handle;
         if (current == null) {
             return;
         }
         byte[] frame = length == pcm.length ? pcm : Arrays.copyOf(pcm, length);
-        AiRequest.Builder request = AiRequest.builder();
-        request.payload(AiAudio.get("wav").data(frame).status(status).valid());
-        int code = AiHelper.getInst().write(request.build(), current);
+        audioRequestBuilder.clear().status(status).audio("wav", frame);
+        int code = AiHelper.getInst().write(audioRequestBuilder.build(), current);
         if (code != 0) {
             Log.e(TAG, "AIKit write failed code=" + code);
             notifyUnavailable("离线唤醒异常，请稍后重试");
@@ -272,20 +296,40 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
     private void stopSession() {
         audioLoopRunning.set(false);
         AudioRecord current = recorder;
-        recorder = null;
         if (current != null) {
             try {
                 current.stop();
             } catch (Exception ignored) {
             }
-            current.release();
         }
         if (audioThread == null) {
-            endHandle();
+            recorder = null;
+            releaseRecorder(current);
+            completeAudioSession();
         }
     }
 
-    private void endHandle() {
+    private void releaseRecorderFromAudioThread(AudioRecord currentRecorder) {
+        synchronized (lock) {
+            if (recorder == currentRecorder) {
+                recorder = null;
+            }
+        }
+        releaseRecorder(currentRecorder);
+    }
+
+    private void releaseRecorder(AudioRecord currentRecorder) {
+        if (currentRecorder == null) {
+            return;
+        }
+        try {
+            currentRecorder.stop();
+        } catch (Exception ignored) {
+        }
+        currentRecorder.release();
+    }
+
+    private void completeAudioSession() {
         synchronized (lock) {
             AiHandle current = handle;
             handle = null;
@@ -312,7 +356,7 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
         File keyword = new File(resourceDirectory, "keyword.txt");
         FileOutputStream output = new FileOutputStream(keyword, false);
         try {
-            output.write("\u53ee\u5f53;\n".getBytes(StandardCharsets.UTF_8));
+            output.write("\u5c0f\u53ee\u5f53;\n".getBytes(StandardCharsets.UTF_8));
         } finally {
             output.close();
         }

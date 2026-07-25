@@ -41,7 +41,7 @@ public final class LegacyVoiceCommandRouter {
     }
 
     private static String compact(String text) {
-        return VoiceCommandRouter.normalize(text).replace("叮当", "").replace("小叮", "")
+        return VoiceCommandRouter.normalize(text).replace("小叮当", "").replace("小叮", "")
                 .replace("小丁", "").replace("请", "");
     }
 
