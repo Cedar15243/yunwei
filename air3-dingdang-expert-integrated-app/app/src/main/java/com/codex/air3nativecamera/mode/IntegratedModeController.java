@@ -53,12 +53,19 @@ public final class IntegratedModeController {
         if (mode == Mode.EXPERT) {
             return;
         }
-        modeBeforeExpert = mode;
+        Mode previousMode = mode;
+        modeBeforeExpert = previousMode;
         hooks.persistLegacyState();
         hooks.stopLegacyVoice();
         hooks.closeLegacyCamera();
-        hooks.showExpert();
         mode = Mode.EXPERT;
+        try {
+            hooks.showExpert();
+        } catch (RuntimeException error) {
+            mode = previousMode;
+            modeBeforeExpert = Mode.CHAT;
+            throw error;
+        }
     }
 
     public void exitExpert() {

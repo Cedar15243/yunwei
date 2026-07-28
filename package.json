@@ -9,6 +9,7 @@
     "validate:ai-brain": "node scripts/validate-ai-brain-flow.mjs",
     "validate:native-hud": "node scripts/validate-native-hud-flow.mjs",
     "validate:native-build": "node scripts/validate-native-build-versioning.mjs",
+    "validate:investor-v8-isolation": "node scripts/validate-dingdang-investor-v8-isolation.mjs",
     "verify:air3-delivery": "node scripts/verify-air3-delivery-final.mjs",
     "audit:dingdang-goal": "node scripts/audit-dingdang-goal-readiness.mjs",
     "audit:dingdang-supabase": "node scripts/audit-dingdang-supabase-live-readiness.mjs",

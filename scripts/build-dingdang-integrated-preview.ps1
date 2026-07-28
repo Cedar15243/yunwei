@@ -18,7 +18,7 @@ $unityAndroid = "C:\Users\59979\UnityEditors\2022.3.62f3c1\Editor\Data\PlaybackE
 
 $localConfigRoots = @($repoRoot)
 $gitCommonDir = (& git -C $repoRoot rev-parse --git-common-dir 2>$null | Select-Object -First 1)
-if ($LASTEXITCODE -eq 0 -and $gitCommonDir) {
+if ($gitCommonDir) {
   $commonPath = $gitCommonDir.Trim().Replace("/", "\")
   if (-not [System.IO.Path]::IsPathRooted($commonPath)) {
     $commonPath = Join-Path $repoRoot $commonPath

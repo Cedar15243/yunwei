@@ -123,7 +123,7 @@ public final class ExpertCollabCoordinator implements
         root.addView(annotationOverlay, matchParent());
 
         expertVideoFrame = new FrameLayout(activity);
-        expertVideoFrame.setBackgroundColor(Color.rgb(69, 212, 131));
+        expertVideoFrame.setBackgroundColor(Color.rgb(191, 217, 206));
         expertVideoFrame.setPadding(dp(2), dp(2), dp(2), dp(2));
         expertVideoFrame.setVisibility(View.GONE);
         expertPreview = new TXCloudVideoView(activity);
@@ -145,10 +145,10 @@ public final class ExpertCollabCoordinator implements
         topBar = new LinearLayout(activity);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         topBar.setPadding(dp(24), dp(12), dp(24), dp(12));
-        topBar.setBackgroundColor(Color.argb(218, 9, 13, 17));
-        statusText = label(20, Color.rgb(69, 212, 131));
+        topBar.setBackgroundColor(Color.argb(232, 248, 252, 250));
+        statusText = label(20, Color.rgb(7, 139, 104));
         statusText.setTypeface(Typeface.DEFAULT_BOLD);
-        expertText = label(17, Color.WHITE);
+        expertText = label(17, Color.rgb(49, 93, 79));
         expertText.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         topBar.addView(statusText, new LinearLayout.LayoutParams(0, dp(48), 1f));
         topBar.addView(expertText, new LinearLayout.LayoutParams(0, dp(48), 1f));
@@ -167,7 +167,7 @@ public final class ExpertCollabCoordinator implements
         actions.setGravity(Gravity.CENTER);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         primaryButton = actionButton();
-        actions.addView(primaryButton, new LinearLayout.LayoutParams(dp(360), dp(68)));
+        actions.addView(primaryButton, new LinearLayout.LayoutParams(dp(268), dp(54)));
         FrameLayout.LayoutParams actionsParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -319,20 +319,18 @@ public final class ExpertCollabCoordinator implements
                 primaryButton.setText("呼叫远程专家");
                 break;
         }
+        stylePrimaryButton(state == CollabStateMachine.State.CALLING
+                || state == CollabStateMachine.State.CONNECTING
+                || state == CollabStateMachine.State.IN_CALL
+                || state == CollabStateMachine.State.RECONNECTING);
     }
 
     private void setWaitingSurfaceVisible(boolean visible) {
         waitingSurface.setVisibility(visible ? View.VISIBLE : View.GONE);
         reticle.setVisibility(visible ? View.GONE : View.VISIBLE);
-        if (visible) {
-            topBar.setBackgroundColor(Color.argb(232, 248, 252, 250));
-            statusText.setTextColor(Color.rgb(7, 139, 104));
-            expertText.setTextColor(Color.rgb(49, 93, 79));
-        } else {
-            topBar.setBackgroundColor(Color.argb(218, 9, 13, 17));
-            statusText.setTextColor(Color.rgb(69, 212, 131));
-            expertText.setTextColor(Color.WHITE);
-        }
+        topBar.setBackgroundColor(Color.argb(224, 248, 252, 250));
+        statusText.setTextColor(Color.rgb(7, 139, 104));
+        expertText.setTextColor(Color.rgb(49, 93, 79));
     }
 
     @Override
@@ -538,10 +536,29 @@ public final class ExpertCollabCoordinator implements
     private Button actionButton() {
         Button button = new Button(activity);
         button.setAllCaps(false);
-        button.setTextColor(Color.rgb(7, 20, 12));
-        button.setTextSize(20);
-        button.setBackgroundColor(Color.rgb(69, 212, 131));
+        button.setTextSize(17);
+        stylePrimaryButton(button, false);
         return button;
+    }
+
+    private void stylePrimaryButton(boolean hangUp) {
+        stylePrimaryButton(primaryButton, hangUp);
+    }
+
+    private void stylePrimaryButton(Button button, boolean hangUp) {
+        if (button == null) return;
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(27));
+        if (hangUp) {
+            background.setColor(Color.argb(238, 255, 255, 255));
+            background.setStroke(dp(1), Color.rgb(194, 75, 83));
+            button.setTextColor(Color.rgb(151, 45, 54));
+        } else {
+            background.setColor(Color.rgb(223, 245, 234));
+            background.setStroke(dp(1), Color.rgb(145, 201, 181));
+            button.setTextColor(Color.rgb(10, 91, 70));
+        }
+        button.setBackground(background);
     }
 
     private int dp(int value) {

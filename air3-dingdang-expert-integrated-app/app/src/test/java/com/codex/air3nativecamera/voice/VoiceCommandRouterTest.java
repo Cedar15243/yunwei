@@ -28,6 +28,10 @@ public final class VoiceCommandRouterTest {
         assertRoute("专家", VoiceCommandRouter.Command.EXPERT);
         assertRoute("巡检", VoiceCommandRouter.Command.INSPECTION);
         assertRoute("打开巡检任务", VoiceCommandRouter.Command.INSPECTION);
+        assertRoute("开始实训室设备巡检", VoiceCommandRouter.Command.INSPECTION);
+        assertRoute("开始水电暖巡检", VoiceCommandRouter.Command.INSPECTION);
+        assertRoute("开始空调巡检", VoiceCommandRouter.Command.INSPECTION);
+        assertRoute("开始消防巡检", VoiceCommandRouter.Command.INSPECTION);
         assertRoute("现场感知", VoiceCommandRouter.Command.PERCEPTION);
         assertRoute("现场采集", VoiceCommandRouter.Command.PERCEPTION);
         assertRoute("记录", VoiceCommandRouter.Command.RECORD);
@@ -40,16 +44,38 @@ public final class VoiceCommandRouterTest {
         assertRoute("智能体中心", VoiceCommandRouter.Command.AGENT_CENTER);
         assertRoute("Agent中心", VoiceCommandRouter.Command.AGENT_CENTER);
         assertRoute("AI Agent中心", VoiceCommandRouter.Command.AGENT_CENTER);
+        assertRoute("AI运维技能", VoiceCommandRouter.Command.AGENT_CENTER);
+        assertRoute("打开AI运维技能", VoiceCommandRouter.Command.AGENT_CENTER);
+        assertRoute("ai运维技能", VoiceCommandRouter.Command.AGENT_CENTER);
+        assertRoute("运维技能中心", VoiceCommandRouter.Command.AGENT_CENTER);
+        assertRoute("运维技能", VoiceCommandRouter.Command.AGENT_CENTER);
+        assertRoute("启用环境诊断", VoiceCommandRouter.Command.ENABLE_ENVIRONMENT_AGENT);
+        assertRoute("打开环境诊断", VoiceCommandRouter.Command.ENABLE_ENVIRONMENT_AGENT);
+        assertRoute("环境诊断", VoiceCommandRouter.Command.ENABLE_ENVIRONMENT_AGENT);
+        assertRoute("环境诊断技能", VoiceCommandRouter.Command.ENABLE_ENVIRONMENT_AGENT);
+        assertRoute("启用环境诊断技能", VoiceCommandRouter.Command.ENABLE_ENVIRONMENT_AGENT);
+        assertRoute("停用环境诊断", VoiceCommandRouter.Command.DISABLE_ENVIRONMENT_AGENT);
+        assertRoute("关闭环境诊断", VoiceCommandRouter.Command.DISABLE_ENVIRONMENT_AGENT);
+        assertRoute("停用环境诊断技能", VoiceCommandRouter.Command.DISABLE_ENVIRONMENT_AGENT);
+        assertRoute("禁用环境诊断", VoiceCommandRouter.Command.DISABLE_ENVIRONMENT_AGENT);
+        assertRoute("关闭环境诊断Agent", VoiceCommandRouter.Command.DISABLE_ENVIRONMENT_AGENT);
+        assertRoute("停用环境技能", VoiceCommandRouter.Command.DISABLE_ENVIRONMENT_AGENT);
         assertRoute("任务中心", VoiceCommandRouter.Command.TASK_CENTER);
         assertRoute("维修任务", VoiceCommandRouter.Command.TASK_CENTER);
         assertRoute("任务", VoiceCommandRouter.Command.TASK_CENTER);
         assertRoute("工单", VoiceCommandRouter.Command.WORK_ORDER);
+        assertRoute("实训室温湿度异常排查", VoiceCommandRouter.Command.NONE);
+        assertRoute("霍尼韦尔工单", VoiceCommandRouter.Command.NONE);
+        assertRoute("实训室工单", VoiceCommandRouter.Command.NONE);
         assertRoute("安全", VoiceCommandRouter.Command.SAFETY);
         assertRoute("报告", VoiceCommandRouter.Command.REPORT);
         assertRoute("培训", VoiceCommandRouter.Command.TRAINING);
         assertRoute("语音帮助", VoiceCommandRouter.Command.HELP);
         assertRoute("打开语音帮助", VoiceCommandRouter.Command.HELP);
+        assertRoute("帮助", VoiceCommandRouter.Command.HELP);
         assertRoute("打开眼镜使用教学", VoiceCommandRouter.Command.GLASSES_TUTORIAL);
+        assertRoute("眼镜教学", VoiceCommandRouter.Command.GLASSES_TUTORIAL);
+        assertRoute("眼镜教程", VoiceCommandRouter.Command.GLASSES_TUTORIAL);
         assertRoute("怎么操作", VoiceCommandRouter.Command.HELP);
         assertRoute("返回", VoiceCommandRouter.Command.BACK);
         assertRoute("返回上一页", VoiceCommandRouter.Command.BACK);
@@ -86,6 +112,18 @@ public final class VoiceCommandRouterTest {
         assertRoute("开始维修指导", VoiceCommandRouter.Command.GUIDANCE);
         assertRoute("开始维修", VoiceCommandRouter.Command.GUIDANCE);
         assertRoute("维修指导", VoiceCommandRouter.Command.NONE);
+        assertRoute("现场温湿度异常", VoiceCommandRouter.Command.NONE);
+    }
+
+    @Test
+    public void keepsNaturalLabDescriptionsOutOfPublicControlRouting() {
+        assertRoute("实训室平台温湿度没有数据其他数据正常",
+                VoiceCommandRouter.Command.NONE);
+        assertRoute("实验室平台温湿度无数据其余数据正常",
+                VoiceCommandRouter.Command.NONE);
+        assertRoute("平台报警看看怎么回事", VoiceCommandRouter.Command.NONE);
+        assertRoute("这个是平台页面现场出现报警看看怎么回事",
+                VoiceCommandRouter.Command.NONE);
     }
 
     @Test
@@ -95,12 +133,27 @@ public final class VoiceCommandRouterTest {
         assertRoute("小叮当拍照", VoiceCommandRouter.Command.PHOTO);
         assertRoute("小叮当，仅发送图片", VoiceCommandRouter.Command.IMAGE_ONLY);
         assertRoute("小叮当，打开语音帮助", VoiceCommandRouter.Command.HELP);
+        assertRoute("小叮当，打开帮助", VoiceCommandRouter.Command.HELP);
+        assertRoute("小叮当，语音命令", VoiceCommandRouter.Command.HELP);
+        assertRoute("小叮当，使用帮助", VoiceCommandRouter.Command.HELP);
+        assertRoute("小叮当，打开眼镜教学", VoiceCommandRouter.Command.GLASSES_TUTORIAL);
+        assertRoute("小叮当，启用环境诊断", VoiceCommandRouter.Command.ENABLE_ENVIRONMENT_AGENT);
+        assertRoute("小叮当，停用环境诊断", VoiceCommandRouter.Command.DISABLE_ENVIRONMENT_AGENT);
+        assertRoute("小叮当，打开AI运维技能", VoiceCommandRouter.Command.AGENT_CENTER);
         assertRoute("小叮当，回首页", VoiceCommandRouter.Command.HOME);
         assertRoute("小叮当，返回首页", VoiceCommandRouter.Command.HOME);
         assertRoute("小叮当，请返回首页", VoiceCommandRouter.Command.HOME);
         assertRoute("小叮，开始诊断", VoiceCommandRouter.Command.DIAGNOSIS);
         assertRoute("小丁，呼叫专家", VoiceCommandRouter.Command.EXPERT);
         assertRoute("平台页面报错五零二，需要排查原因", VoiceCommandRouter.Command.NONE);
+    }
+
+    @Test
+    public void keepsOrdinaryQuestionsOutOfGlobalNavigationRouting() {
+        assertRoute("今天是星期几", VoiceCommandRouter.Command.NONE);
+        assertRoute("小叮当，今天是星期几", VoiceCommandRouter.Command.NONE);
+        assertRoute("你是什么模型", VoiceCommandRouter.Command.NONE);
+        assertRoute("为什么刚才返回首页了", VoiceCommandRouter.Command.NONE);
     }
 
     @Test
@@ -133,6 +186,7 @@ public final class VoiceCommandRouterTest {
         assertTrue(router.isFastControlCommand("返回首页"));
         assertTrue(router.isFastControlCommand("小叮当，呼叫专家"));
         assertTrue(router.isFastControlCommand("打开 AI 能力中心"));
+        assertTrue(router.isFastControlCommand("小叮当，启用环境诊断"));
         assertFalse(router.isFastControlCommand("返回"));
         assertFalse(router.isFastControlCommand("服务器无法启动"));
     }

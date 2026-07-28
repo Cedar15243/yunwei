@@ -29,6 +29,8 @@ public final class HudWebPresentation {
         void retryAi();
         void openVoiceGuide();
         void openGlassesTutorial();
+        void previousTutorialPage();
+        void nextTutorialPage();
         void openVoiceSettings();
         void hangUp();
         void goBack();
@@ -51,6 +53,7 @@ public final class HudWebPresentation {
     private int pendingConversationPageCount = 1;
     private String pendingTaskEvidenceText = "";
     private String pendingTaskImagePreview = "";
+    private String pendingTaskDetectionMarkers = "[]";
     private String pendingTaskVoiceState = "idle";
     private String pendingTaskVoiceLabel = "";
     private int pendingResponsePage = 1;
@@ -64,16 +67,21 @@ public final class HudWebPresentation {
     private String pendingErrorAction = "retryAi";
     private String pendingErrorActionLabel = "语音重试";
     private String pendingAbilityTitle = "";
+    private String pendingGuideContext = "home";
+    private int pendingTutorialPage = 1;
     private String pendingAbilityDescription = "";
     private String pendingAbilityCommand = "";
     private String pendingOperationTag = "";
     private String pendingOperationTitle = "";
     private String pendingOperationDescription = "";
     private String[] pendingOperationItems = new String[0];
+    private String[] pendingOperationItemActions = new String[0];
     private String pendingOperationPrimaryAction = "";
     private String pendingOperationPrimaryLabel = "";
     private String pendingOperationSecondaryAction = "";
     private String pendingOperationSecondaryLabel = "";
+    private int pendingOperationPage = 1;
+    private int pendingOperationPageCount = 1;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     public HudWebPresentation(WebView webView, Actions actions) {
@@ -168,6 +176,12 @@ public final class HudWebPresentation {
                 + quote(pendingTaskImagePreview) + ");");
     }
 
+    public void setTaskDetectionMarkers(String markersJson) {
+        pendingTaskDetectionMarkers = safeMarkersJson(markersJson);
+        execute("window.HudPresentation.setTaskDetectionMarkers("
+                + quote(pendingTaskDetectionMarkers) + ");");
+    }
+
     public void setTaskVoiceState(String state, String label) {
         pendingTaskVoiceState = "listening".equals(state) || "thinking".equals(state) ? state : "idle";
         pendingTaskVoiceLabel = safeText(label);
@@ -229,21 +243,53 @@ public final class HudWebPresentation {
                 + quote(pendingAbilityDescription) + "," + quote(pendingAbilityCommand) + ");");
     }
 
+    public void setVoiceGuideContext(String context) {
+        pendingGuideContext = safeGuideContext(context);
+        execute("window.HudPresentation.ensureGuideContent();");
+        execute("window.HudPresentation.setVoiceGuideContext(" + quote(pendingGuideContext) + ");");
+    }
+
+    public void setTutorialPage(int page) {
+        pendingTutorialPage = safeTutorialPage(page);
+        execute("window.HudPresentation.ensureGuideContent();");
+        execute("window.HudPresentation.setTutorialPage(" + pendingTutorialPage + ");");
+    }
+
+    public void changeTutorialPage(boolean next) {
+        setTutorialPage(pendingTutorialPage + (next ? 1 : -1));
+    }
+
     public void setOperationDetail(String tag, String title, String description, String[] items,
             String primaryAction, String primaryLabel, String secondaryAction, String secondaryLabel) {
+        setOperationDetail(tag, title, description, items, new String[0], primaryAction, primaryLabel,
+                secondaryAction, secondaryLabel);
+    }
+
+    public void setOperationDetail(String tag, String title, String description, String[] items,
+            String[] itemActions, String primaryAction, String primaryLabel,
+            String secondaryAction, String secondaryLabel) {
         pendingOperationTag = safeText(tag);
         pendingOperationTitle = safeText(title);
         pendingOperationDescription = safeText(description);
         pendingOperationItems = items == null ? new String[0] : items.clone();
+        pendingOperationItemActions = itemActions == null ? new String[0] : itemActions.clone();
         pendingOperationPrimaryAction = safeText(primaryAction);
         pendingOperationPrimaryLabel = safeText(primaryLabel);
         pendingOperationSecondaryAction = safeText(secondaryAction);
         pendingOperationSecondaryLabel = safeText(secondaryLabel);
         execute("window.HudPresentation.setOperationDetail(" + quote(pendingOperationTag) + ","
                 + quote(pendingOperationTitle) + "," + quote(pendingOperationDescription) + ","
-                + quoteArray(pendingOperationItems) + "," + quote(pendingOperationPrimaryAction) + ","
+                + quoteArray(pendingOperationItems) + "," + quoteArray(pendingOperationItemActions) + ","
+                + quote(pendingOperationPrimaryAction) + ","
                 + quote(pendingOperationPrimaryLabel) + "," + quote(pendingOperationSecondaryAction) + ","
                 + quote(pendingOperationSecondaryLabel) + ");");
+    }
+
+    public void setOperationPage(int page, int pageCount) {
+        pendingOperationPage = Math.max(1, page);
+        pendingOperationPageCount = Math.max(1, pageCount);
+        execute("window.HudPresentation.setOperationPage(" + pendingOperationPage + ","
+                + pendingOperationPageCount + ");");
     }
 
     public void destroy() {
@@ -260,6 +306,7 @@ public final class HudWebPresentation {
         setResponse(pendingResponseTitle, pendingResponseDetail);
         setConversationPage(pendingConversation, pendingConversationPage, pendingConversationPageCount);
         setTaskEvidence(pendingTaskEvidenceText, pendingTaskImagePreview);
+        setTaskDetectionMarkers(pendingTaskDetectionMarkers);
         setTaskVoiceState(pendingTaskVoiceState, pendingTaskVoiceLabel);
         setResponsePage(pendingResponseTitle, pendingResponseDetail, pendingResponsePage,
                 pendingResponsePageCount, pendingConfidence);
@@ -269,9 +316,13 @@ public final class HudWebPresentation {
         execute("window.HudPresentation.setErrorAction(" + quote(pendingErrorAction) + ","
                 + quote(pendingErrorActionLabel) + ");");
         setAbilityDetail(pendingAbilityTitle, pendingAbilityDescription, pendingAbilityCommand);
+        setVoiceGuideContext(pendingGuideContext);
+        setTutorialPage(pendingTutorialPage);
         setOperationDetail(pendingOperationTag, pendingOperationTitle, pendingOperationDescription,
-                pendingOperationItems, pendingOperationPrimaryAction, pendingOperationPrimaryLabel,
+                pendingOperationItems, pendingOperationItemActions,
+                pendingOperationPrimaryAction, pendingOperationPrimaryLabel,
                 pendingOperationSecondaryAction, pendingOperationSecondaryLabel);
+        setOperationPage(pendingOperationPage, pendingOperationPageCount);
     }
 
     private void execute(String script) {
@@ -297,6 +348,23 @@ public final class HudWebPresentation {
 
     private static String safeText(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static String safeMarkersJson(String value) {
+        String safe = safeText(value);
+        return safe.startsWith("[") && safe.endsWith("]") ? safe : "[]";
+    }
+
+    private static String safeGuideContext(String value) {
+        if ("task".equals(value) || "inspection".equals(value) || "capabilities".equals(value)
+                || "expert".equals(value)) {
+            return value;
+        }
+        return "home";
+    }
+
+    private static int safeTutorialPage(int page) {
+        return Math.max(1, Math.min(4, page));
     }
 
     private static String quote(String value) {
@@ -342,6 +410,8 @@ public final class HudWebPresentation {
         @JavascriptInterface public void retryAi(String ignored) { actions.retryAi(); }
         @JavascriptInterface public void openVoiceGuide(String ignored) { actions.openVoiceGuide(); }
         @JavascriptInterface public void openGlassesTutorial(String ignored) { actions.openGlassesTutorial(); }
+        @JavascriptInterface public void previousTutorialPage(String ignored) { actions.previousTutorialPage(); }
+        @JavascriptInterface public void nextTutorialPage(String ignored) { actions.nextTutorialPage(); }
         @JavascriptInterface public void openVoiceSettings(String ignored) { actions.openVoiceSettings(); }
         @JavascriptInterface public void hangUp(String ignored) { actions.hangUp(); }
         @JavascriptInterface public void goBack(String ignored) { actions.goBack(); }

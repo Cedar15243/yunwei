@@ -10,6 +10,7 @@ import java.util.Set;
 public final class AIAbilityConfig {
     public enum Status {
         ONLINE("已上线"),
+        LOCAL("本机可用"),
         PREVIEW("能力预览");
 
         private final String label;
@@ -88,22 +89,22 @@ public final class AIAbilityConfig {
                 "照片与语音联合取证", "拍摄全景、近景或验证照片，并与本轮语音描述一起关联到当前维修任务。", "可以说：“小叮当，现场拍照”"));
         configs.add(new AIAbilityConfig(
                 "video_evidence", "短视频取证", "录", Status.ONLINE, Route.PLACEHOLDER,
-                "最长 15 秒现场记录", "录制现场短视频并关联当前任务；当前只保存证据，不伪装成视频理解。", "可以说：“小叮当，短视频取证”"));
+                "最长 15 秒现场记录", "录制设备运行、异响或操作过程，并关联当前任务供复核。", "可以说：“小叮当，短视频取证”"));
         configs.add(new AIAbilityConfig(
-                "inspection", "巡检任务", "巡", Status.PREVIEW, Route.PLACEHOLDER,
-                "检查清单与本地进度", "记录本机巡检清单和当前进度，不承诺自动识别或生成云端报告。", "可以说：“小叮当，巡检任务”"));
+                "inspection", "巡检任务", "巡", Status.LOCAL, Route.PLACEHOLDER,
+                "逐点拍照与 AI 识别", "逐点拍照、AI 识别、前后值比较和人工确认，并生成本机巡检记录。", "可以说：“小叮当，巡检任务”"));
         configs.add(new AIAbilityConfig(
-                "tasks", "维修任务", "任", Status.PREVIEW, Route.PLACEHOLDER,
+                "tasks", "维修任务", "任", Status.LOCAL, Route.PLACEHOLDER,
                 "当前维修步骤与记录", "展示本机当前维修任务、证据和步骤进度。", "可以说：“小叮当，维修任务”"));
         configs.add(new AIAbilityConfig(
-                "knowledge", "华方知识库", "知", Status.PREVIEW, Route.PLACEHOLDER,
-                "SOP、手册与技术资料", "华方设备手册、SOP 与技术资料的只读目录预览。", "可以说：“小叮当，华方知识库”"));
+                "knowledge", "华方知识库", "知", Status.LOCAL, Route.PLACEHOLDER,
+                "SOP、手册与技术资料", "查看本机资料与企业知识服务连接状态，并按系统浏览目录。", "可以说：“小叮当，华方知识库”"));
         configs.add(new AIAbilityConfig(
-                "device_brain", "设备记忆", "忆", Status.PREVIEW, Route.PLACEHOLDER,
-                "设备事实、故障与经验", "汇总当前任务确认的设备信息、故障现象和维修证据。", "可以说：“小叮当，设备记忆”"));
+                "device_brain", "设备记忆", "忆", Status.LOCAL, Route.PLACEHOLDER,
+                "设备事实、故障与经验", "查看本机设备目录中的品牌、型号、数量、巡检与维修记录。", "可以说：“小叮当，设备记忆”"));
         configs.add(new AIAbilityConfig(
-                "agent_center", "AI Agent 中心", "A", Status.PREVIEW, Route.AGENT_CENTER,
-                "运维智能体与 Skill 预留", "展示未来智能体、职责范围和领域 Skill 的扩展结构；当前不执行设备操作。", "可以说：“小叮当，AI Agent 中心”"));
+                "agent_center", "AI运维技能", "技", Status.LOCAL, Route.AGENT_CENTER,
+                "现场运维技能包", "按系统查看技能用途、权限范围与本机启用状态。", "可以说：“小叮当，AI运维技能”"));
         ensureUniqueIds(configs);
         return Collections.unmodifiableList(configs);
     }

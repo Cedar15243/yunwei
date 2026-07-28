@@ -24,7 +24,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -35,6 +34,8 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
     private static final String ABILITY_ID = "e867a88f2";
     private static final int SAMPLE_RATE_HZ = 16000;
     private static final int FRAME_BYTES = 1280;
+    private static final int AUDIO_DIAGNOSTIC_FRAME_INTERVAL = 125;
+    private static final String WAKE_THRESHOLD_PARAMETER = "0 0:850";
 
     private final Context context;
     private final String appId;
@@ -160,7 +161,7 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                     return;
                 }
                 AiRequest.Builder parameters = AiRequest.builder();
-                parameters.param("wdec_param_nCmThreshold", "0 0:1000");
+                parameters.param("wdec_param_nCmThreshold", wakeThresholdParameter());
                 parameters.param("gramLoad", true);
                 AiHelper.getInst().registerListener(ABILITY_ID, new AiListener() {
                     @Override
@@ -229,10 +230,17 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
         int bufferSize = Math.max(FRAME_BYTES, minimum);
         final AudioRecord currentRecorder = new AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE_HZ,
+                MediaRecorder.AudioSource.MIC, SAMPLE_RATE_HZ,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
+        if (currentRecorder.getState() != AudioRecord.STATE_INITIALIZED) {
+            currentRecorder.release();
+            throw new IllegalStateException("Offline wake AudioRecord failed to initialize");
+        }
         recorder = currentRecorder;
         currentRecorder.startRecording();
+        Log.i(TAG, "Offline wake recorder started source=MIC sampleRate=" + SAMPLE_RATE_HZ
+                + " bufferBytes=" + bufferSize
+                + " sessionId=" + currentRecorder.getAudioSessionId());
         audioLoopRunning.set(true);
         audioThread = new Thread(new Runnable() {
             @Override
@@ -240,11 +248,21 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                 AiRequest.Builder audioRequestBuilder = AiRequest.builder();
                 AiStatus status = AiStatus.BEGIN;
                 byte[] pcm = new byte[FRAME_BYTES];
+                int diagnosticFrames = 0;
                 try {
                     while (audioLoopRunning.get()) {
                         int read = currentRecorder.read(pcm, 0, pcm.length);
                         if (read <= 0) {
+                            Log.w(TAG, "Offline wake recorder read code=" + read);
                             continue;
+                        }
+                        diagnosticFrames++;
+                        if (diagnosticFrames == 1
+                                || diagnosticFrames % AUDIO_DIAGNOSTIC_FRAME_INTERVAL == 0) {
+                            Log.i(TAG, "Offline wake audio frames=" + diagnosticFrames
+                                    + " bytes=" + read
+                                    + " rmsDbfs=" + pcmRmsDbfs(pcm, read)
+                                    + " peak=" + pcmPeak(pcm, read));
                         }
                         writeAudio(audioRequestBuilder, pcm, read, status);
                         status = AiStatus.CONTINUE;
@@ -261,6 +279,41 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
             }
         }, "dingdang-aikit-wake");
         audioThread.start();
+    }
+
+    static int pcmRmsDbfs(byte[] pcm, int length) {
+        if (pcm == null || length < 2) {
+            return -120;
+        }
+        int sampleBytes = Math.min(length, pcm.length) & ~1;
+        double sumSquares = 0.0d;
+        int samples = sampleBytes / 2;
+        for (int offset = 0; offset < sampleBytes; offset += 2) {
+            int sample = (short) ((pcm[offset] & 0xff) | (pcm[offset + 1] << 8));
+            sumSquares += (double) sample * sample;
+        }
+        if (samples == 0 || sumSquares == 0.0d) {
+            return -120;
+        }
+        double rms = Math.sqrt(sumSquares / samples);
+        return (int) Math.round(20.0d * Math.log10(rms / 32768.0d));
+    }
+
+    static String wakeThresholdParameter() {
+        return WAKE_THRESHOLD_PARAMETER;
+    }
+
+    static int pcmPeak(byte[] pcm, int length) {
+        if (pcm == null || length < 2) {
+            return 0;
+        }
+        int sampleBytes = Math.min(length, pcm.length) & ~1;
+        int peak = 0;
+        for (int offset = 0; offset < sampleBytes; offset += 2) {
+            int sample = Math.abs((short) ((pcm[offset] & 0xff) | (pcm[offset + 1] << 8)));
+            peak = Math.max(peak, sample);
+        }
+        return peak;
     }
 
     private void writeAudio(AiRequest.Builder audioRequestBuilder,

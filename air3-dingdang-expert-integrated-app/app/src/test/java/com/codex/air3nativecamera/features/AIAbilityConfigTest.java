@@ -37,7 +37,7 @@ public final class AIAbilityConfigTest {
         String[] expected = {
                 "AI 故障诊断", "专家协同", "现场拍照",
                 "短视频取证", "巡检任务", "维修任务",
-                "华方知识库", "设备记忆", "AI Agent 中心"
+                "华方知识库", "设备记忆", "AI运维技能"
         };
         List<AIAbilityConfig> configs = AIAbilityConfig.defaultConfigs();
 
@@ -48,24 +48,26 @@ public final class AIAbilityConfigTest {
     }
 
     @Test
-    public void onlyExistingFlowsAreMarkedOnline() {
+    public void remoteAndMediaFlowsAreOnlineWhileLocalWorkflowsAreMarkedAvailable() {
         for (AIAbilityConfig config : AIAbilityConfig.defaultConfigs()) {
             if ("diagnosis".equals(config.id()) || "perception".equals(config.id())
                     || "video_evidence".equals(config.id())
                     || "expert_collab".equals(config.id())) {
                 assertEquals(AIAbilityConfig.Status.ONLINE, config.status());
             } else {
-                assertEquals(AIAbilityConfig.Status.PREVIEW, config.status());
+                assertEquals(AIAbilityConfig.Status.LOCAL, config.status());
             }
+            assertFalse(config.pageDescription().contains("不承诺"));
+            assertFalse(config.pageDescription().contains("开发中"));
         }
     }
 
     @Test
-    public void futureAbilitiesUsePlaceholderRoutes() {
+    public void localOperationDetailsUseTheirExistingRoutes() {
         for (AIAbilityConfig config : AIAbilityConfig.defaultConfigs()) {
             if ("agent_center".equals(config.id())) {
                 assertEquals(AIAbilityConfig.Route.AGENT_CENTER, config.route());
-            } else if (config.status() == AIAbilityConfig.Status.PREVIEW) {
+            } else if (config.status() == AIAbilityConfig.Status.LOCAL) {
                 assertEquals(AIAbilityConfig.Route.PLACEHOLDER, config.route());
             }
         }

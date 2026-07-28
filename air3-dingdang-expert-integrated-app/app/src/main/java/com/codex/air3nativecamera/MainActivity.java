@@ -64,8 +64,16 @@ import com.codex.air3nativecamera.features.AISkillConfig;
 import com.codex.air3nativecamera.features.operations.InspectionChecklist;
 import com.codex.air3nativecamera.features.operations.OperationDetail;
 import com.codex.air3nativecamera.features.operations.OperationDetailFactory;
+import com.codex.air3nativecamera.features.inspection.InspectionAiBridge;
+import com.codex.air3nativecamera.features.inspection.InspectionCatalog;
+import com.codex.air3nativecamera.features.inspection.InspectionRun;
+import com.codex.air3nativecamera.features.inspection.InspectionTaskDefinition;
 import com.codex.air3nativecamera.mode.IntegratedModeController;
 import com.codex.air3nativecamera.task.MaintenanceTask;
+import com.codex.air3nativecamera.task.TaskSession;
+import com.codex.air3nativecamera.task.TaskSessionManager;
+import com.codex.air3nativecamera.skills.HoneywellTempHumiditySkill;
+import com.codex.air3nativecamera.skills.SceneSkillAiBridge;
 import com.codex.air3nativecamera.ui.hud.HudWebPresentation;
 import com.codex.air3nativecamera.voice.LegacyVoiceCommandRouter;
 import com.codex.air3nativecamera.voice.VoiceCommandRouter;
@@ -86,6 +94,7 @@ import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -99,6 +108,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Locale;
@@ -183,19 +193,22 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final int PREVIEW_MAX_IMAGE_EDGE = 480;
     private static final long VOICE_RECORDING_MS = 30000L;
     private static final long SCENE_VIDEO_MAX_DURATION_MS = 15000L;
+    private static final long MEDIA_WAKE_REARM_COOLDOWN_MS = 4000L;
     private static final int SCENE_VIDEO_BIT_RATE = 2_000_000;
     private static final int SCENE_VIDEO_FRAME_RATE = 30;
     private static final long VOICE_AUTO_WAKE_RECORDING_MS = 10000L;
     private static final long VOICE_AUTO_STOP_MIN_RECORDING_MS = 1800L;
     private static final long VOICE_AUTO_STOP_SILENCE_MS = 1500L;
     private static final long VOICE_AUTO_STOP_TRANSCRIPT_STABLE_MS = 1800L;
-    private static final long VOICE_AUTO_STOP_COMMAND_STABLE_MS = 650L;
+    private static final long VOICE_AUTO_STOP_COMMAND_STABLE_MS = 400L;
     private static final long VOICE_RECORD_THREAD_JOIN_MS = 700L;
     private static final long VOICE_ASR_FINISH_TIMEOUT_MS = 8000L;
     private static final int HUD_DIAGNOSIS_PAGE_SIZE = 130;
-    private static final int HUD_CONVERSATION_PAGE_SIZE = 180;
+    private static final int HUD_CONVERSATION_PAGE_SIZE = 112;
+    private static final int HUD_OPERATION_PAGE_SIZE = 4;
     private static final long CHAT_STREAM_RENDER_INTERVAL_MS = 260L;
     private static final long GPT_REQUEST_WATCHDOG_MS = 240000L;
+    private static final long GPT_STREAM_TERMINAL_TIMEOUT_MS = 90000L;
     private static final long WAKE_PREFIX_GRACE_MS = 4000L;
     private static final long FOREGROUND_WAKE_RETRY_DELAY_MS = 900L;
     private static final long VOICE_EVENT_DESCRIPTION_TIMEOUT_MS = 30000L;
@@ -206,8 +219,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final int VOICE_WAV_BITS_PER_SAMPLE = 16;
     private static final int VOICE_WAV_HEADER_BYTES = 44;
     private static final String CHAT_PROJECT_PREFS = "dingdang_chat_projects";
+    private static final String AGENT_AUTHORIZATIONS_JSON = "agent_authorizations_json";
     private static final String CHAT_PROJECTS_JSON = "projects_json";
     private static final String CURRENT_PROJECT_INDEX = "current_project_index";
+    private static final String TASK_SESSIONS_JSON = "task_sessions_json";
+    private static final String INSPECTION_RUN_JSON = "inspection_run_json";
     private static final String HOME_WELCOME_MESSAGE = "说“小叮当，拍照”记录现场，再直接说明问题。我会结合画面和语音给出排查建议。";
     private static final String AI_IDENTITY_RESPONSE = "我是华方智联研发的" + APP_LABEL
             + "模型，专注现场运维场景。你可以通过眼镜拍摄现场画面，再用语音说明问题，我会结合图片和问题给出简洁、可执行的排查建议。";
@@ -286,6 +302,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private final List<AISkillConfig> aiSkillConfigs = AISkillConfig.defaultConfigs();
     private final List<AIAgentConfig> aiAgentConfigs = AIAgentConfig.defaultConfigs();
     private final InspectionChecklist inspectionChecklist = InspectionChecklist.defaultChecklist();
+    private final InspectionCatalog inspectionCatalog = InspectionCatalog.defaultCatalog();
+    private InspectionRun activeInspectionRun;
+    private boolean inspectionCapturePending;
+    private boolean inspectionAiInFlight;
+    private long inspectionRequestGeneration;
     private final OperationDetailFactory operationDetailFactory = OperationDetailFactory.defaultFactory();
     private final LegacyVoiceCommandRouter legacyVoiceCommandRouter = new LegacyVoiceCommandRouter();
     private final VoiceCommandRouter voiceCommandRouter = new VoiceCommandRouter();
@@ -304,6 +325,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private boolean hudCapabilityVisible;
     private boolean hudVoiceGuideVisible;
     private boolean hudGlassesGuideVisible;
+    private String hudOperationAbilityId = "";
+    private int hudOperationPageIndex;
     // Persisted messages are records, not an instruction to reopen a task on the next launch.
     private boolean hudTaskWorkspaceActive;
     private int hudTaskMessageStartIndex;
@@ -338,17 +361,21 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private CameraDevice cameraDevice;
     private CameraCaptureSession captureSession;
     private ImageReader imageReader;
+    private volatile long cameraDeviceGeneration;
+    private volatile long cameraSessionGeneration;
     private Size previewSize;
     private Size captureSize;
     private Size videoSize;
     private String cameraId;
     private int sensorOrientation;
+    private int cameraLensFacing = CameraCharacteristics.LENS_FACING_BACK;
     private boolean captureInFlight;
     private MediaRecorder sceneVideoRecorder;
     private File sceneVideoFile;
     private boolean sceneVideoRecording;
     private boolean sceneVideoStarting;
     private boolean pendingSceneVideoCapture;
+    private String sceneVideoReturnSurface = "standby";
     private Runnable sceneVideoStopRunnable;
 
     private AudioRecord voiceRecorder;
@@ -360,8 +387,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private VoiceStreamState voiceStreamState = VoiceStreamState.IDLE;
     private HudTaskProgress hudTaskProgress = HudTaskProgress.NONE;
     private int hudGuidanceStep = 1;
-    private final Map<String, MaintenanceTask> maintenanceTasks = new HashMap<>();
+    private TaskSessionManager taskSessionManager = new TaskSessionManager();
+    private final HoneywellTempHumiditySkill honeywellTempHumiditySkill = new HoneywellTempHumiditySkill();
     private MaintenanceTask.Snapshot taskSnapshotBeforeExpert;
+    private String taskIdBeforeExpert = "";
     private RealtimeAsrClient realtimeAsrClient;
     private int realtimeAsrPartialCount;
     private boolean realtimeAsrFinished;
@@ -378,6 +407,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private VoiceSessionPurpose voiceSessionPurpose = VoiceSessionPurpose.NONE;
     private boolean wakeFeedbackDelivered;
     private long wakePrefixGraceUntilMs;
+    private long offlineWakeSuppressedUntilMs;
     private WakeWordEngine wakeWordEngine;
 
     private byte[] composerImageBytes;
@@ -436,7 +466,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 GeneratedConfig.IFLYTEK_APP_ID,
                 GeneratedConfig.IFLYTEK_API_KEY,
                 GeneratedConfig.IFLYTEK_API_SECRET);
+        restoreTaskSessions();
+        restoreInspectionRun();
         restoreChatProjects();
+        restoreAgentAuthorizations();
+        int removedIncompleteVideos = purgeIncompleteSceneVideos(new File(getFilesDir(), "evidence"));
+        if (removedIncompleteVideos > 0) {
+            Log.i(KEY_LOG_TAG, "Removed incomplete scene videos count=" + removedIncompleteVideos);
+        }
         buildUi();
         modeController = new IntegratedModeController(new IntegratedModeController.Hooks() {
             @Override
@@ -696,8 +733,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 return true;
             }
             if (screenMode == ScreenMode.CHAT) {
-                if (isProjectRailVisible()) {
+                String target = chatBackTarget(isProjectRailVisible(), hudTaskWorkspaceActive);
+                if ("project-rail".equals(target)) {
                     setProjectRailVisible(false);
+                } else if ("standby".equals(target)) {
+                    returnToHudStandby("语音待命");
                 } else {
                     renderChatScreen();
                 }
@@ -720,6 +760,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return true;
         }
         return false;
+    }
+
+    static String chatBackTarget(boolean projectRailVisible, boolean taskWorkspaceActive) {
+        if (projectRailVisible) {
+            return "project-rail";
+        }
+        return taskWorkspaceActive ? "standby" : "chat";
     }
 
     private boolean isConfirmKey(int keyCode) {
@@ -1229,6 +1276,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             @Override public void openGlassesTutorial() { runHudAction(new Runnable() {
                 @Override public void run() { openHudGlassesTutorial(); }
             }); }
+            @Override public void previousTutorialPage() { runHudAction(new Runnable() {
+                @Override public void run() { hudPresentation.changeTutorialPage(false); }
+            }); }
+            @Override public void nextTutorialPage() { runHudAction(new Runnable() {
+                @Override public void run() { hudPresentation.changeTutorialPage(true); }
+            }); }
             @Override public void openVoiceSettings() { runHudAction(new Runnable() {
                 @Override public void run() { openVoicePermissionSettings(); }
             }); }
@@ -1298,6 +1351,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             hudGlassesGuideVisible = false;
             hudCapabilityVisible = true;
             capabilityDetailVisible = false;
+            hudOperationAbilityId = "";
             hudPresentation.showState("capabilities");
             refreshCollabServiceHealth(false);
             return;
@@ -1314,6 +1368,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private void hideCapabilityCenter() {
         capabilityDetailVisible = false;
         hudCapabilityVisible = false;
+        hudOperationAbilityId = "";
         if (hudPresentation != null) {
             syncHudPresentation();
             return;
@@ -1366,18 +1421,131 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void showHudOperationDetail(String abilityId) {
+        showHudOperationDetail(abilityId, false);
+    }
+
+    private void showHudOperationDetail(String abilityId, boolean preservePage) {
         OperationDetail detail = operationDetailFactory.create(abilityId, currentMaintenanceTask(),
-                inspectionChecklist);
+                inspectionChecklist, activeInspectionRun, taskSessionManager.sessions());
         hudCapabilityVisible = true;
         capabilityDetailVisible = true;
+        hudOperationAbilityId = abilityId == null ? "" : abilityId;
+        int pageCount = operationPageCount(detail.items().size(), HUD_OPERATION_PAGE_SIZE);
+        hudOperationPageIndex = preservePage
+                ? Math.max(0, Math.min(hudOperationPageIndex, pageCount - 1)) : 0;
+        int start = operationPageStart(hudOperationPageIndex, HUD_OPERATION_PAGE_SIZE,
+                detail.items().size());
+        int end = Math.min(detail.items().size(), start + HUD_OPERATION_PAGE_SIZE);
+        List<String> pageItems = detail.items().subList(start, end);
+        List<String> pageActions = detail.itemActions().subList(
+                Math.min(start, detail.itemActions().size()),
+                Math.min(end, detail.itemActions().size()));
         hudPresentation.setOperationDetail(detail.tag(), detail.title(), detail.description(),
-                detail.items().toArray(new String[0]), detail.primaryAction(), detail.primaryLabel(),
+                pageItems.toArray(new String[0]), pageActions.toArray(new String[0]),
+                detail.primaryAction(), detail.primaryLabel(),
                 detail.secondaryAction(), detail.secondaryLabel());
+        hudPresentation.setOperationPage(hudOperationPageIndex + 1, pageCount);
         hudPresentation.showState("operationDetail");
+        scheduleForegroundVoiceListening("operation-detail");
+    }
+
+    static int operationPageCount(int itemCount, int pageSize) {
+        int safeSize = Math.max(1, pageSize);
+        return Math.max(1, (Math.max(0, itemCount) + safeSize - 1) / safeSize);
+    }
+
+    static int operationPageStart(int pageIndex, int pageSize, int itemCount) {
+        int safeSize = Math.max(1, pageSize);
+        int pageCount = operationPageCount(itemCount, safeSize);
+        int safePage = Math.max(0, Math.min(pageIndex, pageCount - 1));
+        return Math.min(Math.max(0, itemCount), safePage * safeSize);
+    }
+
+    private void changeHudOperationPage(boolean next) {
+        OperationDetail detail = operationDetailFactory.create(hudOperationAbilityId,
+                currentMaintenanceTask(), inspectionChecklist, activeInspectionRun,
+                taskSessionManager.sessions());
+        int pageCount = operationPageCount(detail.items().size(), HUD_OPERATION_PAGE_SIZE);
+        int target = hudOperationPageIndex + (next ? 1 : -1);
+        if (target < 0 || target >= pageCount) {
+            setChatStatus(next ? "已是最后一页" : "已是第一页");
+            scheduleForegroundVoiceListening("operation-page-boundary");
+            return;
+        }
+        hudOperationPageIndex = target;
+        showHudOperationDetail(hudOperationAbilityId, true);
+        setChatStatus(next ? "能力内容下一页" : "能力内容上一页");
     }
 
     private void performHudOperation(String action) {
         String value = action == null ? "" : action.trim();
+        if ("operation_next_page".equals(value)) {
+            changeHudOperationPage(true);
+            return;
+        }
+        if ("operation_previous_page".equals(value)) {
+            changeHudOperationPage(false);
+            return;
+        }
+        if (value.startsWith("set_agent:")) {
+            String[] parts = value.split(":", 3);
+            String agentId = parts.length > 1 ? parts[1] : "";
+            boolean enabled = parts.length > 2 && "enabled".equals(parts[2]);
+            boolean validState = parts.length > 2
+                    && ("enabled".equals(parts[2]) || "disabled".equals(parts[2]));
+            if (parts.length == 3 && validState
+                    && operationDetailFactory.setAgentPackageAuthorized(agentId, enabled)) {
+                boolean persisted = persistAgentPackageAuthorizations();
+                showHudOperationDetail("agent_center", true);
+                setChatStatus(persisted
+                        ? (enabled ? "本机技能已启用" : "本机技能已停用")
+                        : "技能状态已更新，但本机保存失败");
+            } else {
+                setChatStatus("未找到对应 Agent 技能包");
+            }
+            return;
+        }
+        if (value.startsWith("start_inspection:")) {
+            String taskId = value.substring("start_inspection:".length());
+            InspectionTaskDefinition definition = inspectionCatalog.find(taskId);
+            if (definition == null) {
+                setChatStatus("巡检任务不存在");
+                return;
+            }
+            taskSessionManager.pauseActive();
+            invalidateInspectionAiRequest();
+            activeInspectionRun = InspectionRun.start(definition);
+            persistChatProjects();
+            showHudOperationDetail("inspection");
+            setChatStatus("巡检已开始：" + definition.title());
+            return;
+        }
+        if ("capture_inspection_photo".equals(value)) {
+            if (activeInspectionRun == null || inspectionAiInFlight) {
+                setChatStatus(inspectionAiInFlight ? "AI 正在识别当前巡检照片" : "请先选择巡检任务");
+                return;
+            }
+            inspectionCapturePending = true;
+            hideCapabilityCenter();
+            enterCameraScreen("inspection-capture");
+            return;
+        }
+        if ("confirm_inspection_normal".equals(value)) {
+            confirmInspectionPoint(InspectionRun.Outcome.NORMAL);
+            return;
+        }
+        if ("confirm_inspection_abnormal".equals(value)) {
+            confirmInspectionPoint(InspectionRun.Outcome.ABNORMAL);
+            return;
+        }
+        if ("cancel_inspection".equals(value)) {
+            activeInspectionRun = null;
+            invalidateInspectionAiRequest();
+            persistChatProjects();
+            showHudOperationDetail("inspection");
+            setChatStatus("已退出巡检任务");
+            return;
+        }
         if (value.startsWith("complete_inspection:")) {
             String itemId = value.substring("complete_inspection:".length());
             if (!inspectionChecklist.complete(itemId)) {
@@ -1396,7 +1564,6 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         if ("capture_video".equals(value)) {
-            hideCapabilityCenter();
             startSceneVideoCapture();
             return;
         }
@@ -1406,8 +1573,34 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         if ("continue_task".equals(value)) {
             hideCapabilityCenter();
+            restoreActiveTaskWorkspace();
             syncHudPresentation();
+            return;
         }
+        if (value.startsWith("resume_task:")) {
+            resumeTaskWorkspace(value.substring("resume_task:".length()));
+        }
+    }
+
+    private void setEnvironmentAgentEnabled(boolean enabled) {
+        if (!operationDetailFactory.setAgentPackageAuthorized("environment_ops", enabled)) {
+            setChatStatus("未找到环境诊断技能");
+            return;
+        }
+        boolean persisted = persistAgentPackageAuthorizations();
+        if (isCapabilityCenterVisible()) {
+            showHudOperationDetail("agent_center", true);
+        }
+        setChatStatus(persisted
+                ? (enabled ? "环境诊断技能已启用" : "环境诊断技能已停用")
+                : "环境诊断状态已更新，但本机保存失败");
+    }
+
+    private boolean persistAgentPackageAuthorizations() {
+        return getSharedPreferences(CHAT_PROJECT_PREFS, MODE_PRIVATE).edit()
+                .putString(AGENT_AUTHORIZATIONS_JSON,
+                        operationDetailFactory.agentAuthorizationJson().toString())
+                .commit();
     }
 
     private void renderCapabilityHub() {
@@ -1453,7 +1646,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
         TextView status = new TextView(this);
         status.setText("● AI 诊断可用    ·    专家协同 " + collabServiceState.label()
-                + "    ·    " + developingAbilityCount() + " 项开发中");
+                + "    ·    " + aiAbilityConfigs.size() + " 项现场能力已加载");
         status.setTextColor(Color.rgb(57, 112, 92));
         status.setTextSize(13);
         LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
@@ -1468,20 +1661,6 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     : null;
             addCapabilityRow(first, second);
         }
-    }
-
-    private int onlineAbilityCount() {
-        int count = 0;
-        for (AIAbilityConfig config : aiAbilityConfigs) {
-            if (config.status() == AIAbilityConfig.Status.ONLINE) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private int developingAbilityCount() {
-        return aiAbilityConfigs.size() - onlineAbilityCount();
     }
 
     private void addCapabilityRow(AIAbilityConfig first, AIAbilityConfig second) {
@@ -1874,18 +2053,30 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         hudPresentation.setCollabStatus(collabServiceState.label());
+        String guideState = activeHudGuideState(hudVoiceGuideVisible, hudGlassesGuideVisible);
+        if (!guideState.isEmpty()) {
+            if ("voiceGuide".equals(guideState)) {
+                hudPresentation.setVoiceGuideContext(voiceGuideContext());
+            }
+            hudPresentation.showState(guideState);
+            return;
+        }
         if (hudCapabilityVisible) {
             return;
         }
         MaintenanceTask task = currentMaintenanceTask();
         String transcript = composerTranscript == null ? "" : composerTranscript.trim();
-        hudPresentation.setTranscript(transcript.length() == 0 ? "正在识别现场描述" : transcript);
+        boolean transcriptListening = recordingVoice
+                || voiceStreamState == VoiceStreamState.LISTENING
+                || voiceStreamState == VoiceStreamState.PARTIAL_READY;
+        hudPresentation.setTranscript(hudTranscriptLabel(transcript, transcriptListening));
         boolean hasImage = composerImageBytes != null;
         boolean waitingForDescription = voiceEventStateMachine.state()
                 == VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION;
         hudPresentation.setInputStatus(photoEvidenceStatus(hasImage, waitingForDescription),
                 recordingVoice ? "正在识别" : "等待语音输入");
         hudPresentation.setTaskEvidence(latestTaskEvidenceText(transcript), latestTaskImagePreview());
+        hudPresentation.setTaskDetectionMarkers(latestTaskDetectionMarkers());
         hudPresentation.setTaskVoiceState(taskVoiceState(), taskVoiceLabel());
 
         if (!hasRecordAudioPermission()) {
@@ -1902,7 +2093,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             int total = task == null ? 3 : task.repairStepCount();
             String action = task == null ? "请确认当前部件状态。" : task.currentRepairStep();
             hudPresentation.setGuidanceStep(step, total, action);
-            hudPresentation.showState("repair");
+            hudPresentation.showState(guidanceHudState());
             return;
         }
         if (hudTaskProgress == HudTaskProgress.COMPLETED) {
@@ -1920,9 +2111,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         // Full-screen listening and analysis belong only to first-turn collection. Once a task
         // reply exists, voice capture, paging and follow-up AI calls stay inside this workspace.
+        int persistedAiTurnCount = task == null ? 0 : task.aiTurnCount();
         if (shouldKeepEstablishedTaskSurface(hudTaskWorkspaceActive, completedResponseCount,
-                hudTaskProgress != HudTaskProgress.NONE)) {
-            if (task != null) {
+                persistedAiTurnCount, hudTaskProgress != HudTaskProgress.NONE)) {
+            if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
+                String draft = chatMessages.get(streamingAssistantIndex).text.trim();
+                hudPresentation.setConversationPage(draft.length() == 0
+                        ? "AI 正在分析本轮照片与描述，请稍候。"
+                        : draft, 1, 1);
+            } else if (task != null) {
                 int pageIndex = task.conversationPageIndex(HUD_CONVERSATION_PAGE_SIZE);
                 hudPresentation.setConversationPage(
                         task.conversationPage(pageIndex, HUD_CONVERSATION_PAGE_SIZE),
@@ -1964,6 +2161,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         hudPresentation.showState("standby");
     }
 
+    static String hudTranscriptLabel(String transcript, boolean listening) {
+        String value = transcript == null ? "" : transcript.trim();
+        if (value.length() > 0) {
+            return value;
+        }
+        return listening ? "正在识别现场描述" : "在线 · 当前任务上下文已保留";
+    }
+
     static boolean shouldShowHudTaskWorkspace(boolean taskWorkspaceActive, int responseIndex,
             int taskMessageStartIndex) {
         return taskWorkspaceActive && responseIndex >= taskMessageStartIndex && responseIndex >= 0;
@@ -1978,9 +2183,44 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return taskWorkspaceActive && (completedResponseCount > 0 || guidedTaskActive);
     }
 
+    static boolean shouldKeepEstablishedTaskSurface(boolean taskWorkspaceActive,
+            int completedResponseCount, int persistedAiTurnCount, boolean guidedTaskActive) {
+        return taskWorkspaceActive
+                && (completedResponseCount > 0 || persistedAiTurnCount > 0 || guidedTaskActive);
+    }
+
+    static int taskMessageStartIndexAfterProjectReset(boolean taskWorkspaceActive,
+            int currentProjectMessageCount) {
+        return taskWorkspaceActive ? Math.max(0, currentProjectMessageCount) : 0;
+    }
+
+    static int taskMessageStartIndexAfterProjectSwitch(boolean resumedTask, int firstUserIndex,
+            int currentProjectMessageCount) {
+        if (!resumedTask) {
+            return Math.max(0, currentProjectMessageCount);
+        }
+        return Math.max(0, firstUserIndex);
+    }
+
+    static boolean shouldClearComposerForProjectTransition(boolean preservePendingInput) {
+        return !preservePendingInput;
+    }
+
+    static boolean shouldLeaveGuidanceAfterAiReply(boolean guidanceActive, String response) {
+        return guidanceActive && response != null && response.trim().length() > 0;
+    }
+
+    static boolean shouldAcceptOfflineWakeDetection(long nowMs, long suppressedUntilMs) {
+        return nowMs >= suppressedUntilMs;
+    }
+
     static boolean shouldStartGuidance(boolean taskWorkspaceActive, int completedResponseCount,
             int repairStepCount) {
         return taskWorkspaceActive && completedResponseCount > 0 && repairStepCount > 0;
+    }
+
+    static String guidanceHudState() {
+        return "conversation";
     }
 
     static String photoEvidenceStatus(boolean hasImage, boolean waitingForDescription) {
@@ -1992,6 +2232,45 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     static String photoDescriptionPrompt() {
         return "如需补充描述，请说“小叮当”唤醒，再说出现场问题；照片将等待 30 秒，超时无输入将自动仅发送图片";
+    }
+
+    static boolean shouldRefreshPhotoDraftAfterCapture(
+            VoiceEventStateMachine.Signal signal) {
+        return signal == VoiceEventStateMachine.Signal.START_DESCRIPTION;
+    }
+
+    static String sceneVideoReturnTarget(boolean capabilityVisible, boolean detailVisible,
+            String operationId, boolean taskWorkspace) {
+        String safeOperationId = operationId == null ? "" : operationId.trim();
+        if (capabilityVisible && detailVisible && safeOperationId.length() > 0) {
+            return "operation:" + safeOperationId;
+        }
+        if (capabilityVisible) {
+            return "capabilities";
+        }
+        if (taskWorkspace) {
+            return "task";
+        }
+        return "standby";
+    }
+
+    static boolean shouldFinishSceneVideoBeforeCameraExit(boolean recording, boolean starting,
+            boolean pending) {
+        return recording || starting || pending;
+    }
+
+    static boolean isCurrentCameraCallback(long expectedGeneration, long currentGeneration,
+            boolean resourceAvailable) {
+        return expectedGeneration == currentGeneration && resourceAvailable;
+    }
+
+    static boolean isCurrentCameraSession(long expectedGeneration, long currentGeneration,
+            boolean deviceMatches) {
+        return expectedGeneration == currentGeneration && deviceMatches;
+    }
+
+    static boolean shouldPostVideoStopToMainThread(boolean alreadyOnMainThread) {
+        return !alreadyOnMainThread;
     }
 
     static boolean shouldDeferPhotoDraftAutoSubmit(boolean recording, boolean listening,
@@ -2070,6 +2349,22 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return "";
     }
 
+    private String latestTaskDetectionMarkers() {
+        if (composerImagePreviewBase64 != null && composerImagePreviewBase64.length() > 0) {
+            return "[]";
+        }
+        int start = Math.max(0, hudTaskMessageStartIndex);
+        for (int i = chatMessages.size() - 1; i >= start; i--) {
+            ChatMessage message = chatMessages.get(i);
+            if ("user".equals(message.role) && "image".equals(message.kind)
+                    && message.detectionMarkersJson != null
+                    && message.detectionMarkersJson.length() > 0) {
+                return message.detectionMarkersJson;
+            }
+        }
+        return "[]";
+    }
+
     private String taskVoiceState() {
         if (recordingVoice || voiceStreamState == VoiceStreamState.LISTENING
                 || voiceStreamState == VoiceStreamState.PARTIAL_READY) {
@@ -2090,12 +2385,23 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return "正在聆听，本轮转写已显示在上方";
         }
         if ("thinking".equals(state)) {
-            return "AI 正在结合本轮照片与文字分析";
+            boolean writing = streamingAssistantIndex >= 0
+                    && streamingAssistantIndex < chatMessages.size()
+                    && chatMessages.get(streamingAssistantIndex).text != null
+                    && chatMessages.get(streamingAssistantIndex).text.trim().length() > 0;
+            return writing ? "AI 正在生成本轮指导" : "AI 正在分析本轮照片与描述";
         }
         return "说“小叮当”继续补充，或轻触呼吸图标";
     }
 
     private void returnToHudStandby(String status) {
+        invalidateInspectionAiRequest();
+        cancelActiveGptRequestForNavigation();
+        cancelVoiceEventDescriptionTimeout();
+        voiceEventStateMachine.reset();
+        pendingVoicePhotoCapture = false;
+        clearComposerImage();
+        taskSessionManager.pauseActive();
         clearHudTaskProgress();
         hudVoiceGuideVisible = false;
         hudGlassesGuideVisible = false;
@@ -2106,6 +2412,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         recoverableAiError = "";
         composerTranscript = "";
         voiceStreamState = VoiceStreamState.IDLE;
+        persistChatProjects();
         if (hudPresentation != null && screenMode == ScreenMode.CHAT) {
             hudPresentation.showState("standby");
             setChatStatus(status);
@@ -2129,7 +2436,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         hudTaskProgress = HudTaskProgress.GUIDANCE;
         hudGuidanceStep = task.currentRepairStepNumber();
         hudPresentation.setGuidanceStep(hudGuidanceStep, task.repairStepCount(), task.currentRepairStep());
-        hudPresentation.showState("repair");
+        hudPresentation.showState(guidanceHudState());
     }
 
     private void clearHudTaskProgress() {
@@ -2154,7 +2461,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private boolean handleHudGuidanceVoiceCommand(VoiceCommandRouter.Command command) {
-        if (hudTaskProgress != HudTaskProgress.GUIDANCE) {
+        MaintenanceTask task = currentMaintenanceTask();
+        boolean persistedGuidanceTask = task != null
+                && task.phase() == MaintenanceTask.Phase.GUIDANCE
+                && task.repairStepCount() > 0;
+        if (!shouldHandleGuidanceVoiceCommand(
+                hudTaskProgress == HudTaskProgress.GUIDANCE, persistedGuidanceTask, command)) {
             return false;
         }
         if (command == VoiceCommandRouter.Command.NEXT_PAGE
@@ -2166,7 +2478,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return true;
         }
         if (command == VoiceCommandRouter.Command.NEXT) {
-            MaintenanceTask task = currentMaintenanceTask();
+            hudTaskProgress = HudTaskProgress.GUIDANCE;
             boolean advanced = task != null ? task.advanceRepairStep() : hudGuidanceStep < 3;
             if (advanced) {
                 if (task == null) {
@@ -2186,19 +2498,23 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 hudPresentation.showState("complete");
                 setChatStatus("本次维修指导完成");
             }
+            if (task != null) {
+                persistChatProjects();
+            }
             return true;
         }
         if (command == VoiceCommandRouter.Command.FINISH) {
             hudTaskProgress = HudTaskProgress.COMPLETED;
-            MaintenanceTask task = currentMaintenanceTask();
             if (task != null) {
                 task.complete();
+                persistChatProjects();
             }
             hudPresentation.showState("complete");
             setChatStatus("本次维修指导完成");
             return true;
         }
         if (command == VoiceCommandRouter.Command.ABNORMAL) {
+            hudTaskProgress = HudTaskProgress.GUIDANCE;
             setChatStatus("请描述当前步骤的异常情况");
             voiceSessionPurpose = VoiceSessionPurpose.COMMAND;
             startToggleVoiceRecording();
@@ -2211,6 +2527,20 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return true;
         }
         return false;
+    }
+
+    static boolean shouldHandleGuidanceVoiceCommand(boolean guidanceSurface,
+            boolean persistedGuidanceTask, VoiceCommandRouter.Command command) {
+        if (guidanceSurface) {
+            return true;
+        }
+        if (!persistedGuidanceTask || command == null) {
+            return false;
+        }
+        return command == VoiceCommandRouter.Command.NEXT
+                || command == VoiceCommandRouter.Command.FINISH
+                || command == VoiceCommandRouter.Command.ABNORMAL
+                || command == VoiceCommandRouter.Command.RETRY;
     }
 
     private void changeDiagnosisPage(boolean next) {
@@ -2293,12 +2623,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             showCommandOverlay();
             return;
         }
+        String guideContext = voiceGuideContext();
         setProjectRailVisible(false);
         hudCapabilityVisible = false;
         capabilityDetailVisible = false;
         hudVoiceGuideVisible = true;
         hudGlassesGuideVisible = false;
+        hudPresentation.setVoiceGuideContext(guideContext);
         hudPresentation.showState("voiceGuide");
+        scheduleForegroundVoiceListening("voice-guide");
     }
 
     private void openHudGlassesTutorial() {
@@ -2311,15 +2644,41 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         capabilityDetailVisible = false;
         hudVoiceGuideVisible = false;
         hudGlassesGuideVisible = true;
+        hudPresentation.setTutorialPage(1);
         hudPresentation.showState("glassesGuide");
+        scheduleForegroundVoiceListening("glasses-guide");
+    }
+
+    private String voiceGuideContext() {
+        return resolveVoiceGuideContext(activeInspectionRun != null,
+                screenMode == ScreenMode.EXPERT, hudTaskWorkspaceActive, hudCapabilityVisible);
+    }
+
+    static String resolveVoiceGuideContext(boolean inspectionActive, boolean expertVisible,
+            boolean taskVisible, boolean capabilityVisible) {
+        if (expertVisible) return "expert";
+        if (taskVisible) return "task";
+        if (capabilityVisible) return inspectionActive ? "inspection" : "capabilities";
+        return "home";
+    }
+
+    static String activeHudGuideState(boolean voiceGuideVisible, boolean glassesGuideVisible) {
+        if (voiceGuideVisible) return "voiceGuide";
+        if (glassesGuideVisible) return "glassesGuide";
+        return "";
     }
 
     private void restartHudTask() {
+        invalidateInspectionAiRequest();
         cancelVoiceEventDescriptionTimeout();
         stopVoiceRecording(false, "restart_task");
         closeCamera();
         stopCameraThread();
         createNewProjectChat();
+        ChatProject project = activeProject();
+        if (project != null) {
+            taskSessionManager.startNew(project.id, "等待现场问题");
+        }
         clearHudTaskProgress();
         hudTaskWorkspaceActive = false;
         hudTaskMessageStartIndex = chatMessages.size();
@@ -2330,21 +2689,80 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private MaintenanceTask currentMaintenanceTask() {
-        ChatProject project = activeProject();
-        return project == null ? null : maintenanceTasks.get(project.id);
+        TaskSession session = taskSessionManager.active();
+        return session == null ? null : session.maintenanceTask();
     }
 
     private MaintenanceTask ensureMaintenanceTask(String problem) {
+        TaskSession activeSession = taskSessionManager.active();
+        if (activeSession != null) {
+            return activeSession.maintenanceTask();
+        }
         ChatProject project = activeProject();
         if (project == null) {
             return null;
         }
-        MaintenanceTask task = maintenanceTasks.get(project.id);
-        if (task == null) {
-            task = MaintenanceTask.start(problem);
-            maintenanceTasks.put(project.id, task);
+        if (taskSessionManager.findProject(project.id) != null || projectHasUserInput(project)) {
+            createNewProjectChat(true);
+            project = activeProject();
+            hudTaskMessageStartIndex = taskMessageStartIndexAfterProjectReset(
+                    hudTaskWorkspaceActive, chatMessages.size());
         }
-        return task;
+        return taskSessionManager.startNew(project.id, problem).maintenanceTask();
+    }
+
+    private void restoreActiveTaskWorkspace() {
+        TaskSession session = taskSessionManager.active();
+        if (session == null) return;
+        hudTaskWorkspaceActive = true;
+        hudTaskMessageStartIndex = firstUserMessageIndex(chatMessages);
+        clearHudTaskProgress();
+        if (session.maintenanceTask().phase() == MaintenanceTask.Phase.GUIDANCE) {
+            hudTaskProgress = HudTaskProgress.GUIDANCE;
+        } else if (session.maintenanceTask().phase() == MaintenanceTask.Phase.COMPLETED) {
+            hudTaskProgress = HudTaskProgress.COMPLETED;
+        }
+    }
+
+    private void resumeTaskWorkspace(String taskId) {
+        TaskSession session = taskSessionManager.find(taskId);
+        if (session == null || !taskSessionManager.resume(taskId)) {
+            setChatStatus("维修任务不存在或已完成");
+            return;
+        }
+        cancelActiveGptRequestForNavigation();
+        saveCurrentProjectFromMessages();
+        for (int i = 0; i < chatProjects.size(); i++) {
+            if (chatProjects.get(i).id.equals(session.projectId())) {
+                currentProjectIndex = i;
+                break;
+            }
+        }
+        loadCurrentProjectMessages();
+        restoreActiveTaskWorkspace();
+        hideCapabilityCenter();
+        persistChatProjects();
+        setChatStatus("已恢复维修任务");
+        syncHudPresentation();
+    }
+
+    private static int firstUserMessageIndex(List<ChatMessage> messages) {
+        for (int i = 0; i < messages.size(); i++) {
+            if ("user".equals(messages.get(i).role)) return i;
+        }
+        return messages.size();
+    }
+
+    private boolean projectHasUserInput(ChatProject project) {
+        if (project == null) {
+            return false;
+        }
+        for (ChatMessage message : project.messages) {
+            if ("user".equals(message.role)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private ChatMessage latestAssistantResponse() {
@@ -2593,11 +3011,63 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         getSharedPreferences(CHAT_PROJECT_PREFS, MODE_PRIVATE)
                 .edit()
                 .putString(CHAT_PROJECTS_JSON, projects.toString())
+                .putString(TASK_SESSIONS_JSON, taskSessionManager.toJson().toString())
+                .putString(INSPECTION_RUN_JSON,
+                        activeInspectionRun == null ? "" : activeInspectionRun.toJson().toString())
                 .putInt(CURRENT_PROJECT_INDEX, currentProjectIndex)
                 .apply();
     }
 
+    private void restoreInspectionRun() {
+        String saved = getSharedPreferences(CHAT_PROJECT_PREFS, MODE_PRIVATE)
+                .getString(INSPECTION_RUN_JSON, "");
+        if (saved == null || saved.trim().length() == 0) {
+            activeInspectionRun = null;
+            return;
+        }
+        try {
+            activeInspectionRun = InspectionRun.fromJson(new JSONObject(saved), inspectionCatalog);
+        } catch (Exception exception) {
+            Log.w(KEY_LOG_TAG, "Unable to restore inspection run", exception);
+            activeInspectionRun = null;
+        }
+    }
+
+    private void restoreTaskSessions() {
+        String saved = getSharedPreferences(CHAT_PROJECT_PREFS, MODE_PRIVATE)
+                .getString(TASK_SESSIONS_JSON, "");
+        if (saved == null || saved.trim().length() == 0) {
+            taskSessionManager = new TaskSessionManager();
+            return;
+        }
+        try {
+            taskSessionManager = TaskSessionManager.fromJson(new JSONObject(saved));
+            // App launch always lands on the home HUD. Resuming old work must be explicit.
+            taskSessionManager.pauseActive();
+        } catch (Exception exception) {
+            Log.w(KEY_LOG_TAG, "Unable to restore task sessions", exception);
+            taskSessionManager = new TaskSessionManager();
+        }
+    }
+
+    private void restoreAgentAuthorizations() {
+        String saved = getSharedPreferences(CHAT_PROJECT_PREFS, MODE_PRIVATE)
+                .getString(AGENT_AUTHORIZATIONS_JSON, "");
+        if (saved == null || saved.trim().length() == 0) return;
+        try {
+            operationDetailFactory.restoreAgentAuthorizations(new JSONObject(saved));
+        } catch (Exception exception) {
+            Log.w(KEY_LOG_TAG, "Unable to restore Agent authorizations", exception);
+        }
+    }
+
     private void createNewProjectChat() {
+        createNewProjectChat(false);
+    }
+
+    private void createNewProjectChat(boolean preservePendingInput) {
+        cancelActiveGptRequestForNavigation();
+        taskSessionManager.pauseActive();
         saveCurrentProjectFromMessages();
         ChatProject project = new ChatProject(
                 "project-" + System.currentTimeMillis(),
@@ -2605,12 +3075,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 System.currentTimeMillis());
         chatProjects.add(0, project);
         currentProjectIndex = 0;
-        clearComposerImage();
+        if (shouldClearComposerForProjectTransition(preservePendingInput)) {
+            clearComposerImage();
+            composerTranscript = "";
+        }
         lastDirectAiContextImage = null;
-        composerTranscript = "";
-        streamingAssistantIndex = -1;
-        gptRequestGeneration++;
-        gptStreamStartedAtMs = 0L;
         liveTranscriptMessageIndex = -1;
         loadCurrentProjectMessages();
         persistChatProjects();
@@ -2622,6 +3091,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (index < 0 || index >= chatProjects.size() || index == currentProjectIndex) {
             return;
         }
+        cancelActiveGptRequestForNavigation();
         saveCurrentProjectFromMessages();
         currentProjectIndex = index;
         clearComposerImage();
@@ -2630,6 +3100,20 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         streamingAssistantIndex = -1;
         liveTranscriptMessageIndex = -1;
         loadCurrentProjectMessages();
+        ChatProject selected = activeProject();
+        boolean resumedTask = selected != null && taskSessionManager.resumeProject(selected.id);
+        hudTaskMessageStartIndex = taskMessageStartIndexAfterProjectSwitch(
+                resumedTask, firstUserMessageIndex(chatMessages), chatMessages.size());
+        hudTaskWorkspaceActive = resumedTask;
+        clearHudTaskProgress();
+        if (resumedTask) {
+            MaintenanceTask task = currentMaintenanceTask();
+            if (task != null && task.phase() == MaintenanceTask.Phase.GUIDANCE) {
+                hudTaskProgress = HudTaskProgress.GUIDANCE;
+            } else if (task != null && task.phase() == MaintenanceTask.Phase.COMPLETED) {
+                hudTaskProgress = HudTaskProgress.COMPLETED;
+            }
+        }
         persistChatProjects();
         scrollChatToBottom = true;
         renderChatScreen();
@@ -2752,22 +3236,35 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void enterExpertMode() {
+        if (modeController == null || modeController.mode() == IntegratedModeController.Mode.EXPERT) {
+            return;
+        }
+        invalidateInspectionAiRequest();
+        cancelActiveGptRequestForNavigation();
+        composerImageGeneration++;
+        sendAfterImageUpload = false;
+        voiceStreamState = VoiceStreamState.IDLE;
+        TaskSession activeSession = taskSessionManager.active();
+        taskIdBeforeExpert = activeSession == null ? "" : activeSession.id();
         MaintenanceTask task = currentMaintenanceTask();
         taskSnapshotBeforeExpert = task == null ? null : task.snapshot();
-        if (modeController != null) {
-            modeController.enterExpert();
-        }
+        modeController.enterExpert();
     }
 
     private void exitExpertMode() {
         if (modeController != null) {
             modeController.exitExpert();
         }
+        if (taskIdBeforeExpert.length() > 0) {
+            taskSessionManager.resume(taskIdBeforeExpert);
+        }
         MaintenanceTask task = currentMaintenanceTask();
         if (task != null && taskSnapshotBeforeExpert != null) {
             task.restore(taskSnapshotBeforeExpert);
         }
         taskSnapshotBeforeExpert = null;
+        taskIdBeforeExpert = "";
+        persistChatProjects();
         syncHudPresentation();
     }
 
@@ -2892,6 +3389,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private void renderChatStreamMessagesOnly() {
         renderMessages();
         scheduleChatScrollToBottom();
+        syncHudPresentation();
     }
 
     private void scheduleChatScrollToTop() {
@@ -3678,7 +4176,18 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void confirmCapturedPhoto(byte[] jpegBytes) {
-        Log.i(KEY_LOG_TAG, "Photo captured bytes=" + (jpegBytes == null ? 0 : jpegBytes.length));
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        if (jpegBytes != null) {
+            BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length, bounds);
+        }
+        Log.i(KEY_LOG_TAG, "Photo captured bytes=" + (jpegBytes == null ? 0 : jpegBytes.length)
+                + " dimensions=" + bounds.outWidth + "x" + bounds.outHeight);
+        if (inspectionCapturePending && activeInspectionRun != null) {
+            inspectionCapturePending = false;
+            handleInspectionPhoto(jpegBytes);
+            return;
+        }
         activateHudTaskWorkspace();
         composerImageGeneration++;
         composerImageBytes = jpegBytes;
@@ -3703,12 +4212,199 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             if (voiceEventStateMachine.state() != VoiceEventStateMachine.State.CAPTURE_REQUESTED) {
                 voiceEventStateMachine.beginPhotoCapture();
             }
-            if (voiceEventStateMachine.onPhotoCaptured() == VoiceEventStateMachine.Signal.START_DESCRIPTION) {
+            VoiceEventStateMachine.Signal signal = voiceEventStateMachine.onPhotoCaptured();
+            if (shouldRefreshPhotoDraftAfterCapture(signal)) {
                 beginVoiceEventDescription();
+                syncHudPresentation();
                 return;
             }
         }
         scheduleForegroundVoiceListening("photo-captured");
+    }
+
+    private void handleInspectionPhoto(final byte[] jpegBytes) {
+        closeCamera();
+        stopCameraThread();
+        renderChatScreen();
+        if (jpegBytes == null || jpegBytes.length == 0 || activeInspectionRun == null) {
+            setChatStatus("巡检照片无效，请重新拍摄");
+            showHudOperationDetail("inspection");
+            return;
+        }
+        File photoFile;
+        try {
+            String reference = activeInspectionRun.definition().id() + "-"
+                    + activeInspectionRun.currentPoint().id() + "-" + System.currentTimeMillis();
+            photoFile = writeEvidenceFile(new File(getFilesDir(), "inspection-evidence"),
+                    reference, jpegBytes);
+        } catch (IOException exception) {
+            Log.w(KEY_LOG_TAG, "Unable to persist inspection photo", exception);
+            setChatStatus("巡检照片保存失败，请重新拍摄");
+            showHudOperationDetail("inspection");
+            return;
+        }
+        activeInspectionRun.attachPhoto(photoFile.getAbsolutePath());
+        final InspectionRun expectedRun = activeInspectionRun;
+        final String expectedPointId = expectedRun.currentPoint().id();
+        final long expectedGeneration = ++inspectionRequestGeneration;
+        inspectionAiInFlight = true;
+        persistChatProjects();
+        showHudOperationDetail("inspection");
+        setChatStatus("AI 正在识别当前巡检点位");
+        if (DIRECT_GPT_ENABLED || backendChatClient == null) {
+            sendInspectionPhotoToAi(jpegBytes, "local-photo", expectedRun,
+                    expectedPointId, expectedGeneration);
+            return;
+        }
+        backendChatClient.uploadImageForChat(backendSessionIdForActiveProject(), jpegBytes,
+                new BackendImageUploadCallback() {
+                    @Override
+                    public void onUploaded(final String sessionId, final String imageId, int imageBytes) {
+                        mainHandler.post(new Runnable() {
+                            @Override public void run() {
+                                if (!isCurrentInspectionRequest(expectedRun, expectedPointId,
+                                        expectedGeneration)) return;
+                                ChatProject project = activeProject();
+                                if (project == null) return;
+                                project.backendSessionId = sessionId;
+                                persistChatProjects();
+                                sendInspectionPhotoToAi(jpegBytes, imageId, expectedRun,
+                                        expectedPointId, expectedGeneration);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onError(final Exception error) {
+                        mainHandler.post(new Runnable() {
+                            @Override public void run() {
+                                failInspectionAi(expectedRun, expectedPointId,
+                                        expectedGeneration, error);
+                            }
+                        });
+                    }
+                });
+    }
+
+    static File writeEvidenceFile(File directory, String reference, byte[] bytes) throws IOException {
+        if (directory == null || bytes == null || bytes.length == 0) {
+            throw new IOException("inspection evidence is empty");
+        }
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            throw new IOException("unable to create evidence directory");
+        }
+        String safeReference = reference == null ? "inspection-photo"
+                : reference.replaceAll("[^A-Za-z0-9._-]", "-");
+        File output = new File(directory, safeReference + ".jpg");
+        try (FileOutputStream stream = new FileOutputStream(output)) {
+            stream.write(bytes);
+            stream.flush();
+        }
+        return output;
+    }
+
+    private void sendInspectionPhotoToAi(final byte[] jpegBytes, String imageId,
+            final InspectionRun expectedRun, final String expectedPointId,
+            final long expectedGeneration) {
+        if (!isCurrentInspectionRequest(expectedRun, expectedPointId, expectedGeneration)) return;
+        final StringBuilder response = new StringBuilder();
+        String prompt = InspectionAiBridge.prompt(expectedRun.currentPoint())
+                + "\n上次记录：" + expectedRun.currentPoint().previousValue()
+                + "。请在可确认时说明与上次相比是否变化。";
+        chatAiClient.send(prompt, imageId, jpegBytes, new StreamingCallback() {
+            @Override
+            public void onDelta(String text) {
+                synchronized (response) {
+                    if (text != null) response.append(text);
+                }
+            }
+
+            @Override
+            public void onComplete() {
+                final String completed;
+                synchronized (response) { completed = response.toString(); }
+                mainHandler.post(new Runnable() {
+                    @Override public void run() {
+                        if (!isCurrentInspectionRequest(expectedRun, expectedPointId,
+                                expectedGeneration)) return;
+                        InspectionAiBridge.ParsedResponse parsed = InspectionAiBridge.parse(completed);
+                        if (parsed.observation().length() == 0) {
+                            failInspectionAi(expectedRun, expectedPointId, expectedGeneration,
+                                    new IOException("inspection_ai_empty_response"));
+                            return;
+                        }
+                        String currentValue = parsed.currentValue().length() > 0
+                                ? parsed.currentValue() : parsed.observation();
+                        expectedRun.recordAiObservation(parsed.observation(),
+                                expectedRun.currentPoint().previousValue(), currentValue);
+                        inspectionAiInFlight = false;
+                        persistChatProjects();
+                        showHudOperationDetail("inspection");
+                        setChatStatus("AI 识别完成，请确认正常或异常");
+                        scheduleForegroundVoiceListening("inspection-ai-complete");
+                    }
+                });
+            }
+
+            @Override
+            public void onError(final Exception error) {
+                mainHandler.post(new Runnable() {
+                    @Override public void run() {
+                        failInspectionAi(expectedRun, expectedPointId, expectedGeneration, error);
+                    }
+                });
+            }
+        });
+    }
+
+    private boolean isCurrentInspectionRequest(InspectionRun expectedRun, String expectedPointId,
+            long expectedGeneration) {
+        return isCurrentInspectionRequest(expectedRun, expectedPointId, expectedGeneration,
+                activeInspectionRun, inspectionAiInFlight, inspectionRequestGeneration);
+    }
+
+    static boolean isCurrentInspectionRequest(InspectionRun expectedRun, String expectedPointId,
+            long expectedGeneration, InspectionRun currentRun, boolean currentInFlight,
+            long currentGeneration) {
+        return currentInFlight && currentRun == expectedRun && expectedRun != null
+                && expectedRun.currentPoint() != null && expectedPointId != null
+                && expectedPointId.equals(expectedRun.currentPoint().id())
+                && expectedGeneration == currentGeneration;
+    }
+
+    private void invalidateInspectionAiRequest() {
+        inspectionRequestGeneration++;
+        inspectionAiInFlight = false;
+        inspectionCapturePending = false;
+    }
+
+    private void failInspectionAi(InspectionRun expectedRun, String expectedPointId,
+            long expectedGeneration, Exception error) {
+        if (!isCurrentInspectionRequest(expectedRun, expectedPointId, expectedGeneration)) return;
+        inspectionAiInFlight = false;
+        Log.w(KEY_LOG_TAG, "Inspection AI failed: " + safeMessage(error));
+        persistChatProjects();
+        showHudOperationDetail("inspection");
+        setChatStatus("巡检识别失败，照片已保留，请重新拍摄");
+    }
+
+    private void confirmInspectionPoint(InspectionRun.Outcome outcome) {
+        if (activeInspectionRun == null || inspectionAiInFlight) {
+            setChatStatus(inspectionAiInFlight ? "请等待 AI 完成识别" : "请先选择巡检任务");
+            return;
+        }
+        activeInspectionRun.confirmCurrentPoint(outcome,
+                outcome == InspectionRun.Outcome.NORMAL ? "现场确认正常" : "现场确认异常");
+        if (!activeInspectionRun.completeCurrentPoint()) {
+            setChatStatus("请先完成拍照和 AI 识别，再确认当前点位");
+        } else if (activeInspectionRun.completedPointCount()
+                == activeInspectionRun.definition().points().size()) {
+            setChatStatus("巡检完成，所有点位记录已保存");
+        } else {
+            setChatStatus("已记录，进入下一巡检点位");
+        }
+        persistChatProjects();
+        showHudOperationDetail("inspection");
     }
 
     private void beginVoiceEventDescription() {
@@ -3837,7 +4533,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         composerImagePreviewBitmap = decodeImagePreviewBitmap(composerImagePreviewBase64);
         composerImageUploadFailed = false;
         showComposerAttachment(composerImageId.length() > 0 ? "已上传" : "已添加");
-        renderChatScreen();
+        if (shouldRenderChatForCurrentSurface(screenMode == ScreenMode.CHAT,
+                isCapabilityCenterVisible(), hudVoiceGuideVisible || hudGlassesGuideVisible)) {
+            renderChatScreen();
+        }
         if (sendAfterImageUpload && composerTranscript.trim().length() > 0) {
             sendAfterImageUpload = false;
             sendComposerToAi();
@@ -3846,6 +4545,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private void appendUserImageMessage(String imageId, String imagePreviewBase64) {
         chatMessages.add(new ChatMessage("user", "image", "现场照片已随问题发送", imageId, imagePreviewBase64, false));
+    }
+
+    private void attachDetectionMarkersToLatestTaskImage(String markersJson) {
+        int start = Math.max(0, hudTaskMessageStartIndex);
+        for (int i = chatMessages.size() - 1; i >= start; i--) {
+            ChatMessage message = chatMessages.get(i);
+            if ("user".equals(message.role) && "image".equals(message.kind)) {
+                message.detectionMarkersJson = markersJson == null ? "[]" : markersJson;
+                return;
+            }
+        }
     }
 
     private ChatMessage latestImageMessage() {
@@ -3902,7 +4612,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         liveTranscriptMessageIndex = -1;
         scrollChatToBottom = true;
-        renderChatScreen();
+        if (shouldRenderChatForCurrentSurface(screenMode == ScreenMode.CHAT,
+                isCapabilityCenterVisible(), hudVoiceGuideVisible || hudGlassesGuideVisible)) {
+            renderChatScreen();
+        }
+    }
+
+    static boolean shouldRenderChatForCurrentSurface(boolean chatSurfaceVisible,
+            boolean capabilitySurfaceVisible, boolean guideSurfaceVisible) {
+        return chatSurfaceVisible && !capabilitySurfaceVisible && !guideSurfaceVisible;
     }
 
     private boolean handleVoiceCommand(String text) {
@@ -3992,10 +4710,57 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private boolean handleVoicePreviewInteraction(String text) {
+        boolean agentSkillCatalogVisible = isCapabilityCenterVisible()
+                && capabilityDetailVisible && "agent_center".equals(hudOperationAbilityId);
+        String agentSkillAction = agentSkillActionFromVoice(text, agentSkillCatalogVisible);
+        if (agentSkillAction.length() > 0) {
+            performHudOperation(agentSkillAction);
+            return true;
+        }
+        boolean inspectionCatalogVisible = isCapabilityCenterVisible()
+                && capabilityDetailVisible && "inspection".equals(hudOperationAbilityId)
+                && activeInspectionRun == null;
+        String spokenInspectionTaskId = inspectionTaskIdFromVoice(text, inspectionCatalogVisible);
+        if (spokenInspectionTaskId.length() > 0) {
+            performHudOperation("start_inspection:" + spokenInspectionTaskId);
+            return true;
+        }
         VoiceCommandRouter.Command command = voiceCommandRouter.route(text);
         if (command == VoiceCommandRouter.Command.NONE) {
-            if (voiceEventStateMachine.state() == VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION) {
+            boolean capabilityVisible = isCapabilityCenterVisible();
+            boolean hasPendingPhoto = composerImageBytes != null && composerImageBytes.length > 0;
+            Log.i(KEY_LOG_TAG, "Voice freeform policy state=" + voiceEventStateMachine.state()
+                    + " hasPendingPhoto=" + hasPendingPhoto
+                    + " capabilityVisible=" + capabilityVisible
+                    + " voiceGuideVisible=" + hudVoiceGuideVisible
+                    + " glassesGuideVisible=" + hudGlassesGuideVisible
+                    + " commandOverlayVisible=" + isCommandOverlayVisible()
+                    + " expertVisible=" + (screenMode == ScreenMode.EXPERT));
+            if (shouldConsumeVoiceAsPhotoDescription(
+                    voiceEventStateMachine.state(), hasPendingPhoto)) {
                 submitVoiceEvent(voiceEventStateMachine.onDescriptionFinal(text));
+                return true;
+            }
+            if (voiceEventStateMachine.state()
+                    == VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION) {
+                Log.w(KEY_LOG_TAG, "Resetting stale photo-description state without pending photo");
+                cancelVoiceEventDescriptionTimeout();
+                voiceEventStateMachine.reset();
+            }
+            if (shouldForwardFreeformFromAgentSkillCatalog(agentSkillCatalogVisible, text)) {
+                Log.i(KEY_LOG_TAG, "Forwarding capability-center freeform speech to AI");
+                hideCapabilityCenter();
+                activateHudTaskWorkspace();
+                return false;
+            }
+            if (shouldContainUnrecognizedVoiceOnCurrentSurface(
+                    hudVoiceGuideVisible || hudGlassesGuideVisible,
+                    isCommandOverlayVisible(), capabilityVisible,
+                    screenMode == ScreenMode.EXPERT)) {
+                composerTranscript = "";
+                clearLiveTranscriptMessageIfStreaming();
+                setChatStatus("未识别当前页面命令，请按页面提示重试");
+                syncHudPresentation();
                 return true;
             }
             return false;
@@ -4005,12 +4770,49 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             returnToHudHomeFromVoice();
             return true;
         }
+        Boolean environmentAgentEnabled = environmentAgentEnabledState(command);
+        if (environmentAgentEnabled != null) {
+            setEnvironmentAgentEnabled(environmentAgentEnabled.booleanValue());
+            return true;
+        }
+        if (screenMode == ScreenMode.EXPERT && shouldKeepExpertSurface(command)) {
+            showExpertStatus("专家等待中，可说“小叮当，返回首页”或使用挂断操作");
+            return true;
+        }
+        if (command == VoiceCommandRouter.Command.AGENT_SKILL_ACTION) {
+            setChatStatus("请先打开 AI运维技能，再说出完整的技能名称和启用或停用");
+            return true;
+        }
         if (command == VoiceCommandRouter.Command.CAPABILITY_CENTER) {
             showCapabilityCenter();
             return true;
         }
+        if (activeInspectionRun != null && isCapabilityCenterVisible()) {
+            if (command == VoiceCommandRouter.Command.PHOTO
+                    || command == VoiceCommandRouter.Command.RETAKE) {
+                performHudOperation("capture_inspection_photo");
+                return true;
+            }
+            if (command == VoiceCommandRouter.Command.NORMAL
+                    || command == VoiceCommandRouter.Command.CONFIRM
+                    || command == VoiceCommandRouter.Command.NEXT
+                    || command == VoiceCommandRouter.Command.FINISH) {
+                performHudOperation("confirm_inspection_normal");
+                return true;
+            }
+            if (command == VoiceCommandRouter.Command.ABNORMAL) {
+                performHudOperation("confirm_inspection_abnormal");
+                return true;
+            }
+        }
         if (hudVoiceGuideVisible || hudGlassesGuideVisible) {
-            if (command == VoiceCommandRouter.Command.BACK
+            if (hudGlassesGuideVisible && (command == VoiceCommandRouter.Command.NEXT_PAGE
+                    || command == VoiceCommandRouter.Command.NEXT)) {
+                hudPresentation.changeTutorialPage(true);
+            } else if (hudGlassesGuideVisible && (command == VoiceCommandRouter.Command.PREVIOUS_PAGE
+                    || command == VoiceCommandRouter.Command.PREVIOUS)) {
+                hudPresentation.changeTutorialPage(false);
+            } else if (command == VoiceCommandRouter.Command.BACK
                     || command == VoiceCommandRouter.Command.CANCEL) {
                 returnToHudStandby("语音待命");
             } else if (command == VoiceCommandRouter.Command.HELP) {
@@ -4051,6 +4853,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             } else {
                 hideCapabilityCenter();
             }
+            return true;
+        }
+        if (isCapabilityCenterVisible() && capabilityDetailVisible
+                && command == VoiceCommandRouter.Command.NEXT_PAGE) {
+            changeHudOperationPage(true);
+            return true;
+        }
+        if (isCapabilityCenterVisible() && capabilityDetailVisible
+                && command == VoiceCommandRouter.Command.PREVIOUS_PAGE) {
+            changeHudOperationPage(false);
             return true;
         }
         if (screenMode == ScreenMode.EXPERT
@@ -4239,8 +5051,21 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return true;
     }
 
+    static boolean shouldKeepExpertSurface(VoiceCommandRouter.Command command) {
+        return command != VoiceCommandRouter.Command.HOME
+                && command != VoiceCommandRouter.Command.BACK
+                && command != VoiceCommandRouter.Command.CANCEL;
+    }
+
     /** Finishes a camera or voice event flow before returning to the chat surface. */
     private void returnToChatFromCameraFlow() {
+        if (shouldFinishSceneVideoBeforeCameraExit(
+                sceneVideoRecording, sceneVideoStarting, pendingSceneVideoCapture)) {
+            stopSceneVideoCapture("camera-back");
+            return;
+        }
+        boolean returningToInspection = inspectionCapturePending && activeInspectionRun != null;
+        inspectionCapturePending = false;
         cancelForegroundVoiceListening();
         pendingVoicePhotoCapture = false;
         cancelVoiceEventDescriptionTimeout();
@@ -4252,6 +5077,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         voiceSessionPurpose = VoiceSessionPurpose.NONE;
         voiceStreamState = VoiceStreamState.IDLE;
         renderChatScreen();
+        if (returningToInspection) {
+            showHudOperationDetail("inspection");
+        }
         scheduleForegroundVoiceListening("voice-command-back");
     }
 
@@ -4324,6 +5152,31 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }
         }
         return false;
+    }
+
+    static boolean shouldContainUnrecognizedVoiceOnCurrentSurface(boolean guideVisible,
+            boolean commandOverlayVisible, boolean capabilityVisible, boolean expertVisible) {
+        return guideVisible || commandOverlayVisible || capabilityVisible || expertVisible;
+    }
+
+    static boolean shouldConsumeVoiceAsPhotoDescription(VoiceEventStateMachine.State state,
+            boolean hasPendingPhoto) {
+        return state == VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION && hasPendingPhoto;
+    }
+
+    static boolean shouldForwardFreeformFromAgentSkillCatalog(boolean agentSkillCatalogVisible,
+            String transcript) {
+        return agentSkillCatalogVisible && !isInsufficientFreeformVoiceInput(transcript);
+    }
+
+    static Boolean environmentAgentEnabledState(VoiceCommandRouter.Command command) {
+        if (command == VoiceCommandRouter.Command.ENABLE_ENVIRONMENT_AGENT) {
+            return Boolean.TRUE;
+        }
+        if (command == VoiceCommandRouter.Command.DISABLE_ENVIRONMENT_AGENT) {
+            return Boolean.FALSE;
+        }
+        return null;
     }
 
     private void beginVoiceDiagnosisConversation() {
@@ -4487,16 +5340,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 + " deltaChars=" + (delta == null ? 0 : delta.length()));
     }
 
-    private void updateAssistantStreamingMessage(String delta) {
+    private void updateAssistantStreamingMessage(String delta, boolean renderDelta) {
         if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
             ChatMessage message = chatMessages.get(streamingAssistantIndex);
             message.text = message.text + delta;
-            scrollChatToBottom = true;
-            scheduleChatStreamRender();
+            if (renderDelta) {
+                scrollChatToBottom = true;
+                scheduleChatStreamRender();
+            }
         }
     }
 
-    private void finalizeAssistantStreamingMessage() {
+    private void finalizeAssistantStreamingMessage(boolean sceneEvidenceTurn,
+            boolean sceneCandidateTurn, boolean requestHadNewImage) {
         String completedResponse = "";
         if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
             ChatMessage message = chatMessages.get(streamingAssistantIndex);
@@ -4508,6 +5364,38 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             message.streaming = false;
         }
         MaintenanceTask task = currentMaintenanceTask();
+        TaskSession activeSession = taskSessionManager.active();
+        boolean sceneSkillActive = activeSession != null
+                && HoneywellTempHumiditySkill.SKILL_ID.equals(activeSession.sceneSkillId());
+        if (shouldParseVisualProtocol(sceneSkillActive, sceneCandidateTurn, requestHadNewImage)
+                && completedResponse.length() > 0) {
+            SceneSkillAiBridge.ParsedResponse parsed = SceneSkillAiBridge.parse(completedResponse);
+            completedResponse = parsed.visibleText();
+            if (sceneCandidateTurn && honeywellTempHumiditySkill.activateCandidate(
+                    activeSession, parsed.candidateSkillId())) {
+                sceneSkillActive = true;
+                sceneEvidenceTurn = true;
+            }
+            if (requestHadNewImage) {
+                attachDetectionMarkersToLatestTaskImage(
+                        SceneSkillAiBridge.markersJson(parsed.markers()));
+            }
+            if (shouldEvaluateSceneSkill(sceneSkillActive, sceneEvidenceTurn)) {
+                String narration = latestTaskEvidenceText("");
+                HoneywellTempHumiditySkill.Result skillResult = honeywellTempHumiditySkill.evaluate(
+                        activeSession, narration, parsed.evidenceTags());
+                if (skillResult.matched()) {
+                    completedResponse = skillResult.reply();
+                    if (skillResult.accepted() && !skillResult.annotations().isEmpty()) {
+                        activeSession.maintenanceTask().putFact(
+                                "本步照片标注", String.join("、", skillResult.annotations()));
+                    }
+                }
+            }
+            if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
+                chatMessages.get(streamingAssistantIndex).text = completedResponse;
+            }
+        }
         if (task != null && completedResponse.length() > 0) {
             task.addTurn("AI", completedResponse);
             task.setDiagnosis(extractDiagnosisTitle(completedResponse), completedResponse,
@@ -4517,6 +5405,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             if (steps.length > 0) {
                 task.replaceRepairSteps(steps);
             }
+        }
+        if (shouldLeaveGuidanceAfterAiReply(
+                hudTaskProgress == HudTaskProgress.GUIDANCE, completedResponse)) {
+            clearHudTaskProgress();
         }
         streamingAssistantIndex = -1;
         setChatStatus("在线");
@@ -4529,25 +5421,55 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         scheduleForegroundVoiceListening("ai-complete");
     }
 
+    static boolean shouldEvaluateSceneSkill(boolean sceneSkillActive, boolean sceneEvidenceTurn) {
+        return sceneSkillActive && sceneEvidenceTurn;
+    }
+
+    static boolean shouldParseVisualProtocol(boolean sceneSkillActive, boolean sceneCandidateTurn,
+            boolean requestHadNewImage) {
+        return sceneSkillActive || sceneCandidateTurn || requestHadNewImage;
+    }
+
     static boolean isEmptyAiResponse(String response) {
         return response == null || response.trim().length() == 0;
     }
 
     private boolean isActiveGptRequest(int requestGeneration) {
-        return streamingAssistantIndex >= 0 && gptRequestGeneration == requestGeneration;
+        return isActiveGptRequest(streamingAssistantIndex, gptRequestGeneration, requestGeneration);
+    }
+
+    static boolean isActiveGptRequest(int assistantIndex, int currentGeneration,
+            int expectedGeneration) {
+        return assistantIndex >= 0 && currentGeneration == expectedGeneration;
+    }
+
+    private void cancelActiveGptRequestForNavigation() {
+        if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()
+                && chatMessages.get(streamingAssistantIndex).streaming) {
+            chatMessages.remove(streamingAssistantIndex);
+        }
+        streamingAssistantIndex = -1;
+        gptRequestGeneration++;
+        gptStreamStartedAtMs = 0L;
+        cancelPendingChatStreamRender();
     }
 
     private void scheduleGptRequestWatchdog(final int requestGeneration) {
         mainHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                if (!isActiveGptRequest(requestGeneration)) {
+                if (!shouldFailStalledAiStream(isActiveGptRequest(requestGeneration),
+                        voiceStreamState == VoiceStreamState.AI_PENDING)) {
                     return;
                 }
-                Log.w(KEY_LOG_TAG, "GPT stream watchdog still waiting requestGeneration=" + requestGeneration);
-                updateAssistantStreamingMessage("\n\n\u7f51\u7edc\u8f83\u6162\uff0c\u4ecd\u5728\u7b49\u5f85 AI \u56de\u590d...");
+                Log.w(KEY_LOG_TAG, "GPT stream terminal timeout requestGeneration=" + requestGeneration);
+                failAssistantStreamingMessage(new IOException("ai_stream_terminal_timeout"), null);
             }
-        }, GPT_REQUEST_WATCHDOG_MS);
+        }, GPT_STREAM_TERMINAL_TIMEOUT_MS);
+    }
+
+    static boolean shouldFailStalledAiStream(boolean requestActive, boolean aiPending) {
+        return requestActive && aiPending;
     }
 
     private void sendComposerToAi() {
@@ -4592,13 +5514,24 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         activateHudTaskWorkspace();
         MaintenanceTask task = ensureMaintenanceTask(prompt);
+        boolean sceneEvidenceTurn = false;
+        boolean sceneCandidateTurn = false;
         if (task != null) {
+            boolean environmentAgentEnabled = operationDetailFactory
+                    .isAgentPackageAuthorized("environment_ops");
+            if (environmentAgentEnabled) {
+                sceneCandidateTurn = honeywellTempHumiditySkill.isCandidateTurn(
+                        taskSessionManager.active(), prompt, image != null && image.length > 0);
+            }
+            sceneEvidenceTurn = honeywellTempHumiditySkill.shouldHandleTurn(
+                    taskSessionManager.active(), prompt, image != null && image.length > 0);
             task.addTurn("现场人员", prompt);
             if (image != null && image.length > 0) {
                 task.putFact("最新输入", "已补充现场照片和语音/文字描述");
             }
         }
-        if (isIdentityQuestion(prompt)) {
+        String localReply = localAssistantReply(prompt, Calendar.getInstance());
+        if (localReply.length() > 0) {
             updateCurrentProjectTitle(prompt);
             if (hasLiveTranscriptMessage()) {
                 updateLiveTranscriptMessage(prompt, true);
@@ -4608,10 +5541,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }
             composerTranscript = "";
             renderComposer();
-            appendAssistantMessage(AI_IDENTITY_RESPONSE);
-            scrollChatToBottom = true;
-            persistChatProjects();
-            renderChatScreen();
+            completeLocalAssistantTurn(task, prompt, localReply);
             return;
         }
         updateCurrentProjectTitle(prompt);
@@ -4641,7 +5571,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         Log.i(KEY_LOG_TAG, "AI request accepted id=" + requestId + " generation=" + requestGeneration
                 + " promptChars=" + prompt.length() + " image=" + (imageForAi != null));
         scheduleGptRequestWatchdog(requestGeneration);
-        final String requestPrompt = buildDirectAiRequestPrompt(prompt);
+        final boolean currentSceneEvidenceTurn = sceneEvidenceTurn;
+        final boolean currentSceneCandidateTurn = sceneCandidateTurn;
+        final boolean currentRequestHadNewImage = image != null;
+        final String requestPrompt = buildDirectAiRequestPrompt(
+                prompt, currentSceneEvidenceTurn, currentSceneCandidateTurn,
+                currentRequestHadNewImage);
         chatAiClient.send(requestPrompt, effectiveImageId, imageForAi, new StreamingCallback() {
             @Override
             public void onDelta(String text) {
@@ -4650,7 +5585,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 mainHandler.post(new Runnable() {
                     @Override
                     public void run() {
-                        updateAssistantStreamingMessage(delta);
+                        if (!isActiveGptRequest(requestGeneration)) {
+                            return;
+                        }
+                        updateAssistantStreamingMessage(delta,
+                                !currentSceneEvidenceTurn && !currentSceneCandidateTurn);
                     }
                 });
             }
@@ -4664,7 +5603,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                             return;
                         }
                         Log.i(KEY_LOG_TAG, "GPT stream complete id=" + requestId);
-                        finalizeAssistantStreamingMessage();
+                        finalizeAssistantStreamingMessage(
+                                currentSceneEvidenceTurn, currentSceneCandidateTurn,
+                                currentRequestHadNewImage);
                     }
                 });
             }
@@ -4705,7 +5646,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         syncHudPresentation();
     }
 
-    private String buildDirectAiRequestPrompt(String prompt) {
+    private String buildDirectAiRequestPrompt(String prompt, boolean sceneEvidenceTurn,
+            boolean sceneCandidateTurn, boolean requestHadNewImage) {
         StringBuilder context = new StringBuilder();
         MaintenanceTask task = currentMaintenanceTask();
         if (task != null) {
@@ -4732,19 +5674,86 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     .append(text)
                     .append('\n');
         }
+        String sceneInstruction = sceneEvidenceTurn
+                ? SceneSkillAiBridge.instruction(taskSessionManager.active(), requestHadNewImage)
+                : (sceneCandidateTurn ? SceneSkillAiBridge.candidateInstruction() : "");
+        if (requestHadNewImage && !sceneEvidenceTurn && !sceneCandidateTurn) {
+            sceneInstruction = SceneSkillAiBridge.imageMarkerInstruction();
+        }
         if (context.length() == 0) {
-            return buildCurrentQuestionInstruction(prompt);
+            return buildCurrentQuestionInstruction(prompt) + sceneInstruction;
         }
         return "以下是同一现场事件的已确认上下文，仅在与当前问题相关时参考：\n"
-                + context + "\n" + buildCurrentQuestionInstruction(prompt);
+                + context + "\n" + buildCurrentQuestionInstruction(prompt)
+                + sceneInstruction;
     }
 
     static String buildCurrentQuestionInstruction(String prompt) {
         String current = prompt == null ? "" : prompt.trim();
         return "当前问题：" + current
                 + "\n\n请直接、简洁回答当前问题，不展示思维过程，也不要套用固定栏目。"
-                + "用户询问原因或状态时直接说明；询问操作或维修时才按必要顺序给出可执行步骤。"
+                + "用户询问原因或状态时直接说明；询问操作或维修时，只给出一个当前最需要执行的下一步，"
+                + "该步骤必须是一项可立即执行并验证的原子操作，只能包含一个动作和一个检查对象。"
+                + "不得使用“及、或、以及、顿号”等并列结构；其余排查项留到用户反馈后再问，也不要罗列多个可能原因。"
+                + "单轮可见回复尽量控制在 180 个汉字以内，确有必要的长内容由界面分页展示。"
                 + "只有证据不足时才说明无法确认及需要补拍的具体位置。";
+    }
+
+    static String inspectionTaskIdFromVoice(String text) {
+        return inspectionTaskIdFromVoice(text, false);
+    }
+
+    static String inspectionTaskIdFromVoice(String text, boolean inspectionCatalogVisible) {
+        String value = text == null ? "" : text.toLowerCase(Locale.ROOT)
+                .replace("小叮当", "")
+                .replaceAll("[\\s，。！？,.!?]", "");
+        if (inspectionCatalogVisible
+                && ("进入第一个选项".equals(value) || "开始第一个巡检任务".equals(value))) {
+            return "lab-training-room";
+        }
+        if (!value.contains("巡检")) return "";
+        if (value.contains("实训室")) return "lab-training-room";
+        if (value.contains("水电暖") || value.contains("给排水") || value.contains("供暖")
+                || value.contains("水泵") || value.contains("配电")) return "water-power-heating";
+        if (value.contains("空调") || value.contains("暖通")) return "air-conditioning";
+        if (value.contains("消防")) return "fire-safety";
+        return "";
+    }
+
+    static String agentSkillActionFromVoice(String text, boolean agentSkillCatalogVisible) {
+        if (!agentSkillCatalogVisible) return "";
+        String value = text == null ? "" : text.toLowerCase(Locale.ROOT)
+                .replace("小叮当", "")
+                .replaceAll("[\\s，。！？,.!?]", "");
+        String state = "";
+        String skillName = value;
+        String[] enablePrefixes = new String[]{"启用", "打开"};
+        String[] disablePrefixes = new String[]{"停用", "关闭", "禁用"};
+        for (String prefix : enablePrefixes) {
+            if (value.startsWith(prefix)) {
+                state = "enabled";
+                skillName = value.substring(prefix.length());
+                break;
+            }
+        }
+        if (state.length() == 0) {
+            for (String prefix : disablePrefixes) {
+                if (value.startsWith(prefix)) {
+                    state = "disabled";
+                    skillName = value.substring(prefix.length());
+                    break;
+                }
+            }
+        }
+        if (state.length() == 0) return "";
+        String agentId = "";
+        if ("网络运维技能".equals(skillName)) agentId = "network_ops";
+        else if ("水电暖巡检技能".equals(skillName)) agentId = "water_ops";
+        else if ("暖通空调技能".equals(skillName)) agentId = "hvac_ops";
+        else if ("消防巡检技能".equals(skillName)) agentId = "fire_ops";
+        else if ("环境诊断技能".equals(skillName) || "环境诊断".equals(skillName)) agentId = "environment_ops";
+        else if ("安全作业技能".equals(skillName)) agentId = "safety_ops";
+        return agentId.length() == 0 ? "" : "set_agent:" + agentId + ":" + state;
     }
 
     private static String extractDiagnosisTitle(String response) {
@@ -4869,7 +5878,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return steps.toArray(new String[steps.size()]);
     }
 
-    private boolean isIdentityQuestion(String text) {
+    private static boolean isIdentityQuestion(String text) {
         String normalized = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
         normalized = normalized.replace(" ", "").replace("？", "?");
         if (normalized.length() == 0) {
@@ -4905,6 +5914,47 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 || normalized.contains("哪家公司")
                 || normalized.contains("厂家是谁")
                 || normalized.contains("供应商是谁");
+    }
+
+    static String localAssistantReply(String text, Calendar now) {
+        if (isIdentityQuestion(text)) {
+            return AI_IDENTITY_RESPONSE;
+        }
+        String normalized = text == null ? "" : text.replace(" ", "").replace("？", "?");
+        boolean asksWeekday = normalized.contains("星期几")
+                || normalized.contains("周几")
+                || normalized.contains("礼拜几");
+        boolean asksDate = normalized.contains("今天几号")
+                || normalized.contains("今天日期")
+                || normalized.contains("今天是什么日子");
+        if (!asksWeekday && !asksDate) {
+            return "";
+        }
+        Calendar value = now == null ? Calendar.getInstance() : now;
+        String[] weekdays = {
+                "星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"
+        };
+        String weekday = weekdays[value.get(Calendar.DAY_OF_WEEK) - Calendar.SUNDAY];
+        if (asksDate) {
+            return "今天是" + value.get(Calendar.YEAR) + "年"
+                    + (value.get(Calendar.MONTH) + 1) + "月"
+                    + value.get(Calendar.DAY_OF_MONTH) + "日，" + weekday + "。";
+        }
+        return "今天是" + weekday + "。";
+    }
+
+    private void completeLocalAssistantTurn(MaintenanceTask task, String prompt, String response) {
+        if (task != null) {
+            task.addTurn("AI", response);
+        }
+        appendAssistantMessage(response);
+        scrollChatToBottom = true;
+        voiceStreamState = VoiceStreamState.IDLE;
+        setChatStatus("在线");
+        persistChatProjects();
+        renderChatScreen();
+        syncHudPresentation();
+        scheduleForegroundVoiceListening("local-answer-complete");
     }
 
     private void setComposerStatus(String text) {
@@ -5027,6 +6077,22 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                             @Override
                             public void run() {
                                 if (shouldStartOfflineWakeListening()) {
+                                    long now = SystemClock.elapsedRealtime();
+                                    if (!shouldAcceptOfflineWakeDetection(
+                                            now, offlineWakeSuppressedUntilMs)) {
+                                        long delay = offlineWakeSuppressedUntilMs - now;
+                                        Log.w(KEY_LOG_TAG,
+                                                "Offline wake suppressed during media cooldown delayMs="
+                                                        + delay);
+                                        wakeWordEngine.stop();
+                                        mainHandler.postDelayed(new Runnable() {
+                                            @Override public void run() {
+                                                scheduleForegroundVoiceListening(
+                                                        "media-cooldown-complete");
+                                            }
+                                        }, Math.max(1L, delay));
+                                        return;
+                                    }
                                     voiceInteractionStartedAtMs = SystemClock.elapsedRealtime();
                                     Log.i(KEY_LOG_TAG, "Voice latency stage=wake_detected elapsedMs=0");
                                     beginVoiceCommandAfterWake();
@@ -5668,13 +6734,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 }
                 composerTranscript = effectiveFinalText;
                 VoiceCommandRouter.Command routedCommand = voiceCommandRouter.route(effectiveFinalText);
+                Log.i(KEY_LOG_TAG, "ASR final purpose="
+                        + (offlineWakeCommandFinal ? "offline-wake-command" : "conversation")
+                        + " route=" + routedCommand + " text=" + effectiveFinalText);
                 boolean standbySurface = screenMode == ScreenMode.CHAT
                         && !hudTaskWorkspaceActive
                         && !hudVoiceGuideVisible
                         && !hudGlassesGuideVisible
                         && !isCapabilityCenterVisible();
                 if (shouldRejectOfflineWakeAtStandby(
-                        offlineWakeCommandFinal, standbySurface, routedCommand)) {
+                        offlineWakeCommandFinal, standbySurface, routedCommand,
+                        effectiveFinalText)) {
                     Log.w(KEY_LOG_TAG, "Rejected offline wake utterance at standby text="
                             + effectiveFinalText);
                     composerTranscript = "";
@@ -5683,6 +6753,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     setChatStatus("未识别到明确指令，请说‘小叮当，开始诊断’");
                     renderComposer();
                     scheduleForegroundVoiceListening("offline-wake-command-rejected");
+                    return;
+                }
+                if (routedCommand == VoiceCommandRouter.Command.NONE
+                        && isInsufficientFreeformVoiceInput(effectiveFinalText)) {
+                    composerTranscript = "";
+                    voiceStreamState = VoiceStreamState.IDLE;
+                    clearLiveTranscriptMessageIfStreaming();
+                    setChatStatus("语音内容过短，请补充设备和异常现象");
+                    renderComposer();
+                    syncHudPresentation();
+                    scheduleForegroundVoiceListening("insufficient-freeform-voice");
                     return;
                 }
                 if (VOICE_WORKFLOW_ENABLED && handleVoicePreviewInteraction(effectiveFinalText)) {
@@ -5785,22 +6866,46 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 && command != VoiceCommandRouter.Command.CAPABILITY_CENTER
                 && command != VoiceCommandRouter.Command.INSPECTION
                 && command != VoiceCommandRouter.Command.TASK_CENTER
+                && command != VoiceCommandRouter.Command.WORK_ORDER
                 && command != VoiceCommandRouter.Command.KNOWLEDGE
                 && command != VoiceCommandRouter.Command.DEVICE
                 && command != VoiceCommandRouter.Command.AGENT_CENTER
+                && command != VoiceCommandRouter.Command.ENABLE_ENVIRONMENT_AGENT
+                && command != VoiceCommandRouter.Command.DISABLE_ENVIRONMENT_AGENT
                 && command != VoiceCommandRouter.Command.HELP
                 && command != VoiceCommandRouter.Command.GLASSES_TUTORIAL;
+    }
+
+    static boolean shouldRejectOfflineWakeAtStandby(boolean offlineWakeCommand,
+            boolean standbySurface, VoiceCommandRouter.Command command, String transcript) {
+        if (!offlineWakeCommand || !standbySurface) {
+            return false;
+        }
+        if (command != VoiceCommandRouter.Command.NONE) {
+            return false;
+        }
+        return isInsufficientFreeformVoiceInput(transcript);
     }
 
     private void finishHandledVoiceCommand(String reason) {
         boolean aiInFlight = voiceStreamState == VoiceStreamState.AI_PENDING
                 || streamingAssistantIndex >= 0;
-        if (!shouldRearmWakeAfterHandledCommand(recordingVoice, aiInFlight,
-                voiceSessionPurpose == VoiceSessionPurpose.COMMAND)) {
+        boolean shouldRearm = shouldRearmWakeAfterHandledCommand(recordingVoice, aiInFlight,
+                voiceSessionPurpose == VoiceSessionPurpose.COMMAND);
+        composerTranscript = transcriptAfterHandledVoiceCommand(shouldRearm, composerTranscript);
+        if (!shouldRearm) {
             return;
         }
+        clearLiveTranscriptMessageIfStreaming();
         voiceStreamState = VoiceStreamState.IDLE;
         scheduleForegroundVoiceListening(reason);
+    }
+
+    static String transcriptAfterHandledVoiceCommand(boolean shouldRearm, String transcript) {
+        if (shouldRearm) {
+            return "";
+        }
+        return transcript == null ? "" : transcript;
     }
 
     static boolean shouldWaitForWakeAudioRelease(boolean wakeAudioRunning, int attempt) {
@@ -6001,10 +7106,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             if (cameraId == null) {
                 return;
             }
+            sensorOrientation = readSensorOrientation(manager, cameraId);
+            cameraLensFacing = readLensFacing(manager, cameraId);
             previewSize = choosePreviewSize(manager, cameraId);
             captureSize = chooseCaptureSize(manager, cameraId);
             videoSize = chooseVideoSize(manager, cameraId);
-            sensorOrientation = readSensorOrientation(manager, cameraId);
             imageReader = ImageReader.newInstance(
                     captureSize.getWidth(),
                     captureSize.getHeight(),
@@ -6016,9 +7122,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     handleCapturedImage(reader);
                 }
             }, cameraHandler);
+            final long expectedDeviceGeneration = ++cameraDeviceGeneration;
             manager.openCamera(cameraId, new CameraDevice.StateCallback() {
                 @Override
                 public void onOpened(CameraDevice camera) {
+                    if (!isCurrentCameraCallback(expectedDeviceGeneration,
+                            cameraDeviceGeneration,
+                            screenMode == ScreenMode.CAMERA && cameraHandler != null)) {
+                        camera.close();
+                        return;
+                    }
                     cameraDevice = camera;
                     createPreviewSession();
                 }
@@ -6026,13 +7139,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 @Override
                 public void onDisconnected(CameraDevice camera) {
                     camera.close();
-                    cameraDevice = null;
+                    if (cameraDevice == camera) {
+                        cameraDevice = null;
+                    }
                 }
 
                 @Override
                 public void onError(CameraDevice camera, int error) {
                     camera.close();
-                    cameraDevice = null;
+                    if (cameraDevice == camera) {
+                        cameraDevice = null;
+                    }
                 }
             }, cameraHandler);
         } catch (Exception error) {
@@ -6055,26 +7172,39 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private Size choosePreviewSize(CameraManager manager, String id) throws CameraAccessException {
         StreamConfigurationMap map = manager.getCameraCharacteristics(id)
                 .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-        Size fallback = new Size(1280, 720);
+        boolean swapped = cameraDimensionsSwapped();
+        Size fallback = swapped ? new Size(720, 1280) : new Size(1280, 720);
         if (map == null) {
             return fallback;
         }
         Size[] sizes = map.getOutputSizes(SurfaceTexture.class);
-        return chooseBestPreviewSize(sizes, fallback);
+        return chooseBestPreviewSize(sizes, fallback, cameraDimensionsSwapped());
     }
 
     private Size chooseCaptureSize(CameraManager manager, String id) throws CameraAccessException {
         StreamConfigurationMap map = manager.getCameraCharacteristics(id)
                 .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-        Size fallback = new Size(1280, 720);
+        boolean swapped = cameraDimensionsSwapped();
+        Size fallback = swapped ? new Size(720, 1280) : new Size(1280, 720);
         if (map == null) {
             return fallback;
         }
         Size[] sizes = map.getOutputSizes(ImageFormat.JPEG);
-        return chooseBestCaptureSize(sizes, fallback);
+        return chooseBestCaptureSize(sizes, fallback, swapped);
     }
 
-    private Size chooseBestPreviewSize(Size[] sizes, Size fallback) {
+    private Size chooseBestPreviewSize(Size[] sizes, Size fallback, boolean swapped) {
+        if (swapped) {
+            Size exactPortrait = findExactSize(sizes, 720, 1280);
+            if (exactPortrait != null) {
+                return exactPortrait;
+            }
+            Size portrait16By9 = chooseLargestMatchingAspect(
+                    sizes, 1080, 1920, 9f / 16f);
+            if (portrait16By9 != null) {
+                return portrait16By9;
+            }
+        }
         Size exact1080p = findExactSize(sizes, 1920, 1080);
         if (exact1080p != null) {
             return exact1080p;
@@ -6086,7 +7216,18 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return chooseLargestUnder(sizes, 1920, 1080, fallback);
     }
 
-    private Size chooseBestCaptureSize(Size[] sizes, Size fallback) {
+    private Size chooseBestCaptureSize(Size[] sizes, Size fallback, boolean swapped) {
+        if (swapped) {
+            Size exactPortrait = findExactSize(sizes, 720, 1280);
+            if (exactPortrait != null) {
+                return exactPortrait;
+            }
+            Size portrait16By9 = chooseLargestMatchingAspect(
+                    sizes, 1440, 2560, 9f / 16f);
+            if (portrait16By9 != null) {
+                return portrait16By9;
+            }
+        }
         Size highQuality16By9 = chooseLargestMatchingAspect(sizes, 2560, 1440, 16f / 9f);
         if (highQuality16By9 != null) {
             return highQuality16By9;
@@ -6097,13 +7238,24 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private Size chooseVideoSize(CameraManager manager, String id) throws CameraAccessException {
         StreamConfigurationMap map = manager.getCameraCharacteristics(id)
                 .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-        Size fallback = previewSize == null ? new Size(1280, 720) : previewSize;
+        boolean swapped = cameraDimensionsSwapped();
+        Size fallback = previewSize == null
+                ? (swapped ? new Size(720, 1280) : new Size(1280, 720))
+                : previewSize;
         if (map == null) {
             return fallback;
         }
         Size[] sizes = map.getOutputSizes(MediaRecorder.class);
-        Size preferred = chooseLargestMatchingAspect(sizes, 1280, 720, 16f / 9f);
-        return preferred == null ? chooseLargestUnder(sizes, 1280, 720, fallback) : preferred;
+        if (swapped) {
+            Size exactPortrait = findExactSize(sizes, 720, 1280);
+            if (exactPortrait != null) {
+                return exactPortrait;
+            }
+            Size portrait = chooseLargestMatchingAspect(sizes, 720, 1280, 9f / 16f);
+            return portrait == null ? chooseLargestUnder(sizes, 720, 1280, fallback) : portrait;
+        }
+        Size landscape = chooseLargestMatchingAspect(sizes, 1280, 720, 16f / 9f);
+        return landscape == null ? chooseLargestUnder(sizes, 1280, 720, fallback) : landscape;
     }
 
     private Size findExactSize(Size[] sizes, int width, int height) {
@@ -6161,25 +7313,96 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return orientation == null ? 0 : orientation;
     }
 
+    private int readLensFacing(CameraManager manager, String id) throws CameraAccessException {
+        Integer facing = manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING);
+        return facing == null ? CameraCharacteristics.LENS_FACING_BACK : facing;
+    }
+
+    static int relativeCameraRotationDegrees(int sensorDegrees, int displayDegrees,
+            boolean frontFacing) {
+        int normalizedSensor = ((sensorDegrees % 360) + 360) % 360;
+        int normalizedDisplay = ((displayDegrees % 360) + 360) % 360;
+        return frontFacing
+                ? (normalizedSensor + normalizedDisplay) % 360
+                : (normalizedSensor - normalizedDisplay + 360) % 360;
+    }
+
+    static boolean cameraDimensionsAreSwapped(int rotationDegrees) {
+        int normalized = ((rotationDegrees % 360) + 360) % 360;
+        return normalized == 90 || normalized == 270;
+    }
+
+    static float displayAspectRatioForBuffer(int width, int height, int rotationDegrees) {
+        if (width <= 0 || height <= 0) {
+            return 1f;
+        }
+        return cameraDimensionsAreSwapped(rotationDegrees)
+                ? height / (float) width
+                : width / (float) height;
+    }
+
+    private int displayRotationDegrees() {
+        switch (getWindowManager().getDefaultDisplay().getRotation()) {
+            case Surface.ROTATION_90:
+                return 90;
+            case Surface.ROTATION_180:
+                return 180;
+            case Surface.ROTATION_270:
+                return 270;
+            case Surface.ROTATION_0:
+            default:
+                return 0;
+        }
+    }
+
+    private int relativeCameraRotationDegrees() {
+        return relativeCameraRotationDegrees(sensorOrientation, displayRotationDegrees(),
+                cameraLensFacing == CameraCharacteristics.LENS_FACING_FRONT);
+    }
+
+    private boolean cameraDimensionsSwapped() {
+        return cameraDimensionsAreSwapped(relativeCameraRotationDegrees());
+    }
+
     private void createPreviewSession() {
         if (cameraDevice == null || previewSize == null || !previewView.isAvailable()) {
             return;
         }
         try {
+            final CameraDevice expectedCamera = cameraDevice;
+            final Handler expectedHandler = cameraHandler;
+            final ImageReader expectedReader = imageReader;
+            final long expectedSessionGeneration = ++cameraSessionGeneration;
+            if (expectedHandler == null || expectedReader == null) {
+                return;
+            }
             SurfaceTexture texture = previewView.getSurfaceTexture();
             texture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
             Surface previewSurface = new Surface(texture);
-            CaptureRequest.Builder request = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            CaptureRequest.Builder request = expectedCamera.createCaptureRequest(
+                    CameraDevice.TEMPLATE_PREVIEW);
             request.addTarget(previewSurface);
-            cameraDevice.createCaptureSession(
-                    Arrays.asList(previewSurface, imageReader.getSurface()),
+            expectedCamera.createCaptureSession(
+                    Arrays.asList(previewSurface, expectedReader.getSurface()),
                     new CameraCaptureSession.StateCallback() {
                         @Override
                         public void onConfigured(CameraCaptureSession session) {
+                            if (!isCurrentCameraSession(expectedSessionGeneration,
+                                    cameraSessionGeneration,
+                                    cameraDevice == expectedCamera
+                                            && screenMode == ScreenMode.CAMERA)) {
+                                session.close();
+                                return;
+                            }
                             captureSession = session;
                             try {
-                                session.setRepeatingRequest(request.build(), null, cameraHandler);
-                                configurePreviewTransform(previewView.getWidth(), previewView.getHeight());
+                                session.setRepeatingRequest(request.build(), null, expectedHandler);
+                                mainHandler.post(new Runnable() {
+                                    @Override public void run() {
+                                        configurePreviewTransform(
+                                                previewView.getWidth(), previewView.getHeight());
+                                    }
+                                });
                                 if (pendingVoicePhotoCapture) {
                                     mainHandler.post(new Runnable() {
                                         @Override
@@ -6193,16 +7416,25 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                                         @Override public void run() { startSceneVideoCaptureIfReady(); }
                                     });
                                 }
-                            } catch (CameraAccessException ignored) {
+                            } catch (CameraAccessException | IllegalStateException ignored) {
+                                session.close();
                             }
                         }
 
                         @Override
                         public void onConfigureFailed(CameraCaptureSession session) {
-                            cameraStatusText.setText("预览失败");
+                            session.close();
+                            if (isCurrentCameraSession(expectedSessionGeneration,
+                                    cameraSessionGeneration, cameraDevice == expectedCamera)) {
+                                mainHandler.post(new Runnable() {
+                                    @Override public void run() {
+                                        cameraStatusText.setText("预览失败");
+                                    }
+                                });
+                            }
                         }
                     },
-                    cameraHandler);
+                    expectedHandler);
         } catch (Exception error) {
             cameraStatusText.setText("预览失败：" + safeMessage(error));
         }
@@ -6212,8 +7444,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (previewSize == null || viewWidth == 0 || viewHeight == 0) {
             return;
         }
-        int rotation = getWindowManager().getDefaultDisplay().getRotation();
-        boolean swapped = rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270;
+        int relativeRotation = relativeCameraRotationDegrees();
+        boolean swapped = cameraDimensionsAreSwapped(relativeRotation);
         float bufferWidth = swapped ? previewSize.getHeight() : previewSize.getWidth();
         float bufferHeight = swapped ? previewSize.getWidth() : previewSize.getHeight();
         if (bufferWidth <= 0f || bufferHeight <= 0f) {
@@ -6221,15 +7453,67 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         float viewRatio = viewWidth / (float) viewHeight;
         float bufferRatio = bufferWidth / bufferHeight;
-        // Center-crop with one uniform scale; independent X/Y scales distort the camera image.
-        float uniformScale = Math.max(viewWidth / bufferWidth, viewHeight / bufferHeight);
+        float scale = Math.max(viewWidth / bufferWidth, viewHeight / bufferHeight);
+        float offsetX = (viewWidth - bufferWidth * scale) / 2f;
+        float offsetY = (viewHeight - bufferHeight * scale) / 2f;
+        float rawWidth = previewSize.getWidth();
+        float rawHeight = previewSize.getHeight();
+        float[] source = {0f, 0f, viewWidth, 0f, viewWidth, viewHeight, 0f, viewHeight};
+        float[] target = new float[8];
+        mapCameraCorner(target, 0, 0f, 0f, rawWidth, rawHeight,
+                relativeRotation, scale, offsetX, offsetY);
+        mapCameraCorner(target, 2, rawWidth, 0f, rawWidth, rawHeight,
+                relativeRotation, scale, offsetX, offsetY);
+        mapCameraCorner(target, 4, rawWidth, rawHeight, rawWidth, rawHeight,
+                relativeRotation, scale, offsetX, offsetY);
+        mapCameraCorner(target, 6, 0f, rawHeight, rawWidth, rawHeight,
+                relativeRotation, scale, offsetX, offsetY);
         Matrix matrix = new Matrix();
-        matrix.setScale(uniformScale, uniformScale, viewWidth / 2f, viewHeight / 2f);
+        matrix.setPolyToPoly(source, 0, target, 0, 4);
         previewView.setTransform(matrix);
         Log.i(KEY_LOG_TAG, "Camera preview transform view=" + viewWidth + "x" + viewHeight
                 + " preview=" + previewSize.getWidth() + "x" + previewSize.getHeight()
                 + " viewRatio=" + viewRatio + " bufferRatio=" + bufferRatio
-                + " uniformScale=" + uniformScale);
+                + " relativeRotation=" + relativeRotation + " uniformScale=" + scale);
+    }
+
+    private static void mapCameraCorner(float[] target, int offset, float x, float y,
+            float rawWidth, float rawHeight, int rotationDegrees, float scale,
+            float offsetX, float offsetY) {
+        float rotatedX;
+        float rotatedY;
+        switch (((rotationDegrees % 360) + 360) % 360) {
+            case 90:
+                rotatedX = rawHeight - y;
+                rotatedY = x;
+                break;
+            case 180:
+                rotatedX = rawWidth - x;
+                rotatedY = rawHeight - y;
+                break;
+            case 270:
+                rotatedX = y;
+                rotatedY = rawWidth - x;
+                break;
+            case 0:
+            default:
+                rotatedX = x;
+                rotatedY = y;
+                break;
+        }
+        target[offset] = offsetX + rotatedX * scale;
+        target[offset + 1] = offsetY + rotatedY * scale;
+    }
+
+    static float[] previewTransformCorrections(float viewWidth, float viewHeight,
+            float bufferWidth, float bufferHeight) {
+        if (viewWidth <= 0f || viewHeight <= 0f || bufferWidth <= 0f || bufferHeight <= 0f) {
+            return new float[]{1f, 1f};
+        }
+        float defaultScaleX = viewWidth / bufferWidth;
+        float defaultScaleY = viewHeight / bufferHeight;
+        float cropScale = Math.max(defaultScaleX, defaultScaleY);
+        return new float[]{cropScale / defaultScaleX, cropScale / defaultScaleY};
     }
 
     private void captureStillImage() {
@@ -6250,7 +7534,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             captureSession.capture(request.build(), new CameraCaptureSession.CaptureCallback() {
                 @Override
                 public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request, TotalCaptureResult result) {
-                    cameraStatusText.setText("照片处理中");
+                    mainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            cameraStatusText.setText("照片处理中");
+                        }
+                    });
                 }
             }, cameraHandler);
         } catch (Exception error) {
@@ -6264,6 +7553,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (sceneVideoRecording || sceneVideoStarting || pendingSceneVideoCapture) {
             return;
         }
+        sceneVideoReturnSurface = sceneVideoReturnTarget(hudCapabilityVisible,
+                capabilityDetailVisible, hudOperationAbilityId, hudTaskWorkspaceActive);
+        hideCapabilityCenter();
         activateHudTaskWorkspace();
         pendingSceneVideoCapture = true;
         cancelForegroundVoiceListening();
@@ -6328,6 +7620,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (cameraDevice == null || sceneVideoRecorder == null || !previewView.isAvailable()) {
             throw new CameraAccessException(CameraAccessException.CAMERA_ERROR);
         }
+        final CameraDevice expectedCamera = cameraDevice;
+        final Handler expectedHandler = cameraHandler;
+        final long expectedSessionGeneration = ++cameraSessionGeneration;
+        if (expectedHandler == null) {
+            throw new CameraAccessException(CameraAccessException.CAMERA_ERROR);
+        }
         if (captureSession != null) {
             captureSession.close();
             captureSession = null;
@@ -6336,48 +7634,81 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         texture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
         Surface previewSurface = new Surface(texture);
         Surface recorderSurface = sceneVideoRecorder.getSurface();
-        CaptureRequest.Builder request = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+        CaptureRequest.Builder request = expectedCamera.createCaptureRequest(
+                CameraDevice.TEMPLATE_RECORD);
         request.addTarget(previewSurface);
         request.addTarget(recorderSurface);
-        cameraDevice.createCaptureSession(Arrays.asList(previewSurface, recorderSurface),
+        expectedCamera.createCaptureSession(Arrays.asList(previewSurface, recorderSurface),
                 new CameraCaptureSession.StateCallback() {
                     @Override public void onConfigured(CameraCaptureSession session) {
-                        if (!sceneVideoStarting || sceneVideoRecorder == null) {
+                        if (!isCurrentCameraSession(expectedSessionGeneration,
+                                cameraSessionGeneration,
+                                cameraDevice == expectedCamera && screenMode == ScreenMode.CAMERA)
+                                || !sceneVideoStarting || sceneVideoRecorder == null) {
                             session.close();
                             return;
                         }
                         captureSession = session;
                         try {
-                            session.setRepeatingRequest(request.build(), null, cameraHandler);
+                            session.setRepeatingRequest(request.build(), null, expectedHandler);
                             sceneVideoRecorder.start();
                             pendingSceneVideoCapture = false;
                             sceneVideoStarting = false;
                             sceneVideoRecording = true;
-                            cameraStatusText.setText("正在记录现场短视频，确认键可停止");
-                            cameraCaptureButton.setText("■");
-                            cameraCaptureButton.setContentDescription("停止现场短视频");
-                            sceneVideoStopRunnable = new Runnable() {
-                                @Override public void run() { stopSceneVideoCapture("max-duration"); }
-                            };
-                            mainHandler.postDelayed(sceneVideoStopRunnable, SCENE_VIDEO_MAX_DURATION_MS);
+                            mainHandler.post(new Runnable() {
+                                @Override public void run() {
+                                    cameraStatusText.setText("正在记录现场短视频，确认键可停止");
+                                    cameraCaptureButton.setText("■");
+                                    cameraCaptureButton.setContentDescription("停止现场短视频");
+                                    sceneVideoStopRunnable = new Runnable() {
+                                        @Override public void run() {
+                                            stopSceneVideoCapture("max-duration");
+                                        }
+                                    };
+                                    mainHandler.postDelayed(
+                                            sceneVideoStopRunnable, SCENE_VIDEO_MAX_DURATION_MS);
+                                }
+                            });
                         } catch (Exception error) {
-                            cameraStatusText.setText("短视频录制失败：" + safeMessage(error));
-                            stopSceneVideoCapture("start-failed");
+                            final String message = "短视频录制失败：" + safeMessage(error);
+                            mainHandler.post(new Runnable() {
+                                @Override public void run() {
+                                    cameraStatusText.setText(message);
+                                    stopSceneVideoCapture("start-failed");
+                                }
+                            });
                         }
                     }
 
                     @Override public void onConfigureFailed(CameraCaptureSession session) {
-                        pendingSceneVideoCapture = false;
-                        sceneVideoStarting = false;
-                        cameraStatusText.setText("短视频相机会话创建失败");
-                        releaseSceneVideoRecorder();
-                        createPreviewSession();
-                        scheduleForegroundVoiceListening("scene-video-session-failed");
+                        session.close();
+                        if (!isCurrentCameraSession(expectedSessionGeneration,
+                                cameraSessionGeneration, cameraDevice == expectedCamera)) {
+                            return;
+                        }
+                        mainHandler.post(new Runnable() {
+                            @Override public void run() {
+                                pendingSceneVideoCapture = false;
+                                sceneVideoStarting = false;
+                                cameraStatusText.setText("短视频相机会话创建失败");
+                                releaseSceneVideoRecorder();
+                                createPreviewSession();
+                                scheduleForegroundVoiceListening("scene-video-session-failed");
+                            }
+                        });
                     }
-                }, cameraHandler);
+                }, expectedHandler);
     }
 
     private void stopSceneVideoCapture(String reason) {
+        if (shouldPostVideoStopToMainThread(Looper.myLooper() == Looper.getMainLooper())) {
+            mainHandler.post(new Runnable() {
+                @Override public void run() {
+                    stopSceneVideoCapture(reason);
+                }
+            });
+            return;
+        }
         if (sceneVideoStopRunnable != null) {
             mainHandler.removeCallbacks(sceneVideoStopRunnable);
             sceneVideoStopRunnable = null;
@@ -6400,7 +7731,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             Log.w(KEY_LOG_TAG, "Scene video recorder stop failed reason=" + reason, error);
         }
         releaseSceneVideoRecorder();
-        if (completedVideo != null && completedVideo.isFile() && completedVideo.length() > 0L) {
+        if (retainCompletedSceneVideo(completedVideo)) {
             MaintenanceTask task = ensureMaintenanceTask("请结合现场短视频和语音描述继续分析设备异常");
             if (task != null) {
                 task.addEvidence("现场短视频 " + (task.evidenceReferences().size() + 1),
@@ -6415,11 +7746,68 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         // voice-first HUD so ASR and expert collaboration never compete with a hidden preview.
         closeCamera();
         stopCameraThread();
+        final String returnSurface = sceneVideoReturnSurface;
+        sceneVideoReturnSurface = "standby";
         renderChatScreen();
         if (completionMessage.length() > 0) {
             setChatStatus(completionMessage);
         }
+        mainHandler.post(new Runnable() {
+            @Override public void run() {
+                restoreSceneVideoReturnSurface(returnSurface);
+            }
+        });
+        offlineWakeSuppressedUntilMs = SystemClock.elapsedRealtime()
+                + MEDIA_WAKE_REARM_COOLDOWN_MS;
         scheduleForegroundVoiceListening("scene-video-complete");
+    }
+
+    static boolean retainCompletedSceneVideo(File videoFile) {
+        if (videoFile != null && videoFile.isFile() && videoFile.length() > 0L) {
+            return true;
+        }
+        if (videoFile != null && videoFile.exists()) {
+            videoFile.delete();
+        }
+        return false;
+    }
+
+    static int purgeIncompleteSceneVideos(File evidenceDirectory) {
+        if (evidenceDirectory == null || !evidenceDirectory.isDirectory()) {
+            return 0;
+        }
+        File[] candidates = evidenceDirectory.listFiles();
+        if (candidates == null) {
+            return 0;
+        }
+        int removed = 0;
+        for (File candidate : candidates) {
+            String name = candidate == null ? "" : candidate.getName();
+            if (candidate != null && candidate.isFile() && candidate.length() == 0L
+                    && name.startsWith("scene-") && name.endsWith(".mp4")
+                    && candidate.delete()) {
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    private void restoreSceneVideoReturnSurface(String returnSurface) {
+        String target = returnSurface == null ? "" : returnSurface;
+        if (target.startsWith("operation:")) {
+            showHudOperationDetail(target.substring("operation:".length()));
+            return;
+        }
+        if ("capabilities".equals(target)) {
+            showCapabilityCenter();
+            return;
+        }
+        if ("task".equals(target)) {
+            activateHudTaskWorkspace();
+            syncHudPresentation();
+            return;
+        }
+        returnToHudStandby("语音待命");
     }
 
     private void releaseSceneVideoRecorder() {
@@ -6438,24 +7826,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private int jpegOrientation() {
-        int deviceRotation = getWindowManager().getDefaultDisplay().getRotation();
-        int degrees;
-        switch (deviceRotation) {
-            case Surface.ROTATION_90:
-                degrees = 90;
-                break;
-            case Surface.ROTATION_180:
-                degrees = 180;
-                break;
-            case Surface.ROTATION_270:
-                degrees = 270;
-                break;
-            case Surface.ROTATION_0:
-            default:
-                degrees = 0;
-                break;
-        }
-        return (sensorOrientation + degrees + 360) % 360;
+        return relativeCameraRotationDegrees();
     }
 
     private void handleCapturedImage(ImageReader reader) {
@@ -6521,7 +7892,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (bitmap == null || previewSize == null || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
             return bitmap;
         }
-        float targetAspect = previewSize.getWidth() / (float) previewSize.getHeight();
+        float targetAspect = displayAspectRatioForBuffer(
+                previewSize.getWidth(), previewSize.getHeight(), relativeCameraRotationDegrees());
         float sourceAspect = bitmap.getWidth() / (float) bitmap.getHeight();
         if (Math.abs(sourceAspect - targetAspect) < 0.02f) {
             return bitmap;
@@ -6593,6 +7965,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void closeCamera() {
+        cameraDeviceGeneration++;
+        cameraSessionGeneration++;
         abortSceneVideoCapture();
         try {
             if (captureSession != null) {
@@ -6672,7 +8046,26 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (cleaned.length() == 0 || isVoiceRecoveryPrompt(cleaned)) {
             return "";
         }
-        return cleaned.replaceFirst("^\\s*(?:小叮当|小叮|小丁)[，,。！？!?\\s]*", "").trim();
+        String narration = cleaned
+                .replaceFirst("^\\s*(?:小叮当|小叮|小丁)[，,。！？!?\\s]*", "")
+                .trim();
+        String effectiveCharacters = narration.replaceAll("[\\p{P}\\p{S}\\s]", "");
+        return effectiveCharacters.length() <= 1 ? "" : narration;
+    }
+
+    static boolean isInsufficientFreeformVoiceInput(String text) {
+        String cleaned = VoiceCommandRouter.normalize(sanitizeTaskNarration(text));
+        if (cleaned.length() < 2) {
+            return true;
+        }
+        switch (cleaned) {
+            case "你确":
+            case "好的":
+            case "好的你确":
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static boolean isVoiceRecoveryPrompt(String text) {
@@ -6818,6 +8211,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         final String imageId;
         final String imagePreviewBase64;
         Bitmap imagePreviewBitmap;
+        String detectionMarkersJson = "[]";
         boolean streaming;
 
         ChatMessage(String role, String kind, String text, String imageId, boolean streaming) {
@@ -6834,7 +8228,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
 
         ChatMessage copy() {
-            return new ChatMessage(role, kind, text, imageId, imagePreviewBase64, streaming);
+            ChatMessage copy = new ChatMessage(role, kind, text, imageId, imagePreviewBase64, streaming);
+            copy.detectionMarkersJson = detectionMarkersJson;
+            return copy;
         }
 
         JSONObject toJson() {
@@ -6845,6 +8241,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 json.put("text", text);
                 json.put("image_id", imageId);
                 json.put("image_preview_base64", "");
+                json.put("detection_markers", detectionMarkersJson);
                 json.put("streaming", streaming);
             } catch (Exception ignored) {
             }
@@ -6852,13 +8249,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
 
         static ChatMessage fromJson(JSONObject json) {
-            return new ChatMessage(
+            ChatMessage message = new ChatMessage(
                     json.optString("role", "assistant"),
                     json.optString("kind", "text"),
                     json.optString("text", ""),
                     json.optString("image_id", ""),
                     json.optString("image_preview_base64", ""),
                     json.optBoolean("streaming", false));
+            message.detectionMarkersJson = json.optString("detection_markers", "[]");
+            return message;
         }
     }
 
@@ -7007,7 +8406,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             system.put("role", "system");
             // The task workspace is a field repair aid, not a reasoning report. The final
             // user turn in the prompt is authoritative over older task memory.
-            system.put("content", "你是" + APP_LABEL + "，面向现场运维人员。最后一条用户问题是本轮唯一待回答的问题；较早任务记忆只用于避免遗忘设备和已完成操作，不能替代或改写本轮问题。仅根据用户文字、任务记忆和实际提供的图片作答，不能编造现场观察。直接、简洁回答当前问题，不展示思维过程，不套固定栏目：询问原因或状态时直接说明；询问操作或维修时才按必要顺序给出可执行步骤；只有证据不足时才说明无法确认及需要补拍的具体位置；只有确有必要时才建议专家协同。涉及带电、旋转、高温高压、泄漏、动火或无法确认的安全风险时，第一步必须要求停止操作并遵守现场规程。");
+            system.put("content", "你是" + APP_LABEL + "，面向现场运维人员。最后一条用户问题是本轮唯一待回答的问题；较早任务记忆只用于避免遗忘设备和已完成操作，不能替代或改写本轮问题。仅根据用户文字、任务记忆和实际提供的图片作答，不能编造现场观察。直接、简洁回答当前问题，不展示思维过程，不套固定栏目：询问原因或状态时直接说明；询问操作或维修时只给出一个当前最需要执行、可立即验证的原子操作，只能包含一个动作和一个检查对象，不得使用“及、或、以及、顿号”等并列结构；其余排查项留到用户反馈后再问，也不得罗列多个可能原因。只有证据不足时才说明无法确认及需要补拍的具体位置；只有确有必要时才建议专家协同。涉及带电、旋转、高温高压、泄漏、动火或无法确认的安全风险时，第一步必须要求停止操作并遵守现场规程。");
             messages.put(system);
             JSONObject user = new JSONObject();
             user.put("role", "user");

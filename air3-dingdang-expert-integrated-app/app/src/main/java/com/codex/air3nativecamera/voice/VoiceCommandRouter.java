@@ -20,6 +20,9 @@ public final class VoiceCommandRouter {
         KNOWLEDGE,
         SKILL_CENTER,
         AGENT_CENTER,
+        AGENT_SKILL_ACTION,
+        ENABLE_ENVIRONMENT_AGENT,
+        DISABLE_ENVIRONMENT_AGENT,
         TASK_CENTER,
         WORK_ORDER,
         SAFETY,
@@ -60,22 +63,40 @@ public final class VoiceCommandRouter {
         register(Command.VIDEO_STOP, "停止录像", "结束录像", "停止录制", "结束录制");
         register(Command.DIAGNOSIS, "开始诊断", "AI诊断", "诊断");
         register(Command.EXPERT, "专家", "呼叫专家");
-        register(Command.INSPECTION, "巡检", "巡检任务", "打开巡检任务");
+        register(Command.INSPECTION, "巡检", "巡检任务", "打开巡检任务",
+                "开始实训室设备巡检", "开始实训室巡检", "实训室设备巡检", "实训室巡检",
+                "开始水电暖巡检", "开始空调巡检", "开始消防巡检");
         register(Command.PERCEPTION, "现场感知", "现场采集");
         register(Command.RECORD, "记录");
         register(Command.DEVICE, "设备", "设备记忆", "打开设备记忆");
         register(Command.KNOWLEDGE, "知识库", "知识", "华方知识库", "打开华方知识库");
         register(Command.SKILL_CENTER, "技能中心", "AI技能中心", "技能");
-        register(Command.AGENT_CENTER, "智能体中心", "AI智能体", "Agent中心", "agent中心",
+        register(Command.AGENT_CENTER, "AI运维技能", "打开AI运维技能", "ai运维技能", "打开ai运维技能",
+                "AI运维技能中心", "运维技能", "运维技能中心",
+                "智能体中心", "AI智能体", "Agent中心", "agent中心",
                 "AI Agent中心", "AIAgent中心", "打开AI Agent中心");
+        register(Command.AGENT_SKILL_ACTION,
+                "启用网络运维技能", "打开网络运维技能", "停用网络运维技能", "关闭网络运维技能", "禁用网络运维技能",
+                "启用水电暖巡检技能", "打开水电暖巡检技能", "停用水电暖巡检技能", "关闭水电暖巡检技能", "禁用水电暖巡检技能",
+                "启用暖通空调技能", "打开暖通空调技能", "停用暖通空调技能", "关闭暖通空调技能", "禁用暖通空调技能",
+                "启用消防巡检技能", "打开消防巡检技能", "停用消防巡检技能", "关闭消防巡检技能", "禁用消防巡检技能",
+                "启用安全作业技能", "打开安全作业技能", "停用安全作业技能", "关闭安全作业技能", "禁用安全作业技能");
+        register(Command.ENABLE_ENVIRONMENT_AGENT,
+                "环境诊断", "环境诊断技能",
+                "启用环境诊断", "打开环境诊断", "启用环境诊断技能", "打开环境诊断技能");
+        register(Command.DISABLE_ENVIRONMENT_AGENT,
+                "停用环境诊断", "关闭环境诊断", "禁用环境诊断",
+                "关闭环境诊断Agent", "停用环境诊断Agent",
+                "关闭环境技能", "停用环境技能", "停用环境诊断技能", "关闭环境诊断技能", "禁用环境诊断技能");
         register(Command.TASK_CENTER, "任务中心", "任务", "维修任务", "打开维修任务");
-        register(Command.WORK_ORDER, "工单");
+        register(Command.WORK_ORDER, "工单", "打开工单");
         register(Command.SAFETY, "安全");
         register(Command.REPORT, "报告");
         register(Command.TRAINING, "培训", "演练");
-        register(Command.HELP, "语音帮助", "打开语音帮助", "语音指令帮助", "查看语音指令",
-                "操作帮助", "怎么操作", "有哪些命令", "指令有哪些");
-        register(Command.GLASSES_TUTORIAL, "眼镜使用教学", "打开眼镜使用教学", "眼镜教学");
+        register(Command.HELP, "帮助", "语音帮助", "打开语音帮助", "语音指令帮助", "查看语音指令",
+                "打开帮助", "语音命令", "使用帮助", "操作帮助", "怎么操作", "有哪些命令", "指令有哪些");
+        register(Command.GLASSES_TUTORIAL, "眼镜使用教学", "打开眼镜使用教学", "眼镜教学", "打开眼镜教学",
+                "眼镜教程", "眼镜怎么用");
         register(Command.BACK, "返回", "返回上一页", "返回聊天", "退出相机", "不拍了");
         register(Command.HOME, "返回首页", "回首页", "回到首页", "退回首页", "返回主页", "首页");
         register(Command.RESTART_TASK, "重新开始任务", "新任务", "重新诊断");
@@ -116,10 +137,6 @@ public final class VoiceCommandRouter {
         if (normalized.startsWith("请")) {
             normalized = normalized.substring(1);
         }
-        if (normalized.contains("返回首页") || normalized.contains("回到首页")
-                || normalized.contains("退回首页") || normalized.contains("返回主页")) {
-            return Command.HOME;
-        }
         return commands.containsKey(normalized) ? commands.get(normalized) : Command.NONE;
     }
 
@@ -146,6 +163,10 @@ public final class VoiceCommandRouter {
             case KNOWLEDGE:
             case DEVICE:
             case AGENT_CENTER:
+            case AGENT_SKILL_ACTION:
+            case ENABLE_ENVIRONMENT_AGENT:
+            case DISABLE_ENVIRONMENT_AGENT:
+            case WORK_ORDER:
             case HELP:
             case GLASSES_TUTORIAL:
             case HOME:

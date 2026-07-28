@@ -62,8 +62,32 @@ public final class IntegratedModeControllerTest {
                 "releaseExpert", "showChat", "resumeVoice"), hooks.events);
     }
 
+    @Test
+    public void synchronousExpertExitDuringEntryDoesNotLeaveTheControllerStuck() {
+        FakeHooks hooks = new FakeHooks();
+        IntegratedModeController controller = new IntegratedModeController(hooks);
+        hooks.controller = controller;
+        hooks.exitDuringShowExpert = true;
+
+        controller.enterExpert();
+
+        assertEquals(IntegratedModeController.Mode.CHAT, controller.mode());
+        assertEquals(Arrays.asList(
+                "persist", "stopVoice", "closeCamera", "showExpert",
+                "releaseExpert", "showChat", "resumeVoice"), hooks.events);
+
+        hooks.events.clear();
+        hooks.exitDuringShowExpert = false;
+        controller.enterExpert();
+
+        assertEquals(IntegratedModeController.Mode.EXPERT, controller.mode());
+        assertEquals(Arrays.asList("persist", "stopVoice", "closeCamera", "showExpert"), hooks.events);
+    }
+
     private static final class FakeHooks implements IntegratedModeController.Hooks {
         private final List<String> events = new ArrayList<>();
+        private IntegratedModeController controller;
+        private boolean exitDuringShowExpert;
 
         @Override
         public void persistLegacyState() {
@@ -83,6 +107,9 @@ public final class IntegratedModeControllerTest {
         @Override
         public void showExpert() {
             events.add("showExpert");
+            if (exitDuringShowExpert) {
+                controller.exitExpert();
+            }
         }
 
         @Override

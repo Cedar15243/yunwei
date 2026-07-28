@@ -3,16 +3,24 @@ package com.codex.air3nativecamera.features.operations;
 import com.codex.air3nativecamera.features.AIAgentConfig;
 import com.codex.air3nativecamera.features.AISkillConfig;
 import com.codex.air3nativecamera.task.MaintenanceTask;
+import com.codex.air3nativecamera.task.TaskSession;
+import com.codex.air3nativecamera.features.inspection.InspectionCatalog;
+import com.codex.air3nativecamera.features.inspection.InspectionTaskDefinition;
+import com.codex.air3nativecamera.features.inspection.InspectionRun;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.json.JSONObject;
 
 /** Builds local-only capability content. It intentionally has no Android or network dependency. */
 public final class OperationDetailFactory {
     private final KnowledgeCatalog knowledgeCatalog;
     private final List<AISkillConfig> skills;
     private final List<AIAgentConfig> agents;
+    private final InspectionCatalog inspectionCatalog;
+    private final DeviceMemoryCatalog deviceMemoryCatalog;
+    private final AgentPackageCatalog agentPackageCatalog;
 
     private OperationDetailFactory(
             KnowledgeCatalog knowledgeCatalog,
@@ -21,6 +29,9 @@ public final class OperationDetailFactory {
         this.knowledgeCatalog = knowledgeCatalog;
         this.skills = skills;
         this.agents = agents;
+        this.inspectionCatalog = InspectionCatalog.defaultCatalog();
+        this.deviceMemoryCatalog = DeviceMemoryCatalog.defaultCatalog();
+        this.agentPackageCatalog = AgentPackageCatalog.defaultCatalog();
     }
 
     public static OperationDetailFactory defaultFactory() {
@@ -30,9 +41,50 @@ public final class OperationDetailFactory {
                 AIAgentConfig.defaultConfigs());
     }
 
+    public boolean authorizeAgentPackage(String id) {
+        return agentPackageCatalog.authorize(id);
+    }
+
+    public boolean toggleAgentPackage(String id) {
+        return agentPackageCatalog.toggle(id);
+    }
+
+    public boolean setAgentPackageAuthorized(String id, boolean authorized) {
+        return agentPackageCatalog.setAuthorized(id, authorized);
+    }
+
+    public boolean isAgentPackageAuthorized(String id) {
+        AgentPackageCatalog.AgentPackage item = agentPackageCatalog.find(id);
+        return item != null && item.authorized();
+    }
+
+    public JSONObject agentAuthorizationJson() {
+        return agentPackageCatalog.toJson();
+    }
+
+    public void restoreAgentAuthorizations(JSONObject json) {
+        AgentPackageCatalog restored = AgentPackageCatalog.fromJson(json);
+        for (AgentPackageCatalog.AgentPackage item : agentPackageCatalog.packages()) {
+            AgentPackageCatalog.AgentPackage restoredItem = restored.find(item.id());
+            agentPackageCatalog.setAuthorized(item.id(),
+                    restoredItem != null && restoredItem.authorized());
+        }
+    }
+
     public OperationDetail create(String abilityId, MaintenanceTask task, InspectionChecklist checklist) {
+        return create(abilityId, task, checklist, null);
+    }
+
+    public OperationDetail create(String abilityId, MaintenanceTask task, InspectionChecklist checklist,
+            InspectionRun inspectionRun) {
+        return create(abilityId, task, checklist, inspectionRun,
+                java.util.Collections.<TaskSession>emptyList());
+    }
+
+    public OperationDetail create(String abilityId, MaintenanceTask task, InspectionChecklist checklist,
+            InspectionRun inspectionRun, List<TaskSession> taskSessions) {
         if ("inspection".equals(abilityId)) {
-            return inspection(checklist == null ? InspectionChecklist.defaultChecklist() : checklist);
+            return inspection(inspectionRun);
         }
         if ("perception".equals(abilityId)) {
             return perception(task);
@@ -41,7 +93,7 @@ public final class OperationDetailFactory {
             return videoEvidence(task);
         }
         if ("tasks".equals(abilityId)) {
-            return tasks(task);
+            return tasks(task, taskSessions);
         }
         if ("device_brain".equals(abilityId)) {
             return deviceProfile(task);
@@ -59,21 +111,64 @@ public final class OperationDetailFactory {
                 new ArrayList<String>(), "", "", "", "");
     }
 
-    private OperationDetail inspection(InspectionChecklist checklist) {
-        List<String> items = new ArrayList<>();
-        items.add("本地巡检进度：" + checklist.progressLabel());
-        InspectionChecklist.Item next = null;
-        for (InspectionChecklist.Item item : checklist.items()) {
-            boolean completed = checklist.isCompleted(item.id());
-            items.add((completed ? "已完成" : "待检查") + " · " + item.title() + "\n" + item.detail());
-            if (!completed && next == null) {
-                next = item;
+    private OperationDetail inspection(InspectionRun run) {
+        if (run != null) {
+            if (run.isCompleted()) {
+                List<String> summary = new ArrayList<>();
+                summary.add("巡检点位：" + run.completedPointCount() + " / "
+                        + run.definition().points().size());
+                int abnormalCount = 0;
+                for (InspectionRun.PointRecord record : run.records()) {
+                    if (record.outcome() == InspectionRun.Outcome.ABNORMAL) abnormalCount++;
+                }
+                summary.add("正常：" + (run.completedPointCount() - abnormalCount)
+                        + " 项\n异常：" + abnormalCount + " 项");
+                summary.add("照片、AI 观察、前后读数和现场确认均已保存在本次巡检记录中。");
+                return new OperationDetail("巡检已完成", run.definition().title(),
+                        "全部点位已完成，返回后可选择其他巡检任务。",
+                        summary, "", "", "", "");
             }
+            InspectionTaskDefinition.Point point = run.currentPoint();
+            InspectionRun.PointRecord record = run.currentRecord();
+            List<String> items = new ArrayList<>();
+            items.add("任务进度：" + run.currentPointNumber() + " / " + run.definition().points().size());
+            items.add(point.title() + "\n" + point.detail());
+            items.add(record.photoReference().length() == 0 ? "照片：等待拍摄" : "照片：已关联当前点位");
+            items.add(record.aiObservation().length() == 0
+                    ? "AI识别：等待照片" : "AI识别：" + record.aiObservation());
+            if (record.previousValue().length() > 0 || record.currentValue().length() > 0) {
+                String currentValue = record.currentValue().equals(record.aiObservation())
+                        ? "见 AI 识别结果" : record.currentValue();
+                items.add("上次：" + record.previousValue() + "\n本次：" + currentValue);
+            }
+            String primaryAction = record.aiObservation().length() == 0
+                    ? "capture_inspection_photo" : "confirm_inspection_normal";
+            String primaryLabel = record.aiObservation().length() == 0 ? "拍摄当前点位" : "确认正常并继续";
+            String secondaryAction = record.aiObservation().length() == 0
+                    ? "cancel_inspection" : "confirm_inspection_abnormal";
+            String secondaryLabel = record.aiObservation().length() == 0 ? "退出巡检" : "记录异常并继续";
+            List<String> itemActions = new ArrayList<>();
+            for (int i = 0; i < items.size(); i++) itemActions.add("");
+            if (record.photoReference().length() > 0) {
+                items.set(2, "照片：已关联当前点位，可重新拍摄");
+                itemActions.set(2, "capture_inspection_photo");
+            }
+            return new OperationDetail("巡检执行中", run.definition().title(),
+                    "一项一屏：拍照、AI识别、人工确认、对比上次值后进入下一项。",
+                    items, itemActions, primaryAction, primaryLabel, secondaryAction, secondaryLabel);
         }
-        String action = next == null ? "" : "complete_inspection:" + next.id();
-        String label = next == null ? "巡检已完成" : "完成：" + next.title();
-        return new OperationDetail("本地巡检", "巡检任务", "仅记录当前设备的本地检查进度，不自动识别设备或生成报告。",
-                items, action, label, "capture_photo", "补拍现场照片");
+        List<String> items = new ArrayList<>();
+        List<String> actions = new ArrayList<>();
+        for (InspectionTaskDefinition task : inspectionCatalog.tasks()) {
+            String scope = task.scope() == InspectionTaskDefinition.Scope.MY_TASK
+                    ? "我的巡检任务" : "行业巡检任务";
+            items.add(scope + " · " + task.title() + "\n" + task.summary()
+                    + "\n可说：" + inspectionVoiceCommand(task.id()));
+            actions.add("start_inspection:" + task.id());
+        }
+        return new OperationDetail("巡检任务", "巡检任务",
+                "选择任务后逐点拍照、AI识别、人工确认并对比上次记录。也可说“进入第一个选项”。",
+                items, actions, "", "", "", "");
     }
 
     private OperationDetail perception(MaintenanceTask task) {
@@ -94,18 +189,30 @@ public final class OperationDetailFactory {
         List<String> items = new ArrayList<>();
         items.add("当前任务证据：" + profile.evidenceCount() + "项");
         items.add("单段最长 15 秒，仅保存为当前任务的本地视频证据。" );
-        items.add("当前不宣称自动理解视频内容或执行 OCR。" );
+        items.add("视频证据已关联当前任务，可在专家协同或维修复核时查看。" );
         return new OperationDetail("现场证据", "短视频取证", "记录设备运行、异响或操作过程，便于后续复核。",
                 items, "capture_video", "开始录像", "", "");
     }
 
-    private OperationDetail tasks(MaintenanceTask task) {
+    private OperationDetail tasks(MaintenanceTask task, List<TaskSession> taskSessions) {
         List<String> items = new ArrayList<>();
         if (task == null) {
-            items.add("暂无进行中的维修任务。");
-            items.add("开始诊断后，这里会显示现场证据、诊断与维修进度。" );
-            return new OperationDetail("当前任务", "维修任务", "仅显示本机当前任务，不伪装成云端工单系统。",
-                    items, "start_diagnosis", "开始 AI 诊断", "", "");
+            List<String> actions = new ArrayList<>();
+            int added = 0;
+            for (int i = taskSessions.size() - 1; i >= 0 && added < 3; i--) {
+                TaskSession session = taskSessions.get(i);
+                if (session.status() == TaskSession.Status.COMPLETED) continue;
+                MaintenanceTask paused = session.maintenanceTask();
+                items.add("已暂停 · " + paused.initialProblem() + "\n阶段："
+                        + phaseLabel(paused.phase()) + " · 现场证据："
+                        + paused.evidenceLabels().size() + "项");
+                actions.add("resume_task:" + session.id());
+                added++;
+            }
+            items.add("临时现场诊断\n从拍照或语音描述创建新的独立维修任务");
+            actions.add("");
+            return new OperationDetail("维修记录", "维修任务", "可继续已暂停任务，或开始新的独立现场诊断。",
+                    items, actions, "start_diagnosis", "开始新诊断", "", "");
         }
         items.add("问题：" + task.initialProblem());
         items.add("阶段：" + phaseLabel(task.phase()));
@@ -117,29 +224,31 @@ public final class OperationDetailFactory {
             items.add("维修步骤：等待 AI 生成");
         }
         return new OperationDetail("当前任务", "维修任务", "本机保留当前维修过程与证据，退出后仍可回到当前任务。",
-                items, "continue_task", "继续当前任务", "capture_photo", "补拍现场照片");
+                items, "continue_task", "继续当前任务", "", "");
     }
 
     private OperationDetail deviceProfile(MaintenanceTask task) {
-        DeviceProfile profile = DeviceProfile.from(task);
         List<String> items = new ArrayList<>();
-        items.add("当前问题：" + profile.currentProblem());
-        for (Map.Entry<String, String> fact : profile.facts().entrySet()) {
-            items.add(fact.getKey() + "：" + fact.getValue());
+        for (DeviceMemoryCatalog.DeviceRecord record : deviceMemoryCatalog.records()) {
+            items.add(record.system() + " · " + record.brand() + " " + record.model()
+                    + " · " + record.quantity() + "台\n状态：" + record.status()
+                    + " · 最近巡检：" + record.lastInspection()
+                    + " · 故障/维修：" + record.faultCount() + "/" + record.repairCount()
+                    + " · " + record.keyParameter());
         }
-        items.add("本地证据：" + profile.evidenceCount() + "项");
-        items.add("仅汇总当前任务，不代表已接入设备历史档案。" );
-        return new OperationDetail("本地设备记忆", "设备记忆", "将本次任务确认的设备事实和证据集中展示。",
+        return new OperationDetail("本机设备目录", "设备记忆", "本机设备目录已加载，共 "
+                + deviceMemoryCatalog.totalQuantity() + " 台；按系统查看品牌、型号、巡检与维修记录。",
                 items, "", "", "", "");
     }
 
     private OperationDetail knowledge() {
         List<String> items = new ArrayList<>();
-        items.add("只读目录 · 不连接云端知识库，也不会自动执行步骤。" );
         for (KnowledgeCatalog.Entry entry : knowledgeCatalog.entries()) {
-            items.add(entry.title() + "\n" + entry.summary());
+            items.add(entry.system() + " · " + entry.title() + " · v" + entry.version()
+                    + "\n" + entry.summary() + " · 更新 " + entry.updatedAt());
         }
-        return new OperationDetail("只读参考", "华方知识库", "供现场人员查看安全与维修参考，AI 诊断仍使用现有接口。",
+        return new OperationDetail("知识连接状态", "华方知识库",
+                "本机资料已连接；企业知识服务未连接。按系统查看已加载的手册、SOP 与技术资料。",
                 items, "", "", "", "");
     }
 
@@ -155,12 +264,33 @@ public final class OperationDetailFactory {
 
     private OperationDetail agents() {
         List<String> items = new ArrayList<>();
-        items.add("能力预览 · 当前不会自主编排任务、调用模型或控制设备。" );
-        for (AIAgentConfig agent : agents) {
-            items.add(agent.title() + "\n" + agent.summary() + "\n关联 Skill：" + joinSkillIds(agent.skillIds()));
+        List<String> actions = new ArrayList<>();
+        for (AgentPackageCatalog.AgentPackage agent : agentPackageCatalog.packages()) {
+            String content = agent.system() + " · " + agent.title() + " · v" + agent.version()
+                    + "\n" + agent.authorizationLabel() + " · Skill："
+                    + String.join("、", agent.skills());
+            if (agent.authorized()) {
+                content += "\n权限：" + agent.permissionScope() + " · " + agent.description();
+            }
+            content += "\n可说：" + (agent.authorized() ? "停用" : "启用") + agent.title();
+            if ("environment_ops".equals(agent.id())) {
+                content += "\n启用后返回首页，现场拍照，再描述“平台报警，看看怎么回事”";
+            }
+            items.add(content);
+            actions.add("set_agent:" + agent.id() + ":"
+                    + (agent.authorized() ? "disabled" : "enabled"));
         }
-        return new OperationDetail("能力预览", "AI Agent中心", "展示未来智能体与领域 Skill 的关联结构。",
-                items, "", "", "", "");
+        return new OperationDetail("本机技能授权", "AI运维技能",
+                "按现场需要启用或停用各系统技能包。请说完整名称，例如“启用环境诊断技能”。",
+                items, actions, "", "", "", "");
+    }
+
+    private static String inspectionVoiceCommand(String taskId) {
+        if ("lab-training-room".equals(taskId)) return "开始实训室设备巡检";
+        if ("water-power-heating".equals(taskId)) return "开始水电暖巡检";
+        if ("air-conditioning".equals(taskId)) return "开始空调巡检";
+        if ("fire-safety".equals(taskId)) return "开始消防巡检";
+        return "打开巡检任务";
     }
 
     private String joinSkillIds(List<String> skillIds) {

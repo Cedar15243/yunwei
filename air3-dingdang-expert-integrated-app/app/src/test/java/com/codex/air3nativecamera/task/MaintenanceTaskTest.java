@@ -5,8 +5,23 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
+import org.json.JSONObject;
 
 public final class MaintenanceTaskTest {
+
+    @Test
+    public void countsPersistedAiTurnsIndependentlyFromTheTransientChatSurface() {
+        MaintenanceTask task = MaintenanceTask.start("交换机告警灯闪烁");
+
+        task.addTurn("现场人员", "已经补拍上联端口");
+        assertEquals(0, task.aiTurnCount());
+
+        task.addTurn("AI", "请确认 ALM 指示灯状态");
+        task.addTurn("现场人员", "ALM 未亮");
+        task.addTurn("AI", "链路状态正常，继续检查端口丢包");
+
+        assertEquals(2, task.aiTurnCount());
+    }
     @Test
     public void taskMemoryRetainsFactsEvidenceAndOnlyTheRelevantRecentTurns() {
         MaintenanceTask task = MaintenanceTask.start("服务器无法启动");
@@ -48,6 +63,54 @@ public final class MaintenanceTaskTest {
         assertEquals(2, task.currentRepairStepNumber());
         assertEquals(4, task.repairStepCount());
         assertEquals("观察状态灯", task.currentRepairStep());
+    }
+
+    @Test
+    public void followUpDiagnosisDoesNotResetActiveRepairGuidance() {
+        MaintenanceTask task = MaintenanceTask.start("服务器无法启动");
+        task.replaceRepairSteps(new String[]{"检查电源接口", "观察状态灯", "拍摄模块近景"});
+        task.advanceRepairStep();
+
+        task.setDiagnosis("接口已确认", "请继续观察电源状态灯。", 88);
+
+        assertEquals(MaintenanceTask.Phase.GUIDANCE, task.phase());
+        assertEquals(2, task.currentRepairStepNumber());
+        assertEquals("观察状态灯", task.currentRepairStep());
+    }
+
+    @Test
+    public void followUpDiagnosisDoesNotReopenACompletedRepairTask() {
+        MaintenanceTask task = MaintenanceTask.start("服务器无法启动");
+        task.replaceRepairSteps(new String[]{"检查电源接口"});
+        task.complete();
+
+        task.setDiagnosis("复核完成", "设备已恢复正常。", 96);
+
+        assertEquals(MaintenanceTask.Phase.COMPLETED, task.phase());
+    }
+
+    @Test
+    public void refreshedRepairStepsKeepTheCurrentGuidancePosition() {
+        MaintenanceTask task = MaintenanceTask.start("服务器无法启动");
+        task.replaceRepairSteps(new String[]{"检查电源接口", "观察状态灯", "拍摄模块近景"});
+        task.advanceRepairStep();
+
+        task.replaceRepairSteps(new String[]{"确认电源输入", "观察新的状态灯", "拍摄接口近景"});
+
+        assertEquals(MaintenanceTask.Phase.GUIDANCE, task.phase());
+        assertEquals(2, task.currentRepairStepNumber());
+        assertEquals("观察新的状态灯", task.currentRepairStep());
+    }
+
+    @Test
+    public void refreshedRepairStepsDoNotReopenACompletedTask() {
+        MaintenanceTask task = MaintenanceTask.start("服务器无法启动");
+        task.replaceRepairSteps(new String[]{"检查电源接口"});
+        task.complete();
+
+        task.replaceRepairSteps(new String[]{"复核设备状态", "记录维修结果"});
+
+        assertEquals(MaintenanceTask.Phase.COMPLETED, task.phase());
     }
 
     @Test
@@ -98,5 +161,58 @@ public final class MaintenanceTaskTest {
         assertEquals(pageCount - 1, task.conversationPageIndex(pageSize));
         assertFalse(task.nextConversationPage(pageSize));
         assertEquals(pageCount - 1, task.conversationPageIndex(pageSize));
+    }
+
+    @Test
+    public void shortNumberedLinesConsumeEnoughDisplayBudgetToAvoidClippingThePager() {
+        MaintenanceTask task = MaintenanceTask.start("传感器没有输出");
+        String reply = "当前判断：信号链路异常。\n"
+                + "1. 检查信号端电压。\n"
+                + "2. 检查端子是否松动。\n"
+                + "3. 检查屏蔽层接地。\n"
+                + "4. 检查信号线通断。\n"
+                + "5. 更换传感器复测。";
+        task.addTurn("AI", reply);
+
+        int pageSize = 112;
+        assertTrue(task.conversationPageCount(pageSize) > 1);
+        for (int page = 0; page < task.conversationPageCount(pageSize); page++) {
+            assertTrue(task.conversationPage(page, pageSize).split("\\n", -1).length <= 4);
+        }
+    }
+
+    @Test
+    public void taskRoundTripRetainsEvidenceConversationDiagnosisAndRepairProgress() throws Exception {
+        MaintenanceTask task = MaintenanceTask.start("温湿度传感器数据异常");
+        task.putFact("设备型号", "Honeywell T7350");
+        task.addEvidence("网关全景", "photo://wide-1");
+        task.addTurn("现场人员", "平台温度一直显示 0 度");
+        task.addTurn("AI", "请先确认网关供电指示灯");
+        task.setDiagnosis("采集链路异常", "先排查网关供电，再检查传感器接线。", 86);
+        task.replaceRepairSteps(new String[]{"检查网关供电", "检查网络", "检查传感器接线"});
+        task.advanceRepairStep();
+
+        MaintenanceTask restored = MaintenanceTask.fromJson(new JSONObject(task.toJson().toString()));
+
+        assertEquals("温湿度传感器数据异常", restored.initialProblem());
+        assertEquals("Honeywell T7350", restored.facts().get("设备型号"));
+        assertEquals("photo://wide-1", restored.evidenceReferences().get(0));
+        assertTrue(restored.buildPromptMemory(6).contains("平台温度一直显示 0 度"));
+        assertEquals("采集链路异常", restored.diagnosisTitle());
+        assertEquals(2, restored.currentRepairStepNumber());
+        assertEquals(MaintenanceTask.Phase.GUIDANCE, restored.phase());
+    }
+
+    @Test
+    public void restoresLegacyTasksWithRepairStepsAsGuidanceInsteadOfDiagnosis() throws Exception {
+        MaintenanceTask task = MaintenanceTask.start("服务器无法启动");
+        task.replaceRepairSteps(new String[]{"检查电源接口", "观察状态灯"});
+        JSONObject legacy = new JSONObject(task.toJson().toString());
+        legacy.put("phase", MaintenanceTask.Phase.DIAGNOSIS.name());
+
+        MaintenanceTask restored = MaintenanceTask.fromJson(legacy);
+
+        assertEquals(MaintenanceTask.Phase.GUIDANCE, restored.phase());
+        assertEquals(1, restored.currentRepairStepNumber());
     }
 }
