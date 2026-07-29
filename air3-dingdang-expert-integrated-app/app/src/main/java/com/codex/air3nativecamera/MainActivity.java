@@ -31,6 +31,7 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaRecorder;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -73,9 +74,13 @@ import com.codex.air3nativecamera.task.MaintenanceTask;
 import com.codex.air3nativecamera.task.TaskSession;
 import com.codex.air3nativecamera.task.TaskSessionManager;
 import com.codex.air3nativecamera.skills.HoneywellTempHumiditySkill;
+import com.codex.air3nativecamera.skills.SceneReferenceGuide;
 import com.codex.air3nativecamera.skills.SceneSkillAiBridge;
 import com.codex.air3nativecamera.ui.hud.HudWebPresentation;
 import com.codex.air3nativecamera.voice.LegacyVoiceCommandRouter;
+import com.codex.air3nativecamera.voice.AsrProviderFailure;
+import com.codex.air3nativecamera.voice.LocalAsrEngine;
+import com.codex.air3nativecamera.voice.LocalAsrEngineFactory;
 import com.codex.air3nativecamera.voice.VoiceCommandRouter;
 import com.codex.air3nativecamera.voice.VoiceAsrSessionGate;
 import com.codex.air3nativecamera.voice.VoiceEventStateMachine;
@@ -188,8 +193,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final boolean OFFLINE_WAKE_ENABLED = GeneratedConfig.IFLYTEK_OFFLINE_WAKE_ENABLED;
     private static final boolean VOICE_WORKFLOW_ENABLED = VOICE_PREVIEW_ENABLED || OFFLINE_WAKE_ENABLED;
     private static final String DIRECT_ASR_MODEL = "fun-asr-realtime";
-    private static final int JPEG_QUALITY = GeneratedConfig.FAST_UPLOAD ? 82 : 92;
+    private static final int JPEG_QUALITY = GeneratedConfig.FAST_UPLOAD ? 86 : 95;
     private static final int UPLOAD_MAX_IMAGE_EDGE = GeneratedConfig.FAST_UPLOAD ? 1280 : 1600;
+    private static final int CAMERA_MIN_STABLE_FRAMES = 3;
+    private static final long CAMERA_MIN_STABLE_DURATION_MS = 450L;
     private static final int PREVIEW_MAX_IMAGE_EDGE = 480;
     private static final long VOICE_RECORDING_MS = 30000L;
     private static final long SCENE_VIDEO_MAX_DURATION_MS = 15000L;
@@ -370,6 +377,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private int sensorOrientation;
     private int cameraLensFacing = CameraCharacteristics.LENS_FACING_BACK;
     private boolean captureInFlight;
+    private boolean cameraPreviewTransformReady;
+    private boolean cameraPreviewStable;
+    private int cameraPreviewFrameCount;
+    private long cameraPreviewTransformReadyAtMs;
     private MediaRecorder sceneVideoRecorder;
     private File sceneVideoFile;
     private boolean sceneVideoRecording;
@@ -450,13 +461,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        applyImmersiveSystemUi();
         chatAiClient = createChatAiClient();
         directAsrClient = new DirectAsrClient(DIRECT_ASR_ENDPOINT, DIRECT_ASR_API_KEY);
         realtimeAsrClient = createRealtimeAsrClient();
@@ -555,6 +560,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     @Override
     protected void onResume() {
         super.onResume();
+        applyImmersiveSystemUi();
         if (screenMode == ScreenMode.CAMERA
                 && previewView != null && previewView.isAvailable() && cameraDevice == null
                 && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -569,6 +575,24 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             renderChatScreen();
         }
         refreshCollabServiceHealth(false);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            applyImmersiveSystemUi();
+        }
+    }
+
+    private void applyImmersiveSystemUi() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
 
     @Override
@@ -2202,6 +2226,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return Math.max(0, firstUserIndex);
     }
 
+    static int taskMessageStartIndexOnActivation(int currentMessageCount,
+            int liveTranscriptIndex) {
+        if (liveTranscriptIndex >= 0 && liveTranscriptIndex < currentMessageCount) {
+            return liveTranscriptIndex;
+        }
+        return Math.max(0, currentMessageCount);
+    }
+
     static boolean shouldClearComposerForProjectTransition(boolean preservePendingInput) {
         return !preservePendingInput;
     }
@@ -2281,7 +2313,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private void activateHudTaskWorkspace() {
         if (!hudTaskWorkspaceActive) {
-            hudTaskMessageStartIndex = chatMessages.size();
+            hudTaskMessageStartIndex = taskMessageStartIndexOnActivation(
+                    chatMessages.size(), liveTranscriptMessageIndex);
         }
         hudTaskWorkspaceActive = true;
     }
@@ -2378,7 +2411,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private String taskVoiceLabel() {
         if (voiceEventStateMachine.state() == VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION) {
-            return photoDescriptionPrompt();
+            return "说“小叮当”补充描述，或说“仅发送图片”";
         }
         String state = taskVoiceState();
         if ("listening".equals(state)) {
@@ -3306,6 +3339,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                applyImmersiveSystemUi();
                 expertLayer.setVisibility(View.GONE);
                 chatLayer.setVisibility(hudPresentation == null ? View.VISIBLE : View.GONE);
                 if (hudLayer != null) {
@@ -3327,17 +3361,20 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private void renderCameraScreen() {
         screenMode = ScreenMode.CAMERA;
+        resetCameraPreviewStability();
         if (modeController != null) {
             modeController.setLegacyMode(IntegratedModeController.Mode.CAMERA);
         }
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                applyImmersiveSystemUi();
                 expertLayer.setVisibility(View.GONE);
                 if (hudLayer != null) {
                     hudLayer.setVisibility(View.GONE);
                 }
                 chatLayer.setVisibility(View.GONE);
+                previewView.setAlpha(0f);
                 previewView.setVisibility(View.VISIBLE);
                 cameraOverlay.setVisibility(View.VISIBLE);
                 cameraBackButton.setVisibility(View.VISIBLE);
@@ -3346,7 +3383,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                         ? "正在记录现场短视频，确认键可停止"
                         : hasPhoto
                         ? "已拍摄 · 说“使用照片”继续"
-                        : "取景中 · 说“拍照”");
+                        : "相机准备中");
                 cameraCaptureButton.setText(sceneVideoRecording ? "■" : hasPhoto ? "✓" : "●");
                 cameraCaptureButton.setContentDescription(sceneVideoRecording
                         ? "停止现场短视频"
@@ -4014,14 +4051,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private View imageMessageBubble(ChatMessage message) {
+        boolean referenceGuide = SceneReferenceGuide.isReferenceImageId(message.imageId);
         LinearLayout bubble = new LinearLayout(this);
         bubble.setOrientation(LinearLayout.VERTICAL);
         bubble.setPadding(dp(12), dp(12), dp(12), dp(12));
         bubble.setBackground(roundRect(Color.WHITE, Color.rgb(210, 230, 220), 7));
 
         TextView label = new TextView(this);
-        label.setText("现场输入 · 图片");
-        label.setTextColor(Color.rgb(73, 109, 96));
+        label.setText(referenceGuide ? "叮当 AI · 检查点参考示意" : "现场输入 · 图片");
+        label.setTextColor(referenceGuide ? Color.rgb(12, 116, 87) : Color.rgb(73, 109, 96));
         label.setTextSize(14);
         label.setTypeface(Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
@@ -4029,15 +4067,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         labelParams.bottomMargin = dp(8);
         bubble.addView(label, labelParams);
 
-        if (message.imagePreviewBitmap == null && message.imagePreviewBase64.length() > 0) {
-            message.imagePreviewBitmap = decodeImagePreviewBitmap(message.imagePreviewBase64);
-        }
-        Bitmap preview = message.imagePreviewBitmap;
+        Bitmap preview = resolveChatImageBitmap(message);
         if (preview != null) {
             ImageView imageView = new ImageView(this);
             imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
             imageView.setAdjustViewBounds(false);
-            imageView.setContentDescription("现场照片");
+            imageView.setContentDescription(referenceGuide ? "检查点参考示意" : "现场照片");
             imageView.setImageBitmap(preview);
             int bubbleWidth = Math.round(getResources().getDisplayMetrics().widthPixels * 0.72f) - dp(20);
             int imageHeight = Math.round(bubbleWidth * preview.getHeight() / (float) preview.getWidth());
@@ -4055,6 +4090,26 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         return wrapMessageBubble(bubble, false);
+    }
+
+    private Bitmap resolveChatImageBitmap(ChatMessage message) {
+        if (message == null) {
+            return null;
+        }
+        if (message.imagePreviewBitmap == null && message.imagePreviewBase64.length() > 0) {
+            message.imagePreviewBitmap = decodeImagePreviewBitmap(message.imagePreviewBase64);
+        }
+        if (message.imagePreviewBitmap != null
+                || !SceneReferenceGuide.isReferenceImageId(message.imageId)) {
+            return message.imagePreviewBitmap;
+        }
+        String assetPath = SceneReferenceGuide.assetPath(message.imageId);
+        try (InputStream stream = getAssets().open(assetPath)) {
+            message.imagePreviewBitmap = BitmapFactory.decodeStream(stream);
+        } catch (IOException error) {
+            Log.w(KEY_LOG_TAG, "Unable to load scene reference asset " + assetPath, error);
+        }
+        return message.imagePreviewBitmap;
     }
 
     private View wrapMessageBubble(View bubble, boolean user) {
@@ -4162,7 +4217,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (!pendingVoicePhotoCapture) {
             return;
         }
-        if (screenMode == ScreenMode.CAMERA && cameraDevice != null && captureSession != null && imageReader != null && !captureInFlight) {
+        if (screenMode == ScreenMode.CAMERA && cameraDevice != null && captureSession != null
+                && imageReader != null && !captureInFlight && cameraPreviewStable) {
             pendingVoicePhotoCapture = false;
             captureStillImage();
             return;
@@ -4547,6 +4603,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         chatMessages.add(new ChatMessage("user", "image", "现场照片已随问题发送", imageId, imagePreviewBase64, false));
     }
 
+    private void appendSceneReferenceGuide(SceneReferenceGuide.Reference reference) {
+        if (reference == null) {
+            return;
+        }
+        chatMessages.add(new ChatMessage("assistant", "image", reference.caption(),
+                reference.imageId(), false));
+    }
+
     private void attachDetectionMarkersToLatestTaskImage(String markersJson) {
         int start = Math.max(0, hudTaskMessageStartIndex);
         for (int i = chatMessages.size() - 1; i >= start; i--) {
@@ -4561,11 +4625,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private ChatMessage latestImageMessage() {
         for (int i = chatMessages.size() - 1; i >= 0; i--) {
             ChatMessage message = chatMessages.get(i);
-            if ("image".equals(message.kind) && message.imageId != null && message.imageId.length() > 0) {
+            if (isUserEvidenceImage(message.role, message.kind, message.imageId)) {
                 return message;
             }
         }
         return null;
+    }
+
+    static boolean isUserEvidenceImage(String role, String kind, String imageId) {
+        return "user".equals(role) && "image".equals(kind)
+                && imageId != null && imageId.length() > 0
+                && !SceneReferenceGuide.isReferenceImageId(imageId);
     }
 
     private void appendUserTranscriptMessage(String text) {
@@ -5354,6 +5424,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private void finalizeAssistantStreamingMessage(boolean sceneEvidenceTurn,
             boolean sceneCandidateTurn, boolean requestHadNewImage) {
         String completedResponse = "";
+        SceneReferenceGuide.Reference referenceGuide = null;
         if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
             ChatMessage message = chatMessages.get(streamingAssistantIndex);
             completedResponse = message.text == null ? "" : message.text.trim();
@@ -5376,16 +5447,32 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 sceneSkillActive = true;
                 sceneEvidenceTurn = true;
             }
+            java.util.List<SceneSkillAiBridge.DetectionMarker> stepMarkers =
+                    SceneSkillAiBridge.markersForStep(activeSession, parsed);
             if (requestHadNewImage) {
                 attachDetectionMarkersToLatestTaskImage(
-                        SceneSkillAiBridge.markersJson(parsed.markers()));
+                        SceneSkillAiBridge.markersJson(stepMarkers));
             }
             if (shouldEvaluateSceneSkill(sceneSkillActive, sceneEvidenceTurn)) {
                 String narration = latestTaskEvidenceText("");
+                String evaluatedStep = activeSession.sceneStepId();
+                java.util.Set<String> reconciledEvidence = SceneSkillAiBridge.reconcileEvidence(
+                        activeSession, narration, parsed, requestHadNewImage);
+                Log.i(KEY_LOG_TAG, "Scene evidence step=" + activeSession.sceneStepId()
+                        + " modelTags=" + parsed.evidenceTags()
+                        + " reconciledTags=" + reconciledEvidence
+                        + " markers=" + parsed.evidenceMarkers().size()
+                        + " hudMarkers=" + stepMarkers.size());
+                boolean hasReliableMarker = SceneSkillAiBridge.hasReliableEvidenceMarker(
+                        stepMarkers);
                 HoneywellTempHumiditySkill.Result skillResult = honeywellTempHumiditySkill.evaluate(
-                        activeSession, narration, parsed.evidenceTags());
+                        activeSession, narration, reconciledEvidence, requestHadNewImage,
+                        hasReliableMarker);
                 if (skillResult.matched()) {
                     completedResponse = skillResult.reply();
+                    referenceGuide = SceneReferenceGuide.fallbackFor(evaluatedStep,
+                            requestHadNewImage, hasReliableMarker,
+                            skillResult.matched(), skillResult.accepted());
                     if (skillResult.accepted() && !skillResult.annotations().isEmpty()) {
                         activeSession.maintenanceTask().putFact(
                                 "本步照片标注", String.join("、", skillResult.annotations()));
@@ -5395,6 +5482,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
                 chatMessages.get(streamingAssistantIndex).text = completedResponse;
             }
+            appendSceneReferenceGuide(referenceGuide);
         }
         if (task != null && completedResponse.length() > 0) {
             task.addTurn("AI", completedResponse);
@@ -5519,12 +5607,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (task != null) {
             boolean environmentAgentEnabled = operationDetailFactory
                     .isAgentPackageAuthorized("environment_ops");
+            boolean requestHasPhoto = image != null && image.length > 0;
             if (environmentAgentEnabled) {
-                sceneCandidateTurn = honeywellTempHumiditySkill.isCandidateTurn(
-                        taskSessionManager.active(), prompt, image != null && image.length > 0);
+                boolean activatedByPrompt = honeywellTempHumiditySkill.tryActivate(
+                        taskSessionManager.active(), prompt, requestHasPhoto);
+                sceneEvidenceTurn = activatedByPrompt;
+                sceneCandidateTurn = !activatedByPrompt
+                        && honeywellTempHumiditySkill.isCandidateTurn(
+                                taskSessionManager.active(), prompt, requestHasPhoto);
             }
-            sceneEvidenceTurn = honeywellTempHumiditySkill.shouldHandleTurn(
-                    taskSessionManager.active(), prompt, image != null && image.length > 0);
+            sceneEvidenceTurn = sceneEvidenceTurn || honeywellTempHumiditySkill.shouldHandleTurn(
+                    taskSessionManager.active(), prompt, requestHasPhoto);
             task.addTurn("现场人员", prompt);
             if (image != null && image.length > 0) {
                 task.putFact("最新输入", "已补充现场照片和语音/文字描述");
@@ -6033,15 +6126,23 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private RealtimeAsrClient createRealtimeAsrClient() {
+        RealtimeAsrClient primary;
         if (!DIRECT_GPT_ENABLED && backendChatClient != null) {
-            return backendChatClient.withSessionProvider(new BackendChatClient.SessionProvider() {
+            primary = backendChatClient.withSessionProvider(new BackendChatClient.SessionProvider() {
                 @Override
                 public String sessionId() {
                     return backendSessionIdForActiveProject();
                 }
             });
+        } else {
+            primary = new DirectAsrClient(DIRECT_ASR_ENDPOINT, DIRECT_ASR_API_KEY, DIRECT_ASR_MODEL);
         }
-        return new DirectAsrClient(DIRECT_ASR_ENDPOINT, DIRECT_ASR_API_KEY, DIRECT_ASR_MODEL);
+        if (!GeneratedConfig.LOCAL_ASR_FALLBACK_ENABLED) {
+            return primary;
+        }
+        return new ResilientRealtimeAsrClient(
+                primary,
+                LocalAsrEngineFactory.create(this, true));
     }
 
     private void scheduleForegroundVoiceListening(String reason) {
@@ -6822,11 +6923,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 voiceSessionPurpose = VoiceSessionPurpose.NONE;
                 voiceStreamState = VoiceStreamState.VOICE_UNCLEAR;
                 // An empty first utterance belongs to the landing page, not a second composer.
+                String diagnosticStatus = voiceStatusForDiagnostic(code);
                 composerTranscript = hasUserConversation() || composerImageBytes != null
-                        ? voiceStatusForDiagnostic(code)
+                        ? diagnosticStatus
                         : "";
                 clearLiveTranscriptMessageIfStreaming();
-                setChatStatus("在线");
+                setChatStatus(isActionableAsrServiceFailure(code)
+                        ? diagnosticStatus
+                        : "在线");
                 renderComposer();
                 voiceStreamState = VoiceStreamState.IDLE;
                 if (shouldContinueForegroundWakeListening(code)) {
@@ -6978,6 +7082,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private String voiceStatusForDiagnostic(String code) {
         String safeCode = code == null ? "" : code;
+        if ("asr_provider_account_unavailable".equals(safeCode)) {
+            return "语音转写服务账户不可用，请检查服务配置";
+        }
+        if ("asr_provider_quota_exhausted".equals(safeCode)) {
+            return "语音转写额度不足，请检查服务配置";
+        }
         if ("asr_endpoint_missing".equals(safeCode)) {
             return "语音服务未连接，请检查 ASR 配置";
         }
@@ -6988,6 +7098,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return "说话时间太短，请再说一次";
         }
         return "没有听清，请再说一次";
+    }
+
+    private static boolean isActionableAsrServiceFailure(String code) {
+        String safeCode = code == null ? "" : code;
+        return "asr_provider_account_unavailable".equals(safeCode)
+                || "asr_provider_quota_exhausted".equals(safeCode)
+                || "asr_endpoint_missing".equals(safeCode)
+                || "asr_realtime_unavailable".equals(safeCode)
+                || safeCode.startsWith("asr_error:");
     }
 
     private void cleanupVoiceRecordThreadAsync() {
@@ -7053,6 +7172,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
             @Override
             public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
+                resetCameraPreviewStability();
                 configurePreviewTransform(width, height);
             }
 
@@ -7063,6 +7183,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
             @Override
             public void onSurfaceTextureUpdated(SurfaceTexture surface) {
+                if (!cameraPreviewTransformReady || cameraPreviewStable) {
+                    return;
+                }
+                cameraPreviewFrameCount++;
+                long elapsed = SystemClock.elapsedRealtime() - cameraPreviewTransformReadyAtMs;
+                if (!isCameraFrameStableForCapture(
+                        cameraPreviewTransformReady, cameraPreviewFrameCount, elapsed)) {
+                    return;
+                }
+                cameraPreviewStable = true;
+                previewView.setAlpha(1f);
+                cameraStatusText.setText("取景中 · 说“拍照”");
+                capturePendingVoicePhotoIfReady();
             }
         });
         if (previewView.isAvailable()) {
@@ -7218,6 +7351,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private Size chooseBestCaptureSize(Size[] sizes, Size fallback, boolean swapped) {
         if (swapped) {
+            if (isAir3Hardware(Build.MANUFACTURER, Build.MODEL)) {
+                Size highResolutionSensor = chooseLargestMatchingAspect(
+                        sizes, 4608, 3456, 4f / 3f);
+                if (highResolutionSensor != null) {
+                    return highResolutionSensor;
+                }
+            }
             Size exactPortrait = findExactSize(sizes, 720, 1280);
             if (exactPortrait != null) {
                 return exactPortrait;
@@ -7330,6 +7470,25 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     static boolean cameraDimensionsAreSwapped(int rotationDegrees) {
         int normalized = ((rotationDegrees % 360) + 360) % 360;
         return normalized == 90 || normalized == 270;
+    }
+
+    static boolean isAir3Hardware(String manufacturer, String model) {
+        String maker = manufacturer == null ? "" : manufacturer.trim();
+        String deviceModel = model == null ? "" : model.trim();
+        return "inmo".equalsIgnoreCase(maker) && "ima301".equalsIgnoreCase(deviceModel);
+    }
+
+    static boolean isCameraFrameStableForCapture(boolean transformReady, int frameCount,
+            long elapsedSinceTransformMs) {
+        return transformReady && frameCount >= CAMERA_MIN_STABLE_FRAMES
+                && elapsedSinceTransformMs >= CAMERA_MIN_STABLE_DURATION_MS;
+    }
+
+    private void resetCameraPreviewStability() {
+        cameraPreviewTransformReady = false;
+        cameraPreviewStable = false;
+        cameraPreviewFrameCount = 0;
+        cameraPreviewTransformReadyAtMs = 0L;
     }
 
     static float displayAspectRatioForBuffer(int width, int height, int rotationDegrees) {
@@ -7471,6 +7630,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         Matrix matrix = new Matrix();
         matrix.setPolyToPoly(source, 0, target, 0, 4);
         previewView.setTransform(matrix);
+        cameraPreviewTransformReady = true;
+        cameraPreviewFrameCount = 0;
+        cameraPreviewTransformReadyAtMs = SystemClock.elapsedRealtime();
         Log.i(KEY_LOG_TAG, "Camera preview transform view=" + viewWidth + "x" + viewHeight
                 + " preview=" + previewSize.getWidth() + "x" + previewSize.getHeight()
                 + " viewRatio=" + viewRatio + " bufferRatio=" + bufferRatio
@@ -7525,12 +7687,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             cameraStatusText.setText("相机还没准备好");
             return;
         }
+        if (!cameraPreviewStable) {
+            cameraStatusText.setText("相机正在稳定，请稍候");
+            return;
+        }
         try {
             captureInFlight = true;
             cameraStatusText.setText("正在拍照");
             CaptureRequest.Builder request = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             request.addTarget(imageReader.getSurface());
             request.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation());
+            request.set(CaptureRequest.JPEG_QUALITY, (byte) JPEG_QUALITY);
             captureSession.capture(request.build(), new CameraCaptureSession.CaptureCallback() {
                 @Override
                 public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request, TotalCaptureResult result) {
@@ -7577,7 +7744,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             cameraStatusText.setText("相机权限未开启，请授权后再开始短视频取证");
             return;
         }
-        if (cameraDevice == null || previewSize == null || videoSize == null || !previewView.isAvailable()) {
+        if (cameraDevice == null || previewSize == null || videoSize == null
+                || !previewView.isAvailable() || !cameraPreviewStable) {
             mainHandler.postDelayed(new Runnable() {
                 @Override public void run() { startSceneVideoCaptureIfReady(); }
             }, 250L);
@@ -7861,7 +8029,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private byte[] compressJpeg(byte[] bytes) {
-        Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+        BitmapFactory.Options decode = new BitmapFactory.Options();
+        decode.inSampleSize = cameraDecodeSampleSize(
+                bounds.outWidth, bounds.outHeight, UPLOAD_MAX_IMAGE_EDGE);
+        Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, decode);
         if (bitmap == null) {
             return bytes;
         }
@@ -7869,11 +8043,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (oriented != bitmap) {
             bitmap.recycle();
         }
+        Bitmap normalized = applyRequestedCameraRotationIfNeeded(oriented);
+        if (normalized != oriented) {
+            oriented.recycle();
+        }
         // The Air3 camera can emit a portrait JPEG while its TextureView is landscape.
         // Crop to the live view's aspect ratio so the AI evidence matches what the wearer saw.
-        Bitmap framed = cropBitmapToPreviewAspect(oriented);
-        if (framed != oriented) {
-            oriented.recycle();
+        Bitmap framed = cropBitmapToPreviewAspect(normalized);
+        if (framed != normalized) {
+            normalized.recycle();
         }
         Bitmap scaled = scaleBitmapToMaxEdge(framed, UPLOAD_MAX_IMAGE_EDGE);
         if (scaled != framed) {
@@ -7885,6 +8063,50 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return output.toByteArray();
         } finally {
             scaled.recycle();
+        }
+    }
+
+    static int cameraDecodeSampleSize(int width, int height, int targetMaxEdge) {
+        if (width <= 0 || height <= 0 || targetMaxEdge <= 0) {
+            return 1;
+        }
+        int sample = 1;
+        int longest = Math.max(width, height);
+        while (longest / (sample * 2) >= targetMaxEdge) {
+            sample *= 2;
+        }
+        return sample;
+    }
+
+    static boolean shouldApplyRequestedCameraRotation(int decodedWidth, int decodedHeight,
+            int requestedWidth, int requestedHeight, int rotationDegrees) {
+        if (!cameraDimensionsAreSwapped(rotationDegrees)
+                || decodedWidth <= 0 || decodedHeight <= 0
+                || requestedWidth <= 0 || requestedHeight <= 0
+                || requestedWidth == requestedHeight || decodedWidth == decodedHeight) {
+            return false;
+        }
+        boolean decodedLandscape = decodedWidth > decodedHeight;
+        boolean rawLandscape = requestedWidth > requestedHeight;
+        return decodedLandscape == rawLandscape;
+    }
+
+    private Bitmap applyRequestedCameraRotationIfNeeded(Bitmap bitmap) {
+        if (bitmap == null || captureSize == null) {
+            return bitmap;
+        }
+        int requestedRotation = jpegOrientation();
+        if (!shouldApplyRequestedCameraRotation(bitmap.getWidth(), bitmap.getHeight(),
+                captureSize.getWidth(), captureSize.getHeight(), requestedRotation)) {
+            return bitmap;
+        }
+        Matrix matrix = new Matrix();
+        matrix.setRotate(requestedRotation);
+        try {
+            return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(),
+                    matrix, true);
+        } catch (Exception ignored) {
+            return bitmap;
         }
     }
 
@@ -7989,6 +8211,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         } catch (Exception ignored) {
         }
         imageReader = null;
+        resetCameraPreviewStability();
+        if (previewView != null) {
+            previewView.setAlpha(0f);
+        }
     }
 
     private void abortSceneVideoCapture() {
@@ -8833,6 +9059,225 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
     }
 
+    private static final class ResilientRealtimeAsrClient implements RealtimeAsrClient {
+        private static final long PRIMARY_FINAL_GRACE_MS = 1200L;
+
+        private final RealtimeAsrClient primary;
+        private final LocalAsrEngine local;
+        private final Handler handler = new Handler(Looper.getMainLooper());
+        private RealtimeAsrCallback callback;
+        private boolean primaryHasPartial;
+        private boolean primaryDone;
+        private boolean localDone;
+        private boolean delivered;
+        private String primaryDiagnostic = "asr_task_failed";
+        private String localFinal = "";
+        private Runnable localFinalFallback;
+
+        ResilientRealtimeAsrClient(RealtimeAsrClient primary, LocalAsrEngine local) {
+            this.primary = primary;
+            this.local = local;
+        }
+
+        @Override
+        public synchronized void start(RealtimeAsrCallback callback) {
+            cancelLocalFinalFallback();
+            this.callback = callback;
+            primaryHasPartial = false;
+            primaryDone = false;
+            localDone = false;
+            delivered = false;
+            primaryDiagnostic = "asr_task_failed";
+            localFinal = "";
+            primary.start(new RealtimeAsrCallback() {
+                @Override
+                public void onPartial(String text) {
+                    onPrimaryPartial(text);
+                }
+
+                @Override
+                public void onFinal(String text) {
+                    onPrimaryFinal(text);
+                }
+
+                @Override
+                public void onUnclear(String diagnosticCode) {
+                    onPrimaryUnclear(diagnosticCode);
+                }
+
+                @Override
+                public void onError(Exception error) {
+                    onPrimaryError(error);
+                }
+            });
+            local.start(new LocalAsrEngine.Callback() {
+                @Override
+                public void onPartial(String text) {
+                    onLocalPartial(text);
+                }
+
+                @Override
+                public void onFinal(String text) {
+                    onLocalFinal(text);
+                }
+
+                @Override
+                public void onUnclear(String diagnosticCode) {
+                    onLocalUnclear(diagnosticCode);
+                }
+
+                @Override
+                public void onError(Exception error) {
+                    onLocalError(error);
+                }
+            });
+        }
+
+        @Override
+        public void acceptPcm(byte[] pcm, int length) {
+            primary.acceptPcm(pcm, length);
+            local.acceptPcm(pcm, length);
+        }
+
+        @Override
+        public void finish(String stopReason) {
+            primary.finish(stopReason);
+            local.finish(stopReason);
+        }
+
+        @Override
+        public synchronized void cancel() {
+            cancelLocalFinalFallback();
+            callback = null;
+            delivered = true;
+            primary.cancel();
+            local.cancel();
+        }
+
+        private synchronized void onPrimaryPartial(String text) {
+            if (callback == null || delivered) {
+                return;
+            }
+            String partial = sanitizeTranscriptForDisplay(text);
+            if (partial.length() == 0) {
+                return;
+            }
+            primaryHasPartial = true;
+            callback.onPartial(partial);
+        }
+
+        private synchronized void onPrimaryFinal(String text) {
+            primaryDone = true;
+            String finalText = sanitizeTranscriptForDisplay(text);
+            if (finalText.length() > 0) {
+                deliverFinal(finalText, "cloud");
+            } else {
+                onPrimaryUnclear("asr_final_empty");
+            }
+        }
+
+        private synchronized void onPrimaryUnclear(String diagnosticCode) {
+            primaryDone = true;
+            primaryDiagnostic = diagnosticCode == null || diagnosticCode.trim().length() == 0
+                    ? "asr_task_failed"
+                    : diagnosticCode.trim();
+            if (localFinal.length() > 0) {
+                deliverFinal(localFinal, "local-after-primary-failure");
+            } else if (localDone) {
+                deliverUnclear(primaryDiagnostic);
+            }
+        }
+
+        private synchronized void onPrimaryError(Exception error) {
+            String message = error == null || error.getMessage() == null
+                    ? "unknown"
+                    : error.getMessage();
+            onPrimaryUnclear("asr_error:" + message);
+        }
+
+        private synchronized void onLocalPartial(String text) {
+            if (callback == null || delivered || primaryHasPartial) {
+                return;
+            }
+            String partial = sanitizeTranscriptForDisplay(text);
+            if (partial.length() > 0) {
+                callback.onPartial(partial);
+            }
+        }
+
+        private synchronized void onLocalFinal(String text) {
+            localDone = true;
+            localFinal = sanitizeTranscriptForDisplay(text);
+            if (localFinal.length() == 0) {
+                onLocalUnclear("local_asr_empty");
+                return;
+            }
+            if (!primaryHasPartial || primaryDone) {
+                deliverFinal(localFinal, "local");
+                return;
+            }
+            cancelLocalFinalFallback();
+            localFinalFallback = new Runnable() {
+                @Override
+                public void run() {
+                    synchronized (ResilientRealtimeAsrClient.this) {
+                        localFinalFallback = null;
+                        if (!delivered && callback != null && localFinal.length() > 0) {
+                            deliverFinal(localFinal, "local-timeout-fallback");
+                        }
+                    }
+                }
+            };
+            handler.postDelayed(localFinalFallback, PRIMARY_FINAL_GRACE_MS);
+        }
+
+        private synchronized void onLocalUnclear(String diagnosticCode) {
+            localDone = true;
+            if (primaryDone && !delivered) {
+                deliverUnclear(primaryDiagnostic);
+            }
+        }
+
+        private synchronized void onLocalError(Exception error) {
+            onLocalUnclear("local_asr_error");
+        }
+
+        private void deliverFinal(String text, String source) {
+            if (callback == null || delivered) {
+                return;
+            }
+            delivered = true;
+            cancelLocalFinalFallback();
+            Log.i(KEY_LOG_TAG, "Realtime ASR selected source=" + source
+                    + " textChars=" + text.length());
+            RealtimeAsrCallback target = callback;
+            callback = null;
+            primary.cancel();
+            local.cancel();
+            target.onFinal(text);
+        }
+
+        private void deliverUnclear(String diagnosticCode) {
+            if (callback == null || delivered) {
+                return;
+            }
+            delivered = true;
+            cancelLocalFinalFallback();
+            RealtimeAsrCallback target = callback;
+            callback = null;
+            primary.cancel();
+            local.cancel();
+            target.onUnclear(diagnosticCode);
+        }
+
+        private void cancelLocalFinalFallback() {
+            if (localFinalFallback != null) {
+                handler.removeCallbacks(localFinalFallback);
+                localFinalFallback = null;
+            }
+        }
+    }
+
     private static final class DirectAsrClient implements RealtimeAsrClient {
         interface AsrCallback {
             void onText(String text);
@@ -9281,7 +9726,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                             finalDelivered = true;
                             callback.onFinal(finalText);
                         } else if (finalText.length() == 0) {
-                            callback.onUnclear("asr_" + eventName.replace('-', '_'));
+                            if ("task-failed".equals(eventName)) {
+                                AsrProviderFailure failure =
+                                        AsrProviderFailure.fromDashScopeFrame(text);
+                                Log.e(KEY_LOG_TAG, "Realtime ASR provider failure code="
+                                        + failure.diagnosticCode());
+                                callback.onUnclear(failure.diagnosticCode());
+                            } else {
+                                callback.onUnclear("asr_task_finished");
+                            }
                         }
                     }
                     closeQuietly();

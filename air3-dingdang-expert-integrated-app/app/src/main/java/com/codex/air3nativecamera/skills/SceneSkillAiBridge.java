@@ -10,6 +10,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class SceneSkillAiBridge {
+    private static final int MAX_HUD_MARKERS = 4;
     private static final Pattern EVIDENCE_LINE = Pattern.compile(
             "(?m)\\s*\\[\\[scene-evidence:([^\\]]+)]]\\s*$",
             Pattern.CASE_INSENSITIVE);
@@ -18,6 +19,9 @@ public final class SceneSkillAiBridge {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern MARKER_LINE = Pattern.compile(
             "(?m)^\\s*\\[\\[scene-marker:([^\\]]+)]]\\s*$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern VOLTAGE_VALUE = Pattern.compile(
+            "(\\d+(?:\\.\\d+)?)\\s*(?:伏|v(?:ac|dc)?)",
             Pattern.CASE_INSENSITIVE);
 
     public static final class DetectionMarker {
@@ -54,13 +58,17 @@ public final class SceneSkillAiBridge {
         private final Set<String> evidenceTags;
         private final String candidateSkillId;
         private final java.util.List<DetectionMarker> markers;
+        private final java.util.List<DetectionMarker> evidenceMarkers;
 
         ParsedResponse(String visibleText, Set<String> evidenceTags, String candidateSkillId,
-                java.util.List<DetectionMarker> markers) {
+                java.util.List<DetectionMarker> markers,
+                java.util.List<DetectionMarker> evidenceMarkers) {
             this.visibleText = visibleText;
             this.evidenceTags = Collections.unmodifiableSet(new LinkedHashSet<>(evidenceTags));
             this.candidateSkillId = candidateSkillId == null ? "" : candidateSkillId.trim();
             this.markers = Collections.unmodifiableList(new java.util.ArrayList<>(markers));
+            this.evidenceMarkers = Collections.unmodifiableList(
+                    new java.util.ArrayList<>(evidenceMarkers));
         }
 
         public String visibleText() {
@@ -78,6 +86,10 @@ public final class SceneSkillAiBridge {
         public java.util.List<DetectionMarker> markers() {
             return markers;
         }
+
+        public java.util.List<DetectionMarker> evidenceMarkers() {
+            return evidenceMarkers;
+        }
     }
 
     private SceneSkillAiBridge() {
@@ -91,52 +103,89 @@ public final class SceneSkillAiBridge {
         if (session == null || !HoneywellTempHumiditySkill.SKILL_ID.equals(session.sceneSkillId())) {
             return "";
         }
-        StepProtocol protocol = protocol(session.sceneStepId());
+        String step = HoneywellTempHumiditySkill.normalizeStepId(session.sceneStepId());
+        StepProtocol protocol = protocol(step);
         boolean contextStep = HoneywellTempHumiditySkill.STEP_SYSTEM_CONTEXT
-                .equals(session.sceneStepId());
-        boolean gatewayPowerStep = HoneywellTempHumiditySkill.STEP_GATEWAY_POWER
-                .equals(session.sceneStepId());
+                .equals(step);
+        boolean ddcPowerPhotoStep = HoneywellTempHumiditySkill.STEP_DDC_POWER_PHOTO
+                .equals(step);
+        boolean ddcPowerMeasurementStep = HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT
+                .equals(step);
         boolean meterStep = HoneywellTempHumiditySkill.STEP_METER_CHECK
-                .equals(session.sceneStepId());
+                .equals(step);
+        boolean sensorWiringStep = HoneywellTempHumiditySkill.STEP_SENSOR_WIRING
+                .equals(step);
+        boolean platformRecoveryStep = HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY
+                .equals(step);
         boolean spokenMeasurementTurn = !currentTurnHasPhoto
-                && (gatewayPowerStep || meterStep);
+                && (ddcPowerMeasurementStep || sensorWiringStep || meterStep
+                || platformRecoveryStep);
         String evidenceInstruction;
         if (contextStep) {
             evidenceInstruction = "可依据本轮上传的架构图、现场描述或设备照片建立临时采集链路；"
-                    + "信息不足时只追问缺少的现场信息，不得假定设备品牌。"
-                    + "只有确认链路包含霍尼韦尔网关和温湿度传感器时才算通过：";
+                    + "用户明确说明本轮是架构图、系统图、拓扑图或连接关系，且内容确实可用于建立链路时输出 system-context。"
+                    + "识别到具体设备时再附加对应标签，不得为了满足协议臆造品牌；信息不足时输出 insufficient：";
         } else if (spokenMeasurementTurn) {
             evidenceInstruction = "本轮没有新照片。请结合任务中已确认的照片证据，只解析工程师本轮口述结果；"
                     + "不得虚构新的视觉证据。本轮可以只口述结果，已确认照片和口述信息共同满足这些要素才算通过：";
+        } else if (sensorWiringStep) {
+            evidenceInstruction = "上一阶段已确认这是温湿度传感器；本轮只判断拆盖后的实际照片，"
+                    + "不得因当前图看不到外壳品牌而要求重新确认设备身份。照片清晰包含这些要素才算通过：";
         } else {
             evidenceInstruction = "请只判断本轮实际照片，不得根据文字描述臆测照片中不存在的内容。"
-                    + "照片同时清晰包含这些要素才算通过：";
+                    + "眼镜照片分辨率较低时，只要仍能辨认当前检查对象和关键区域，就按可见内容输出标签，"
+                    + "不要仅因画质低拒绝。照片应包含这些要素：";
         }
         return "\n\n本任务启用了现场证据核验。当前步骤：" + protocol.title + "。"
                 + evidenceInstruction + protocol.tags + "。"
                 + "当前问题与本步骤无关时输出 [[scene-evidence:unrelated]]。"
                 + "证据不足时明确指出需要补拍的位置，不推进步骤。"
-                + (gatewayPowerStep
-                ? "网关供电先用照片确认铭牌额定值、输入端子和建议测量点；工程师完成测量后可以只口述结果，无需上传万用表照片。"
-                        + "请解析额定值、实测值、单位、测量位置和稳定性。测量使用万用表直流电压档；电源灯只能作辅助证据。"
-                        + "若读数低于额定范围输出 voltage-low，若波动明显输出 voltage-unstable，均不得推进网络步骤。"
+                + (ddcPowerPhotoStep
+                ? "本轮只确认 DDC 设备身份、24VAC/COM 电源输入端和建议测量点。"
+                        + "只要照片清晰看到 Honeywell 品牌或工控 DDC 本体标识，并能定位 24VAC 与 COM 电源端子，"
+                        + "就必须输出 honeywell-ddc、power-input；不要求另有独立铭牌或型号贴纸。"
+                        + "检测框紧贴 24VAC/COM 电源端子，即上方黑色三位端子区中的 10号 24VAC 与 11号 COM 测量端；"
+                        + "12号 E-GND 可以出现在同一区域，但不是本步测量点。"
+                        + "不要框选黄色设备名称标签，也不要框选下方 1号、2号 S-BUS 端子。"
+                        + "不得仅凭 STA/485 灯判断供电正常。"
+                : "")
+                + (ddcPowerMeasurementStep
+                ? "工程师可以只口述 DDC 测量结果，无需上传万用表照片。请解析额定值、实测值、单位、24VAC/COM 测量位置和稳定性。"
+                        + "若读数低于额定范围输出 voltage-low，若波动明显输出 voltage-unstable，均不得推进 485 检查。"
                 : "")
                 + (meterStep
                 ? "本轮可以没有万用表照片。请结合任务中已确认的接线照片，解析工程师口述的额定值、实测值、单位、测量位置和稳定性；"
                         + "测量电压使用万用表直流电压档，不要把电流档直接跨接在电源两端。"
                 : "")
+                + (sensorWiringStep
+                ? "本轮允许没有照片。请解析工程师口述的接线异常、处理结果和电压状态；"
+                        + "确认虚接、松动或接触不良时输出 terminal、wiring-anomaly，确认处理后电压正常时输出 voltage-in-range。"
+                        + "缺少异常、处理结果或电压状态时输出 insufficient。"
+                : "")
+                + (platformRecoveryStep
+                ? "本轮允许没有照片。工程师确认平台温湿度数据恢复时输出 platform、temperature-normal；"
+                        + "未明确恢复时输出 insufficient。"
+                : "")
                 + "回复最后单独输出 [[scene-evidence:已确认的英文标签]]；"
                 + "若证据不足输出 [[scene-evidence:insufficient]]。该行不要解释。"
+                + (currentTurnHasPhoto
+                ? "本轮有照片，请尽量为当前检查对象输出可靠检测框：" + protocol.markerTargets
+                        + "；能确认对象但无法精确框选时，保留证据标签且不要伪造坐标。"
+                : "")
                 + markerInstruction();
     }
 
     public static String candidateInstruction() {
-        return "\n\n请核对本轮实际照片是否同时满足：监控平台页面、温湿度数据缺失或异常、"
+        return "\n\n请核对本轮实际照片是否同时满足：监控平台页面、右侧报警列表中存在温湿度传感器报警记录、"
                 + "其他监测数据正常。不得只根据用户文字判断。"
+                + "只要图中可见监控大屏、工业数字化大屏或设备监控界面，必须包含 platform 标签。"
                 + "全部满足时在回复最后输出 [[scene-candidate:"
                 + HoneywellTempHumiditySkill.SKILL_ID + "]]，否则输出 [[scene-candidate:none]]。"
                 + "另起一行输出已确认的 [[scene-evidence:platform,temperature-missing,other-data-normal]]；"
                 + "证据不足时输出 [[scene-evidence:insufficient]]。这些标记不要解释。"
+                + "只输出一个检测框，紧贴右侧报警列表中的温湿度传感器报警记录；"
+                + "不要框选下方机房环境检测区，也不要框选整个屏幕。"
+                + "不能可靠框选时输出 insufficient，不得绑定任务。"
                 + markerInstruction();
     }
 
@@ -158,15 +207,15 @@ public final class SceneSkillAiBridge {
         }
         Matcher matcher = EVIDENCE_LINE.matcher(source);
         Set<String> tags = new LinkedHashSet<>();
-        if (matcher.find()) {
+        while (matcher.find()) {
             for (String value : matcher.group(1).split(",")) {
-                String tag = value.trim().toLowerCase(Locale.ROOT);
+                String tag = normalizeEvidenceTag(value);
                 if (tag.length() > 0) {
                     tags.add(tag);
                 }
             }
-            source = matcher.replaceAll("").trim();
         }
+        source = EVIDENCE_LINE.matcher(source).replaceAll("").trim();
         Matcher markerMatcher = MARKER_LINE.matcher(source);
         java.util.List<DetectionMarker> markers = new java.util.ArrayList<>();
         while (markerMatcher.find()) {
@@ -176,7 +225,259 @@ public final class SceneSkillAiBridge {
             }
         }
         source = markerMatcher.replaceAll("").trim();
-        return new ParsedResponse(source, tags, candidateSkillId, markers);
+        boolean rejectedEvidence = tags.contains("insufficient") || tags.contains("unrelated");
+        if (!rejectedEvidence) {
+            for (DetectionMarker marker : markers) {
+                String markerEvidence = highConfidenceMarkerEvidenceTag(marker);
+                if (markerEvidence.length() > 0) {
+                    tags.add(markerEvidence);
+                }
+            }
+        }
+        java.util.List<DetectionMarker> hudMarkers = rejectedEvidence
+                ? Collections.emptyList() : selectHudMarkers(markers);
+        java.util.List<DetectionMarker> evidenceMarkers = rejectedEvidence
+                ? Collections.emptyList() : markers;
+        return new ParsedResponse(source, tags, candidateSkillId, hudMarkers, evidenceMarkers);
+    }
+
+    public static Set<String> reconcileEvidence(TaskSession session, String narration,
+            ParsedResponse parsed, boolean currentTurnHasPhoto) {
+        Set<String> result = new LinkedHashSet<>();
+        if (parsed != null) {
+            result.addAll(parsed.evidenceTags());
+        }
+        if (session == null
+                || !HoneywellTempHumiditySkill.SKILL_ID.equals(session.sceneSkillId())) {
+            return Collections.unmodifiableSet(result);
+        }
+        String step = HoneywellTempHumiditySkill.normalizeStepId(session.sceneStepId());
+        boolean explicitSpokenSystemContext = HoneywellTempHumiditySkill.STEP_SYSTEM_CONTEXT
+                .equals(step) && describesSystemRelationship(
+                        narration == null ? "" : narration.trim().toLowerCase(Locale.ROOT));
+        if (result.contains("unrelated")
+                || (result.contains("insufficient") && !explicitSpokenSystemContext)) {
+            return Collections.unmodifiableSet(result);
+        }
+        if (explicitSpokenSystemContext) {
+            result.remove("insufficient");
+        }
+        java.util.List<DetectionMarker> markers = parsed == null
+                ? Collections.<DetectionMarker>emptyList() : parsed.evidenceMarkers();
+        if (currentTurnHasPhoto) {
+            reconcilePhotoEvidence(step, markers, result);
+        }
+        reconcileSpokenEvidence(step, narration, result);
+        return Collections.unmodifiableSet(result);
+    }
+
+    private static void reconcilePhotoEvidence(String step, java.util.List<DetectionMarker> markers,
+            Set<String> evidence) {
+        if (HoneywellTempHumiditySkill.STEP_SYSTEM_CONTEXT.equals(step)) {
+            reconcileSystemContext(markers, evidence);
+        }
+        for (DetectionMarker marker : markers) {
+            if (marker == null || marker.confidence() < 75) {
+                continue;
+            }
+            String key = markerKey(marker.label());
+            if (isDdcLabel(key)) {
+                evidence.add("honeywell-ddc");
+            }
+            if (isGatewayLabel(key)) {
+                evidence.add("honeywell-gateway");
+            }
+            if (isSensorLabel(key)) {
+                evidence.add("temp-humidity-sensor");
+            }
+            if (HoneywellTempHumiditySkill.STEP_PLATFORM_ANOMALY.equals(step)) {
+                if (isPlatformLabel(key)) evidence.add("platform");
+                if ((key.contains("温湿度") && containsAny(key, "异常", "缺失", "无数据", "报警", "告警"))
+                        || containsAny(key, "报警显示区", "报警列表", "告警列表", "待处理告警")) {
+                    evidence.add("temperature-missing");
+                }
+                if (containsAny(key, "其他正常", "其余正常", "正常数据")) {
+                    evidence.add("other-data-normal");
+                }
+            } else if (HoneywellTempHumiditySkill.STEP_DDC_POWER_PHOTO.equals(step)) {
+                if ((containsAny(key, "24vac", "24v", "10号", "电源", "供电"))
+                        && containsAny(key, "11号", "com", "输入", "端子", "测量点")) {
+                    evidence.add("power-input");
+                }
+            } else if (HoneywellTempHumiditySkill.STEP_DDC_RS485.equals(step)) {
+                if (key.contains("485") && containsAny(key, "端子", "接线", "485+", "485-")) {
+                    evidence.add("rs485-terminal");
+                }
+                if (key.contains("485") && containsAny(key, "灯", "指示", "状态")) {
+                    evidence.add("rs485-led");
+                }
+            } else if (HoneywellTempHumiditySkill.STEP_GATEWAY_RS485.equals(step)) {
+                if (containsAny(key, "com1", "com2", "485")
+                        && containsAny(key, "灯", "指示", "状态")) {
+                    evidence.add("gateway-rs485-led");
+                }
+                if (containsAny(key, "rj45", "网口", "网络口")) evidence.add("network-port");
+                if (containsAny(key, "网线", "networkcable", "ethernetcable")) {
+                    evidence.add("network-cable");
+                }
+                if (containsAny(key, "link灯", "网络灯", "网络状态灯", "链路灯", "网口通讯灯", "网络口通讯灯")) {
+                    evidence.add("link-led");
+                }
+            } else if (HoneywellTempHumiditySkill.STEP_GATEWAY_NETWORK.equals(step)) {
+                if (containsAny(key, "rj45", "网口", "网络口")) evidence.add("network-port");
+                if (containsAny(key, "网线", "networkcable", "ethernetcable")) {
+                    evidence.add("network-cable");
+                }
+                if (containsAny(key, "link灯", "网络灯", "网络状态灯", "链路灯")) {
+                    evidence.add("link-led");
+                }
+            } else if (HoneywellTempHumiditySkill.STEP_SENSOR_DEVICE.equals(step)) {
+                if (containsAny(key, "线缆入口", "电缆入口", "进线口", "cableentry")) {
+                    evidence.add("sensor-cable-entry");
+                }
+            } else if (HoneywellTempHumiditySkill.STEP_SENSOR_WIRING.equals(step)) {
+                if (key.contains("端子")) evidence.add("terminal");
+                if (containsAny(key, "信号线", "接入端子", "导线", "线序")) {
+                    evidence.add("signal-wire");
+                }
+                if (containsAny(key, "裸露导体", "露铜")) evidence.add("exposed-conductor");
+                if (containsAny(key, "松动", "脱落")) evidence.add("loose-wire");
+                if (containsAny(key, "接线异常", "接触不良")) evidence.add("wiring-suspect");
+            } else if (HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY.equals(step)) {
+                if (isPlatformLabel(key)) evidence.add("platform");
+                if (key.contains("温湿度") && containsAny(key, "恢复", "正常")) {
+                    evidence.add("temperature-normal");
+                }
+                if (key.contains("刷新") && containsAny(key, "时间", "时刻")) {
+                    evidence.add("refresh-time");
+                }
+            }
+        }
+    }
+
+    private static void reconcileSystemContext(java.util.List<DetectionMarker> markers,
+            Set<String> evidence) {
+        boolean ddc = false;
+        boolean gateway = false;
+        boolean platform = false;
+        boolean networkNode = false;
+        boolean sensor = false;
+        for (DetectionMarker marker : markers) {
+            if (marker == null || marker.confidence() < 65) {
+                continue;
+            }
+            String key = markerKey(marker.label());
+            ddc |= isDdcLabel(key);
+            gateway |= isGatewayLabel(key);
+            platform |= isPlatformLabel(key) || key.contains("服务器");
+            networkNode |= containsAny(key, "交换机", "switch", "路由器", "网络节点");
+            sensor |= isSensorLabel(key);
+        }
+        if (ddc) evidence.add("honeywell-ddc");
+        if (gateway) evidence.add("honeywell-gateway");
+        if (platform) evidence.add("platform");
+        if (sensor) evidence.add("temp-humidity-sensor");
+        int nodes = (ddc ? 1 : 0) + (gateway ? 1 : 0) + (platform ? 1 : 0)
+                + (networkNode ? 1 : 0) + (sensor ? 1 : 0);
+        if ((ddc && gateway) || nodes >= 3) {
+            evidence.add("system-context");
+        }
+    }
+
+    private static void reconcileSpokenEvidence(String step, String narration,
+            Set<String> evidence) {
+        String text = narration == null ? "" : narration.trim().toLowerCase(Locale.ROOT);
+        if (HoneywellTempHumiditySkill.STEP_SYSTEM_CONTEXT.equals(step)
+                && describesSystemRelationship(text)) {
+            evidence.add("system-context");
+        }
+        if (HoneywellTempHumiditySkill.STEP_SENSOR_WIRING.equals(step)) {
+            if (containsAny(text, "虚接", "松动", "接触不良", "脱落", "接反")) {
+                evidence.add("terminal");
+                evidence.add("wiring-anomaly");
+            }
+            if (containsAny(text, "电压正常", "电压稳定", "读数正常", "测量正常")) {
+                evidence.add("voltage-in-range");
+            }
+        }
+        if (HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY.equals(step)
+                && containsAny(text, "恢复", "正常", "重新上报")
+                && containsAny(text, "平台", "温湿度", "数据")) {
+            evidence.add("platform");
+            evidence.add("temperature-normal");
+        }
+        Matcher voltageMatcher = VOLTAGE_VALUE.matcher(text);
+        if (!voltageMatcher.find()) {
+            return;
+        }
+        double voltage;
+        try {
+            voltage = Double.parseDouble(voltageMatcher.group(1));
+        } catch (NumberFormatException ignored) {
+            return;
+        }
+        if (HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT.equals(step)) {
+            evidence.add("honeywell-ddc");
+            evidence.add("rated-voltage");
+            evidence.add("meter-reading");
+            evidence.add("probe-point");
+            boolean unstable = containsAny(text, "不稳定", "波动", "跳动");
+            if (unstable) evidence.add("voltage-unstable");
+            if (voltage < 21.6d) {
+                evidence.add("voltage-low");
+            } else if (voltage > 26.4d) {
+                evidence.add("voltage-high");
+            } else if (!unstable) {
+                evidence.add("voltage-in-range");
+            }
+        } else if (HoneywellTempHumiditySkill.STEP_METER_CHECK.equals(step)) {
+            evidence.add("terminal");
+            evidence.add("meter-reading");
+            evidence.add("probe-point");
+            if (containsAny(text, "异常", "不正常", "没电", "没有电", "断路",
+                    "接触不良", "松动", "脱落", "接反")) {
+                evidence.add("wiring-anomaly");
+            }
+        }
+    }
+
+    private static boolean describesSystemRelationship(String text) {
+        int entities = 0;
+        if (containsAny(text, "平台", "服务器")) entities++;
+        if (containsAny(text, "网关", "gateway")) entities++;
+        if (containsAny(text, "ddc", "工控")) entities++;
+        if (containsAny(text, "传感器", "温湿度")) entities++;
+        return entities >= 2 && containsAny(text, "连接", "接到", "接网关", "通过", "链路", "再接");
+    }
+
+    private static String markerKey(String label) {
+        return (label == null ? "" : label.trim().toLowerCase(Locale.ROOT))
+                .replace(" ", "").replace("_", "").replace("-", "");
+    }
+
+    private static boolean isDdcLabel(String key) {
+        return key.contains("ddc") || key.contains("工控控制器");
+    }
+
+    private static boolean isGatewayLabel(String key) {
+        return key.contains("网关") || key.contains("gateway");
+    }
+
+    private static boolean isPlatformLabel(String key) {
+        return key.contains("平台") || key.contains("监控界面") || key.contains("platform");
+    }
+
+    private static boolean isSensorLabel(String key) {
+        return key.contains("温湿度传感器") || key.contains("temperaturehumiditysensor");
+    }
+
+    private static boolean containsAny(String text, String... values) {
+        for (String value : values) {
+            if (text.contains(value)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static String markersJson(java.util.List<DetectionMarker> markers) {
@@ -203,39 +504,206 @@ public final class SceneSkillAiBridge {
         return result.append(']').toString();
     }
 
+    public static java.util.List<DetectionMarker> markersForStep(TaskSession session,
+            ParsedResponse parsed) {
+        if (parsed == null) {
+            return Collections.emptyList();
+        }
+        if (session == null
+                || !HoneywellTempHumiditySkill.SKILL_ID.equals(session.sceneSkillId())) {
+            return parsed.markers();
+        }
+        String step = HoneywellTempHumiditySkill.normalizeStepId(session.sceneStepId());
+        java.util.List<DetectionMarker> source = parsed.evidenceMarkers();
+        if (HoneywellTempHumiditySkill.STEP_PLATFORM_ANOMALY.equals(step)) {
+            return mergedMarkerList("右侧温湿度报警列表", source, MarkerGroup.PLATFORM_ALARM);
+        }
+        if (HoneywellTempHumiditySkill.STEP_DDC_POWER_PHOTO.equals(step)) {
+            return mergedMarkerList("10号24VAC与11号COM测量端", source,
+                    MarkerGroup.DDC_POWER);
+        }
+        if (HoneywellTempHumiditySkill.STEP_GATEWAY_RS485.equals(step)) {
+            java.util.List<DetectionMarker> result = new java.util.ArrayList<>(2);
+            DetectionMarker rs485 = mergeMarkerGroup("COM1/COM2 485通讯灯", source,
+                    MarkerGroup.GATEWAY_RS485_LIGHTS);
+            DetectionMarker network = mergeMarkerGroup("RJ45网口通讯灯", source,
+                    MarkerGroup.GATEWAY_NETWORK_LIGHTS);
+            if (rs485 != null) result.add(rs485);
+            if (network != null) result.add(network);
+            return Collections.unmodifiableList(result);
+        }
+        return parsed.markers();
+    }
+
+    private static java.util.List<DetectionMarker> mergedMarkerList(String label,
+            java.util.List<DetectionMarker> source, MarkerGroup group) {
+        DetectionMarker marker = mergeMarkerGroup(label, source, group);
+        return marker == null ? Collections.emptyList() : Collections.singletonList(marker);
+    }
+
+    private static DetectionMarker mergeMarkerGroup(String label,
+            java.util.List<DetectionMarker> source, MarkerGroup group) {
+        double left = 1d;
+        double top = 1d;
+        double right = 0d;
+        double bottom = 0d;
+        int confidence = 0;
+        String status = "unknown";
+        boolean found = false;
+        for (DetectionMarker marker : source) {
+            if (marker == null || marker.confidence() < 60
+                    || !belongsToMarkerGroup(markerKey(marker.label()), group)) {
+                continue;
+            }
+            found = true;
+            left = Math.min(left, marker.x());
+            top = Math.min(top, marker.y());
+            right = Math.max(right, marker.x() + marker.width());
+            bottom = Math.max(bottom, marker.y() + marker.height());
+            confidence = Math.max(confidence, marker.confidence());
+            if (markerStatusPriority(marker.status()) > markerStatusPriority(status)) {
+                status = marker.status();
+            }
+        }
+        if (!found) {
+            return null;
+        }
+        return new DetectionMarker(label, status, left, top, right - left, bottom - top,
+                confidence);
+    }
+
+    private static boolean belongsToMarkerGroup(String key, MarkerGroup group) {
+        if (group == MarkerGroup.PLATFORM_ALARM) {
+            return containsAny(key, "报警", "告警", "alarm")
+                    && !containsAny(key, "机房环境检测", "环境检测区", "整个屏幕", "整屏");
+        }
+        if (group == MarkerGroup.DDC_POWER) {
+            boolean voltage = containsAny(key, "24vac", "24v", "10号");
+            boolean common = containsAny(key, "11号", "com");
+            return voltage && common
+                    && !containsAny(key, "黄色", "名称标签", "sbus", "1号2号");
+        }
+        if (group == MarkerGroup.GATEWAY_RS485_LIGHTS) {
+            return containsAny(key, "com1", "com2", "485")
+                    && containsAny(key, "通讯灯", "信号灯", "指示灯", "状态灯")
+                    && !containsAny(key, "pwr", "run", "端子", "接线", "a/b", "ab端子");
+        }
+        return (containsAny(key, "rj45", "网口", "网络口")
+                || (containsAny(key, "网络", "link", "链路")
+                && containsAny(key, "通讯灯", "状态灯", "指示灯", "link灯")))
+                && !containsAny(key, "网线", "插头", "端子", "pwr", "run");
+    }
+
+    public static boolean hasReliableEvidenceMarker(ParsedResponse parsed) {
+        if (parsed == null) {
+            return false;
+        }
+        for (DetectionMarker marker : parsed.evidenceMarkers()) {
+            if (marker != null && marker.confidence() >= 60) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean hasReliableEvidenceMarker(java.util.List<DetectionMarker> markers) {
+        if (markers == null) {
+            return false;
+        }
+        for (DetectionMarker marker : markers) {
+            if (marker != null && marker.confidence() >= 60) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static StepProtocol protocol(String step) {
         if (HoneywellTempHumiditySkill.STEP_SYSTEM_CONTEXT.equals(step)) {
             return new StepProtocol("补充现场系统情况",
-                    "system-context, honeywell-gateway, temp-humidity-sensor");
+                    "system-context；可选标签 platform, honeywell-gateway, honeywell-ddc, temp-humidity-sensor",
+                    "架构图中的连接链路或可辨识设备节点");
         }
-        if (HoneywellTempHumiditySkill.STEP_GATEWAY_POWER.equals(step)) {
-            return new StepProtocol("检查霍尼韦尔网关供电",
-                    "honeywell-gateway, power-input, rated-voltage, meter, meter-reading, probe-point, voltage-in-range");
+        if (HoneywellTempHumiditySkill.STEP_DDC_POWER_PHOTO.equals(step)) {
+            return new StepProtocol("确认霍尼韦尔工控 DDC 供电测量点",
+                    "必需 honeywell-ddc, power-input；看清 24VAC 等额定标识时附加 rated-voltage",
+                    "上方黑色三位端子区中的 10号 24VAC 与 11号 COM 测量端；"
+                            + "不要框选黄色设备名称标签或下方 1号、2号 S-BUS 端子");
+        }
+        if (HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT.equals(step)) {
+            return new StepProtocol("测量霍尼韦尔工控 DDC 供电",
+                    "honeywell-ddc, rated-voltage, meter-reading, probe-point, voltage-in-range",
+                    "已确认的 DDC 电源测量点");
+        }
+        if (HoneywellTempHumiditySkill.STEP_DDC_RS485.equals(step)) {
+            return new StepProtocol("检查 DDC 侧 485",
+                    "rs485-terminal, rs485-led",
+                    "DDC 的 3号端子（485+）、4号端子（485-），以及包含“485”文字与上方指示灯的局部区域；"
+                            + "设备身份沿用上一阶段，不要求重新识别独立铭牌。只要端子和该状态区清晰可见，"
+                            + "必须输出 rs485-terminal、rs485-led。"
+                            + "状态区检测框可以同时覆盖机壳上的“485”文字和上方指示灯，不要求状态灯必须点亮；"
+                            + "不要框选 S-BUS 端子或右下角地址显示窗");
+        }
+        if (HoneywellTempHumiditySkill.STEP_GATEWAY_RS485.equals(step)) {
+            return new StepProtocol("检查网关 485 与网络状态",
+                    "honeywell-gateway, gateway-rs485-led, network-port, link-led",
+                    "同一张照片只输出两个检测框：上方 COM1/COM2 485 通讯灯区，以及下方 RJ45 网络口通讯灯区；"
+                            + "灯位从上到下依次为 PWR、RUN、COM1、COM2；上方检测框定位第三、第四个灯位，"
+                            + "同时覆盖 COM1 和 COM2 两个通讯灯；"
+                            + "下方检测框紧贴 RJ45 网络口及其通讯灯。不要框选 PWR/RUN，也不要框选 A/B 端子排或整台网关");
         }
         if (HoneywellTempHumiditySkill.STEP_GATEWAY_NETWORK.equals(step)) {
             return new StepProtocol("检查霍尼韦尔网关网络",
-                    "honeywell-gateway, network-port, link-led");
+                    "honeywell-gateway, network-port, network-cable, link-led",
+                    "网关下方 RJ45 网络口、网线和网络状态灯");
+        }
+        if (HoneywellTempHumiditySkill.STEP_SENSOR_DEVICE.equals(step)) {
+            return new StepProtocol("确认温湿度传感器本体",
+                    "temp-humidity-sensor, sensor-cable-entry",
+                    "温湿度传感器本体、品牌标识和线缆入口");
         }
         if (HoneywellTempHumiditySkill.STEP_SENSOR_WIRING.equals(step)) {
-            return new StepProtocol("检查温湿度传感器本体与接线",
-                    "temp-humidity-sensor, terminal, signal-wire");
+            return new StepProtocol("确认温湿度传感器接线处理",
+                    "terminal, wiring-anomaly, voltage-in-range",
+                    "已确认的传感器接线接口");
         }
         if (HoneywellTempHumiditySkill.STEP_METER_CHECK.equals(step)) {
             return new StepProtocol("检查接线并读取万用表",
-                    "terminal, meter, dc-voltage-mode, meter-reading, probe-point, wiring-anomaly");
+                    "terminal, meter-reading, probe-point, wiring-anomaly",
+                    "已确认的传感器端子测量点");
         }
         if (HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY.equals(step)) {
             return new StepProtocol("确认平台数据恢复",
-                    "platform, temperature-normal, refresh-time");
+                    "platform, temperature-normal",
+                    "温湿度恢复状态");
         }
         return new StepProtocol("确认平台温湿度局部异常",
-                "platform, temperature-missing, other-data-normal");
+                "platform, temperature-missing, other-data-normal",
+                "右侧报警列表中的温湿度传感器报警记录；只输出一个检测框，"
+                        + "不要框选下方机房环境检测区或整个屏幕");
     }
 
     private static String markerInstruction() {
-        return "\n如本轮图片中可可靠定位检测区域，可逐行输出 [[scene-marker:标签|状态|x|y|宽|高|置信度]]。"
+        return "\n如本轮图片中可可靠定位检测区域，逐行输出 [[scene-marker:中文标签|状态|x|y|宽|高|置信度]]。"
                 + "状态只能为 normal、suspect、abnormal 或 unknown；坐标和尺寸均为 0 到 1 的图片比例，"
-                + "置信度为 0 到 1。无法可靠定位时不要输出标记。";
+                + "必须使用小数比例，例如 x=0.10、y=0.10、宽=0.20、高=0.20；严禁输出像素坐标，"
+                + "任一坐标或尺寸大于 1 均视为无效。置信度为 0 到 1。最多输出 4 个标记，"
+                + "优先标出 abnormal、suspect 和高置信度区域。检测框必须紧贴检查对象，"
+                + "设备身份只作为证据标签，不要框选整台设备。无法可靠定位时不要输出标记。";
+    }
+
+    private static String normalizeEvidenceTag(String value) {
+        String tag = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        int separator = tag.indexOf('=');
+        if (separator > 0) {
+            tag = tag.substring(0, separator);
+        }
+        if ("electrical-control-system-diagram".equals(tag)
+                || "system-diagram".equals(tag) || "topology-diagram".equals(tag)
+                || "architecture-diagram".equals(tag)) {
+            return "system-context";
+        }
+        return tag;
     }
 
     private static DetectionMarker parseMarker(String raw) {
@@ -261,10 +729,128 @@ public final class SceneSkillAiBridge {
                     || confidence > 1d || x + width > 1d || y + height > 1d) {
                 return null;
             }
-            return new DetectionMarker(label, status, x, y, width, height,
+            return new DetectionMarker(normalizeMarkerLabel(label), status, x, y, width, height,
                     (int) Math.round(confidence * 100d));
         } catch (NumberFormatException ignored) {
             return null;
+        }
+    }
+
+    private static java.util.List<DetectionMarker> selectHudMarkers(
+            java.util.List<DetectionMarker> markers) {
+        java.util.List<DetectionMarker> reliable = new java.util.ArrayList<>();
+        for (DetectionMarker marker : markers) {
+            if (marker != null && marker.confidence() >= 60) {
+                reliable.add(marker);
+            }
+        }
+        if (reliable.size() <= MAX_HUD_MARKERS) {
+            return reliable;
+        }
+        java.util.List<DetectionMarker> ranked = new java.util.ArrayList<>(reliable);
+        Collections.sort(ranked, (left, right) -> {
+            int statusComparison = Integer.compare(
+                    markerStatusPriority(right.status()), markerStatusPriority(left.status()));
+            if (statusComparison != 0) {
+                return statusComparison;
+            }
+            return Integer.compare(right.confidence(), left.confidence());
+        });
+        java.util.List<DetectionMarker> selected = ranked.subList(0, MAX_HUD_MARKERS);
+        java.util.List<DetectionMarker> result = new java.util.ArrayList<>(MAX_HUD_MARKERS);
+        for (DetectionMarker marker : reliable) {
+            if (selected.contains(marker)) {
+                result.add(marker);
+            }
+        }
+        return result;
+    }
+
+    private static int markerStatusPriority(String status) {
+        if ("abnormal".equals(status)) {
+            return 4;
+        }
+        if ("suspect".equals(status)) {
+            return 3;
+        }
+        if ("normal".equals(status)) {
+            return 2;
+        }
+        return 1;
+    }
+
+    private static String highConfidenceMarkerEvidenceTag(DetectionMarker marker) {
+        if (marker == null || marker.confidence() < 85) {
+            return "";
+        }
+        String label = marker.label().trim().toLowerCase(Locale.ROOT);
+        if ("power-input".equals(label)
+                || (label.contains("24vac/com") && label.contains("电源"))) {
+            return "power-input";
+        }
+        switch (label) {
+            case "ddc 485端子":
+                return "rs485-terminal";
+            case "ddc 485状态灯":
+                return "rs485-led";
+            case "网关485端子":
+                return "gateway-rs485-terminal";
+            case "网关485信号灯":
+                return "gateway-rs485-led";
+            case "网关网络口":
+                return "network-port";
+            case "网线":
+                return "network-cable";
+            case "网络状态灯":
+                return "link-led";
+            case "接线端子":
+                return "terminal";
+            case "信号线":
+                return "signal-wire";
+            case "裸露导体":
+                return "exposed-conductor";
+            case "疑似接线异常":
+                return "wiring-suspect";
+            case "温湿度异常区":
+                return "temperature-missing";
+            case "其他正常数据":
+                return "other-data-normal";
+            default:
+                return "";
+        }
+    }
+
+    private static String normalizeMarkerLabel(String label) {
+        String key = label == null ? "" : label.trim().toLowerCase(Locale.ROOT);
+        switch (key) {
+            case "rs485-terminal":
+                return "DDC 485端子";
+            case "rs485-led":
+                return "DDC 485状态灯";
+            case "gateway-rs485-terminal":
+                return "网关485端子";
+            case "gateway-rs485-led":
+                return "网关485信号灯";
+            case "network-port":
+                return "网关网络口";
+            case "network-cable":
+                return "网线";
+            case "link-led":
+                return "网络状态灯";
+            case "terminal":
+                return "接线端子";
+            case "signal-wire":
+                return "信号线";
+            case "exposed-conductor":
+                return "裸露导体";
+            case "wiring-suspect":
+                return "疑似接线异常";
+            case "temperature-missing":
+                return "温湿度异常区";
+            case "other-data-normal":
+                return "其他正常数据";
+            default:
+                return label == null ? "" : label.trim();
         }
     }
 
@@ -281,10 +867,19 @@ public final class SceneSkillAiBridge {
     private static final class StepProtocol {
         final String title;
         final String tags;
+        final String markerTargets;
 
-        StepProtocol(String title, String tags) {
+        StepProtocol(String title, String tags, String markerTargets) {
             this.title = title;
             this.tags = tags;
+            this.markerTargets = markerTargets;
         }
+    }
+
+    private enum MarkerGroup {
+        PLATFORM_ALARM,
+        DDC_POWER,
+        GATEWAY_RS485_LIGHTS,
+        GATEWAY_NETWORK_LIGHTS
     }
 }

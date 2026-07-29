@@ -84,5 +84,6 @@ npm --prefix expert-collab-server test
 ## 文档
 
 - `docs/releases/`：版本验证记录和发布边界。
+- `docs/releases/v8.0.40-marker-correction.md`：当前 Air3 标注修正版说明与验收结果。
 - `docs/superpowers/specs/`：产品和交互设计规格。
 - `D:\Users\59979\Desktop\叮当AI运维眼镜_完整演示操作手册_v8.0.25.docx`：现场完整演示手册。

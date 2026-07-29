@@ -124,6 +124,13 @@ public final class MainActivityVoiceCommandTest {
     }
 
     @Test
+    public void taskWorkspaceIncludesTheLiveTranscriptThatTriggeredItsActivation() {
+        assertEquals(3, MainActivity.taskMessageStartIndexOnActivation(4, 3));
+        assertEquals(4, MainActivity.taskMessageStartIndexOnActivation(4, -1));
+        assertEquals(4, MainActivity.taskMessageStartIndexOnActivation(4, 4));
+    }
+
+    @Test
     public void operationDetailsUseFourItemSingleScreenPages() {
         assertEquals(1, MainActivity.operationPageCount(0, 4));
         assertEquals(1, MainActivity.operationPageCount(4, 4));
@@ -240,6 +247,33 @@ public final class MainActivityVoiceCommandTest {
         renderedX = (1280f / 1080f) * rotated[0];
         renderedY = (720f / 1920f) * rotated[1];
         assertEquals(renderedX, renderedY, 0.001f);
+    }
+
+    @Test
+    public void cameraWaitsForAStableTransformedFrameBeforeTheFirstCapture() {
+        assertFalse(MainActivity.isCameraFrameStableForCapture(false, 3, 600L));
+        assertFalse(MainActivity.isCameraFrameStableForCapture(true, 1, 600L));
+        assertFalse(MainActivity.isCameraFrameStableForCapture(true, 3, 200L));
+        assertTrue(MainActivity.isCameraFrameStableForCapture(true, 3, 600L));
+    }
+
+    @Test
+    public void cameraRepairsAFirstJpegThatIgnoredTheRequestedQuarterTurn() {
+        assertTrue(MainActivity.shouldApplyRequestedCameraRotation(
+                4608, 3456, 4608, 3456, 270));
+        assertFalse(MainActivity.shouldApplyRequestedCameraRotation(
+                3456, 4608, 4608, 3456, 270));
+        assertFalse(MainActivity.shouldApplyRequestedCameraRotation(
+                4608, 3456, 4608, 3456, 0));
+    }
+
+    @Test
+    public void highResolutionCameraJpegIsSampledWithoutDroppingBelowTheUploadTarget() {
+        assertEquals(2, MainActivity.cameraDecodeSampleSize(4608, 3456, 1600));
+        assertEquals(1, MainActivity.cameraDecodeSampleSize(1920, 1080, 1600));
+        assertEquals(1, MainActivity.cameraDecodeSampleSize(1280, 720, 1600));
+        assertTrue(MainActivity.isAir3Hardware("INMO", "IMA301"));
+        assertFalse(MainActivity.isAir3Hardware("other", "IMA301"));
     }
 
     @Test
@@ -689,6 +723,16 @@ public final class MainActivityVoiceCommandTest {
         assertTrue(MainActivity.isActiveGptRequest(3, 8, 8));
         assertFalse(MainActivity.isActiveGptRequest(-1, 8, 8));
         assertFalse(MainActivity.isActiveGptRequest(3, 9, 8));
+    }
+
+    @Test
+    public void referenceImagesNeverBecomeAiEvidence() {
+        assertTrue(MainActivity.isUserEvidenceImage("user", "image", "backend-image-1"));
+        assertFalse(MainActivity.isUserEvidenceImage(
+                "assistant", "image", "asset://scene-reference/gateway-rs485.jpg"));
+        assertFalse(MainActivity.isUserEvidenceImage(
+                "user", "image", "asset://scene-reference/gateway-rs485.jpg"));
+        assertFalse(MainActivity.isUserEvidenceImage("assistant", "text", "backend-image-1"));
     }
 
     private void assertCommand(String phrase, LegacyVoiceCommandRouter.Command expected) {

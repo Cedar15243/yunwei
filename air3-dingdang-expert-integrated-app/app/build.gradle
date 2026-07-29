@@ -12,6 +12,8 @@ def generatedConfigDir = layout.buildDirectory.dir("generated/source/dingdang")
 def directGptEnabled = System.getenv("AIR3_APK_DIRECT_GPT")?.trim() == "1"
 def iflytekOfflineWakeEnabled = System.getenv("AIR3_APK_IFLYTEK_OFFLINE_WAKE")?.trim() == "1"
 def iflytekAikitRoot = System.getenv("IFLYTEK_AIKIT_ROOT")?.trim()
+def localAsrFallbackEnabled = System.getenv("AIR3_APK_LOCAL_ASR_FALLBACK")?.trim() == "1"
+def sherpaOnnxRoot = System.getenv("SHERPA_ONNX_ROOT")?.trim()
 
 def requiredEnvironment = { String name ->
     def value = System.getenv(name)?.trim()
@@ -41,6 +43,7 @@ android {
         targetSdk 34
         versionCode previewVersionCode
         versionName previewVersionName
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders = [appLabel: previewAppLabel]
         buildConfigField "String", "COLLAB_SERVER_URL", "\"${collabServerUrl}\""
     }
@@ -61,6 +64,20 @@ android {
             main.java.srcDir "src/offlineWake/java"
             main.assets.srcDir new File(iflytekAikitRoot, "resource")
         }
+        if (localAsrFallbackEnabled) {
+            if (!sherpaOnnxRoot) {
+                throw new GradleException("SHERPA_ONNX_ROOT is required for the local ASR fallback build")
+            }
+            def sherpaRoot = new File(sherpaOnnxRoot)
+            def sherpaAssets = new File(sherpaRoot, "assets")
+            def sherpaJniLibs = new File(sherpaRoot, "jniLibs")
+            if (!sherpaAssets.isDirectory() || !sherpaJniLibs.isDirectory()) {
+                throw new GradleException("SHERPA_ONNX_ROOT must contain assets/ and jniLibs/")
+            }
+            main.java.srcDir "src/localAsr/java"
+            main.assets.srcDir sherpaAssets
+            main.jniLibs.srcDir sherpaJniLibs
+        }
     }
 
     compileOptions {
@@ -74,6 +91,7 @@ tasks.register("generateDingdangConfig") {
     inputs.property("previewAppLabel", previewAppLabel)
     inputs.property("directGptEnabled", directGptEnabled)
     inputs.property("iflytekOfflineWakeEnabled", iflytekOfflineWakeEnabled)
+    inputs.property("localAsrFallbackEnabled", localAsrFallbackEnabled)
     outputs.dir generatedConfigDir
     doLast {
         // Direct AI builds do not route requests through the legacy Supabase gateway.
@@ -125,6 +143,7 @@ final class GeneratedConfig {
     static final String DIRECT_ASR_ENDPOINT = "${javaString(directAsrEndpoint)}";
     static final String DIRECT_ASR_API_KEY = "${javaString(directAsrApiKey)}";
     static final boolean IFLYTEK_OFFLINE_WAKE_ENABLED = ${iflytekOfflineWakeEnabled};
+    static final boolean LOCAL_ASR_FALLBACK_ENABLED = ${localAsrFallbackEnabled};
     static final String IFLYTEK_APP_ID = "${javaString(iflytekAppId)}";
     static final String IFLYTEK_API_KEY = "${javaString(iflytekApiKey)}";
     static final String IFLYTEK_API_SECRET = "${javaString(iflytekApiSecret)}";
@@ -155,4 +174,7 @@ dependencies {
     }
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.json:json:20240303"
+    androidTestImplementation "androidx.test:core:1.5.0"
+    androidTestImplementation "androidx.test.ext:junit:1.1.5"
+    androidTestImplementation "androidx.test:runner:1.5.2"
 }

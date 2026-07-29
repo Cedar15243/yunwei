@@ -71,7 +71,7 @@ mustInclude("打开专家协同");
 mustInclude("FeatureRegistry.createDefault()");
 mustInclude("BuildConfig.COLLAB_SERVER_URL");
 
-assert.ok(trtc.includes("TRTC_VIDEO_RESOLUTION_1280_720"), "integrated expert video must use 1280x720");
+assert.ok(trtc.includes("TRTC_VIDEO_RESOLUTION_1920_1080"), "integrated expert video must use 1920x1080");
 assert.ok(trtc.includes("TRTC_VIDEO_RESOLUTION_MODE_LANDSCAPE"), "integrated expert video must use landscape encoding");
 assert.ok(trtc.includes("onUserVideoAvailable"), "integrated expert mode must observe expert video publication");
 assert.ok(trtc.includes("startRemoteView"), "integrated expert mode must render the primary expert video");
