@@ -22,6 +22,10 @@ public final class CollabStateMachine {
         return expertId;
     }
 
+    public synchronized boolean shouldReplayPendingCallOnSignalingConnected() {
+        return state == State.CALLING;
+    }
+
     public synchronized State onPrimaryAction() {
         if (state == State.IDLE || state == State.ENDED || state == State.FAILED) {
             expertId = null;

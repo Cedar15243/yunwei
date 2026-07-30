@@ -46,6 +46,27 @@ public final class SceneReferenceGuideTest {
     }
 
     @Test
+    public void sensorPhotoFallbackShowsTheTwelveVoltAndCommonTerminalReference() {
+        SceneReferenceGuide.Reference reference = SceneReferenceGuide.fallbackFor(
+                HoneywellTempHumiditySkill.STEP_SENSOR_DEVICE,
+                true,
+                false,
+                true,
+                true);
+
+        assertEquals("asset://scene-reference/sensor-wiring-12v.jpg", reference.imageId());
+        assertTrue(reference.caption().contains("标准检测位置"));
+    }
+
+    @Test
+    public void ddcPowerPhotoAlwaysUsesTheCalibratedReferenceInsteadOfModelCoordinates() {
+        assertTrue(SceneReferenceGuide.usesFixedReference(
+                HoneywellTempHumiditySkill.STEP_DDC_POWER_PHOTO));
+        assertTrue(!SceneReferenceGuide.usesFixedReference(
+                HoneywellTempHumiditySkill.STEP_SENSOR_DEVICE));
+    }
+
+    @Test
     public void textOnlyAndUnsupportedStepsDoNotReturnReference() {
         assertNull(SceneReferenceGuide.fallbackFor(
                 HoneywellTempHumiditySkill.STEP_GATEWAY_RS485,

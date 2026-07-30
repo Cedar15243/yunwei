@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ShieldCheck } from "lucide-react";
-import { CollabSocket } from "./api/collab-socket";
+import { ReconnectingCollabSocket } from "./api/collab-socket";
 import { TrtcClient } from "./api/trtc-client";
 import type { AnnotationTransport } from "./canvas/AnnotationCanvas";
 import { captureFreezeFrame, uploadFreezeFrame } from "./freeze-frame";
@@ -28,6 +28,8 @@ const waitingSnapshot: CollaborationSnapshot = {
   role: null,
 };
 
+const EXPERT_ID_SESSION_KEY = "dingdang.expert.id";
+
 function resolveWebsocketUrl(): string {
   if (import.meta.env.VITE_COLLAB_WS_URL) {
     return import.meta.env.VITE_COLLAB_WS_URL;
@@ -38,8 +40,14 @@ function resolveWebsocketUrl(): string {
 
 function resolveExpertIdentity(): { id: string; name: string } {
   const params = new URLSearchParams(window.location.search);
+  const explicitId = params.get("expertId");
+  let id = explicitId ?? window.sessionStorage.getItem(EXPERT_ID_SESSION_KEY);
+  if (!id) {
+    id = `expert-${crypto.randomUUID().slice(0, 8)}`;
+    window.sessionStorage.setItem(EXPERT_ID_SESSION_KEY, id);
+  }
   return {
-    id: params.get("expertId") ?? `expert-${crypto.randomUUID().slice(0, 8)}`,
+    id,
     name: params.get("name") ?? "演示专家",
   };
 }
@@ -49,7 +57,7 @@ export function App({ initialRole, live }: AppProps) {
   const videoViewRef = useRef<HTMLDivElement>(null);
   const localVideoViewRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<CollaborationController | null>(null);
-  const signalingRef = useRef<CollabSocket | null>(null);
+  const signalingRef = useRef<ReconnectingCollabSocket | null>(null);
   const [call, setCall] = useState<CollaborationSnapshot>(waitingSnapshot);
   const role = initialRole ?? (call.role === "observer" ? "observer" : "primary");
   const [annotationAuthorId, setAnnotationAuthorId] = useState("expert-preview");
@@ -65,8 +73,10 @@ export function App({ initialRole, live }: AppProps) {
     }
 
     const identity = resolveExpertIdentity();
-    const socket = new WebSocket(resolveWebsocketUrl());
-    const signaling = new CollabSocket(socket, { senderId: identity.id });
+    const signaling = new ReconnectingCollabSocket(resolveWebsocketUrl(), {
+      senderId: identity.id,
+      onStatusChange: setServiceStatus,
+    });
     const controller = new CollaborationController({
       signaling,
       trtc: new TrtcClient({
@@ -100,28 +110,17 @@ export function App({ initialRole, live }: AppProps) {
         setFreezeUrl(null);
       }
     });
-    const start = () => controller.start();
-    const markConnected = () => {
-      setServiceStatus("connected");
-      start();
-    };
-    const markDisconnected = () => setServiceStatus("disconnected");
-    socket.addEventListener("open", markConnected);
-    socket.addEventListener("close", markDisconnected);
-    socket.addEventListener("error", markDisconnected);
+    controller.start();
+    signaling.connect();
 
     return () => {
-      socket.removeEventListener("open", markConnected);
-      socket.removeEventListener("close", markDisconnected);
-      socket.removeEventListener("error", markDisconnected);
       unsubscribe();
       unsubscribeFreeze();
+      void controller.stop();
       signaling.close();
-      socket.close();
       controllerRef.current = null;
       signalingRef.current = null;
       setAnnotationTransport(null);
-      void controller.stop();
     };
   }, [liveEnabled]);
 

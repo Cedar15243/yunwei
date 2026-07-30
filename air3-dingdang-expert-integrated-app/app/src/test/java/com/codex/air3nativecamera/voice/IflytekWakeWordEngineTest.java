@@ -21,4 +21,19 @@ public final class IflytekWakeWordEngineTest {
         assertTrue(IflytekWakeWordEngine.pcmRmsDbfs(signal, signal.length) > -20);
         assertEquals(16384, IflytekWakeWordEngine.pcmPeak(signal, signal.length));
     }
+
+    @Test
+    public void restartBackoffIsBoundedAndResetsAfterAHealthySession() {
+        assertEquals(250L, IflytekWakeWordEngine.restartDelayMillis(0));
+        assertEquals(500L, IflytekWakeWordEngine.restartDelayMillis(1));
+        assertEquals(8_000L, IflytekWakeWordEngine.restartDelayMillis(20));
+    }
+
+    @Test
+    public void permanentAudioReadErrorsAbortTheCurrentSession() {
+        assertTrue(IflytekWakeWordEngine.shouldAbortAudioRead(-2, 0));
+        assertTrue(IflytekWakeWordEngine.shouldAbortAudioRead(-3, 0));
+        assertTrue(IflytekWakeWordEngine.shouldAbortAudioRead(-6, 0));
+        assertTrue(IflytekWakeWordEngine.shouldAbortAudioRead(0, 3));
+    }
 }

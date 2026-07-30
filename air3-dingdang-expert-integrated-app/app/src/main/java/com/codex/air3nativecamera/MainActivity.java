@@ -336,6 +336,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private int hudOperationPageIndex;
     // Persisted messages are records, not an instruction to reopen a task on the next launch.
     private boolean hudTaskWorkspaceActive;
+    private boolean requireNewTaskOnNextInput = true;
     private int hudTaskMessageStartIndex;
     private TextureView previewView;
     private LinearLayout chatLayer;
@@ -2374,9 +2375,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         int start = Math.max(0, hudTaskMessageStartIndex);
         for (int i = chatMessages.size() - 1; i >= start; i--) {
             ChatMessage message = chatMessages.get(i);
-            if ("user".equals(message.role) && "image".equals(message.kind)
-                    && message.imagePreviewBase64 != null && message.imagePreviewBase64.length() > 0) {
+            if (!isTaskHudDisplayImage(message.role, message.kind, message.imageId)) {
+                continue;
+            }
+            if (message.imagePreviewBase64 != null && message.imagePreviewBase64.length() > 0) {
                 return message.imagePreviewBase64;
+            }
+            if (SceneReferenceGuide.isReferenceImageId(message.imageId)) {
+                return sceneReferencePreviewBase64(message.imageId);
             }
         }
         return "";
@@ -2389,11 +2395,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         int start = Math.max(0, hudTaskMessageStartIndex);
         for (int i = chatMessages.size() - 1; i >= start; i--) {
             ChatMessage message = chatMessages.get(i);
-            if ("user".equals(message.role) && "image".equals(message.kind)
-                    && message.detectionMarkersJson != null
+            if (!isTaskHudDisplayImage(message.role, message.kind, message.imageId)) {
+                continue;
+            }
+            if (SceneReferenceGuide.isReferenceImageId(message.imageId)) {
+                return "[]";
+            }
+            if (message.detectionMarkersJson != null
                     && message.detectionMarkersJson.length() > 0) {
                 return message.detectionMarkersJson;
             }
+            return "[]";
         }
         return "[]";
     }
@@ -2441,6 +2453,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         hudCapabilityVisible = false;
         capabilityDetailVisible = false;
         hudTaskWorkspaceActive = false;
+        requireNewTaskOnNextInput = true;
         hudTaskMessageStartIndex = chatMessages.size();
         recoverableAiError = "";
         composerTranscript = "";
@@ -2711,6 +2724,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         ChatProject project = activeProject();
         if (project != null) {
             taskSessionManager.startNew(project.id, "等待现场问题");
+            requireNewTaskOnNextInput = false;
         }
         clearHudTaskProgress();
         hudTaskWorkspaceActive = false;
@@ -2727,13 +2741,21 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private MaintenanceTask ensureMaintenanceTask(String problem) {
-        TaskSession activeSession = taskSessionManager.active();
-        if (activeSession != null) {
-            return activeSession.maintenanceTask();
-        }
         ChatProject project = activeProject();
         if (project == null) {
             return null;
+        }
+        TaskSession activeSession = taskSessionManager.active();
+        if (!requireNewTaskOnNextInput
+                && activeSession != null && project.id.equals(activeSession.projectId())) {
+            return activeSession.maintenanceTask();
+        }
+        if (!requireNewTaskOnNextInput
+                && hudTaskWorkspaceActive && taskSessionManager.resumeProject(project.id)) {
+            return taskSessionManager.active().maintenanceTask();
+        }
+        if (activeSession != null) {
+            taskSessionManager.pauseActive();
         }
         if (taskSessionManager.findProject(project.id) != null || projectHasUserInput(project)) {
             createNewProjectChat(true);
@@ -2741,13 +2763,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             hudTaskMessageStartIndex = taskMessageStartIndexAfterProjectReset(
                     hudTaskWorkspaceActive, chatMessages.size());
         }
-        return taskSessionManager.startNew(project.id, problem).maintenanceTask();
+        MaintenanceTask task = taskSessionManager.startNew(project.id, problem).maintenanceTask();
+        requireNewTaskOnNextInput = false;
+        return task;
     }
 
     private void restoreActiveTaskWorkspace() {
         TaskSession session = taskSessionManager.active();
         if (session == null) return;
         hudTaskWorkspaceActive = true;
+        requireNewTaskOnNextInput = false;
         hudTaskMessageStartIndex = firstUserMessageIndex(chatMessages);
         clearHudTaskProgress();
         if (session.maintenanceTask().phase() == MaintenanceTask.Phase.GUIDANCE) {
@@ -3101,6 +3126,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private void createNewProjectChat(boolean preservePendingInput) {
         cancelActiveGptRequestForNavigation();
         taskSessionManager.pauseActive();
+        requireNewTaskOnNextInput = true;
         saveCurrentProjectFromMessages();
         ChatProject project = new ChatProject(
                 "project-" + System.currentTimeMillis(),
@@ -3121,7 +3147,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void switchProjectChat(int index) {
-        if (index < 0 || index >= chatProjects.size() || index == currentProjectIndex) {
+        if (index < 0 || index >= chatProjects.size()) {
+            return;
+        }
+        if (index == currentProjectIndex) {
+            ChatProject selected = activeProject();
+            if (selected != null && taskSessionManager.resumeProject(selected.id)) {
+                restoreActiveTaskWorkspace();
+                persistChatProjects();
+                scrollChatToBottom = true;
+                renderChatScreen();
+            }
             return;
         }
         cancelActiveGptRequestForNavigation();
@@ -3138,6 +3174,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         hudTaskMessageStartIndex = taskMessageStartIndexAfterProjectSwitch(
                 resumedTask, firstUserMessageIndex(chatMessages), chatMessages.size());
         hudTaskWorkspaceActive = resumedTask;
+        requireNewTaskOnNextInput = !resumedTask;
         clearHudTaskProgress();
         if (resumedTask) {
             MaintenanceTask task = currentMaintenanceTask();
@@ -4244,7 +4281,6 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             handleInspectionPhoto(jpegBytes);
             return;
         }
-        activateHudTaskWorkspace();
         composerImageGeneration++;
         composerImageBytes = jpegBytes;
         composerImageId = "";
@@ -4252,6 +4288,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         composerImagePreviewBitmap = decodeImagePreviewBitmap(composerImagePreviewBase64);
         composerImageUploadFailed = false;
         MaintenanceTask task = ensureMaintenanceTask("请结合现场照片分析设备异常");
+        activateHudTaskWorkspace();
         if (task != null) {
             task.addEvidence("现场照片 " + (task.evidenceReferences().size() + 1), "local-photo");
         }
@@ -4608,7 +4645,28 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         chatMessages.add(new ChatMessage("assistant", "image", reference.caption(),
-                reference.imageId(), false));
+                reference.imageId(), sceneReferencePreviewBase64(reference.imageId()), false));
+    }
+
+    private String sceneReferencePreviewBase64(String imageId) {
+        String assetPath = SceneReferenceGuide.assetPath(imageId);
+        if (assetPath.length() == 0) {
+            return "";
+        }
+        try (InputStream stream = getAssets().open(assetPath);
+                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = stream.read(buffer)) >= 0) {
+                if (read > 0) {
+                    output.write(buffer, 0, read);
+                }
+            }
+            return Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP);
+        } catch (IOException error) {
+            Log.w(KEY_LOG_TAG, "Unable to encode scene reference asset " + assetPath, error);
+            return "";
+        }
     }
 
     private void attachDetectionMarkersToLatestTaskImage(String markersJson) {
@@ -4636,6 +4694,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return "user".equals(role) && "image".equals(kind)
                 && imageId != null && imageId.length() > 0
                 && !SceneReferenceGuide.isReferenceImageId(imageId);
+    }
+
+    static boolean isTaskHudDisplayImage(String role, String kind, String imageId) {
+        if (!"image".equals(kind) || imageId == null || imageId.length() == 0) {
+            return false;
+        }
+        return "user".equals(role)
+                || ("assistant".equals(role) && SceneReferenceGuide.isReferenceImageId(imageId));
     }
 
     private void appendUserTranscriptMessage(String text) {
@@ -5447,15 +5513,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 sceneSkillActive = true;
                 sceneEvidenceTurn = true;
             }
+            String evaluatedStep = activeSession == null ? "" : activeSession.sceneStepId();
+            boolean useFixedReference = requestHadNewImage
+                    && SceneReferenceGuide.usesFixedReference(evaluatedStep);
             java.util.List<SceneSkillAiBridge.DetectionMarker> stepMarkers =
-                    SceneSkillAiBridge.markersForStep(activeSession, parsed);
+                    useFixedReference
+                            ? java.util.Collections.<SceneSkillAiBridge.DetectionMarker>emptyList()
+                            : SceneSkillAiBridge.markersForStep(activeSession, parsed);
             if (requestHadNewImage) {
                 attachDetectionMarkersToLatestTaskImage(
                         SceneSkillAiBridge.markersJson(stepMarkers));
             }
             if (shouldEvaluateSceneSkill(sceneSkillActive, sceneEvidenceTurn)) {
                 String narration = latestTaskEvidenceText("");
-                String evaluatedStep = activeSession.sceneStepId();
                 java.util.Set<String> reconciledEvidence = SceneSkillAiBridge.reconcileEvidence(
                         activeSession, narration, parsed, requestHadNewImage);
                 Log.i(KEY_LOG_TAG, "Scene evidence step=" + activeSession.sceneStepId()
@@ -5600,8 +5670,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             setComposerStatus("");
             return;
         }
-        activateHudTaskWorkspace();
         MaintenanceTask task = ensureMaintenanceTask(prompt);
+        activateHudTaskWorkspace();
         boolean sceneEvidenceTurn = false;
         boolean sceneCandidateTurn = false;
         if (task != null) {
@@ -5785,6 +5855,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         String current = prompt == null ? "" : prompt.trim();
         return "当前问题：" + current
                 + "\n\n请直接、简洁回答当前问题，不展示思维过程，也不要套用固定栏目。"
+                + "回答必须与当前问题直接相关，不得被历史任务或当前检测步骤带偏。"
+                + "当前问题未提交检测结果时，不得输出检查状态或下一步模板，也不得推进当前步骤。"
                 + "用户询问原因或状态时直接说明；询问操作或维修时，只给出一个当前最需要执行的下一步，"
                 + "该步骤必须是一项可立即执行并验证的原子操作，只能包含一个动作和一个检查对象。"
                 + "不得使用“及、或、以及、顿号”等并列结构；其余排查项留到用户反馈后再问，也不要罗列多个可能原因。"

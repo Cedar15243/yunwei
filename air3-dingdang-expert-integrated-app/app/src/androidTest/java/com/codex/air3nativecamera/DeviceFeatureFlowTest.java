@@ -5,6 +5,7 @@ import android.app.Instrumentation;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.MediaMetadataRetriever;
+import android.os.ParcelFileDescriptor;
 import android.view.TextureView;
 import android.view.View;
 import android.webkit.ValueCallback;
@@ -19,6 +20,7 @@ import com.codex.air3nativecamera.features.operations.OperationDetailFactory;
 import com.codex.air3nativecamera.ui.hud.HudWebPresentation;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -44,6 +46,7 @@ public final class DeviceFeatureFlowTest {
     @Test
     public void voiceRoutesReachEveryPrimaryPageAndReturnHome() throws Exception {
         Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        prepareDevice(instrumentation);
         grantRuntimePermissions(instrumentation);
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
         MainActivity activity = activity(scenario);
@@ -122,6 +125,7 @@ public final class DeviceFeatureFlowTest {
     @Test
     public void cameraPhotoAndVideoKeepLandscapeEvidenceAndReturnToHud() throws Exception {
         Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        prepareDevice(instrumentation);
         grantRuntimePermissions(instrumentation);
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
         MainActivity activity = activity(scenario);
@@ -209,6 +213,25 @@ public final class DeviceFeatureFlowTest {
                 Manifest.permission.CAMERA);
         instrumentation.getUiAutomation().grantRuntimePermission(packageName,
                 Manifest.permission.RECORD_AUDIO);
+    }
+
+    private static void prepareDevice(Instrumentation instrumentation) throws Exception {
+        executeShellCommand(instrumentation, "input keyevent KEYCODE_WAKEUP");
+        executeShellCommand(instrumentation, "wm dismiss-keyguard");
+        executeShellCommand(instrumentation, "cmd statusbar collapse");
+        Thread.sleep(500L);
+    }
+
+    private static void executeShellCommand(Instrumentation instrumentation, String command)
+            throws Exception {
+        try (ParcelFileDescriptor descriptor = instrumentation.getUiAutomation()
+                        .executeShellCommand(command);
+                FileInputStream input = new FileInputStream(descriptor.getFileDescriptor())) {
+            byte[] buffer = new byte[256];
+            while (input.read(buffer) >= 0) {
+                // Drain the command output so the shell command completes before the test continues.
+            }
+        }
     }
 
     private static void dispatchVoice(Instrumentation instrumentation, MainActivity activity,

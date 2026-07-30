@@ -1,5 +1,5 @@
 param(
-  [string]$CollabServerUrl = "",
+  [string]$CollabServerUrl = "https://bb.chinacedar.top:2305",
   [string]$ApplicationId = "com.codex.air3nativecamera.dingdangexpert.follow.preview",
   [int]$VersionCode = 627,
   [string]$VersionName = "6.2.7-expert-preview",
@@ -59,17 +59,6 @@ function Read-ConfigOrEnv(
     throw "$Name is missing from the environment and local ignored files"
   }
   return $DefaultValue
-}
-
-if (-not $CollabServerUrl) {
-  $lanAddress = Get-NetIPAddress -AddressFamily IPv4 |
-    Where-Object { $_.IPAddress -notmatch "^(127\.|169\.254\.)" -and $_.PrefixOrigin -ne "WellKnown" } |
-    Sort-Object InterfaceMetric |
-    Select-Object -First 1 -ExpandProperty IPAddress
-  if (-not $lanAddress) {
-    throw "A LAN address is required for the Air3 collaboration server"
-  }
-  $CollabServerUrl = "http://${lanAddress}:8787"
 }
 
 if ($CollabServerUrl -notmatch "^https?://[^/]+(?::\d+)?$") {

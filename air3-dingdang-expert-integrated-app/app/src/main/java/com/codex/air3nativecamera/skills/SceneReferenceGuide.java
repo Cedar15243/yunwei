@@ -51,6 +51,11 @@ public final class SceneReferenceGuide {
                 && imageId.length() > ASSET_PREFIX.length();
     }
 
+    public static boolean usesFixedReference(String stepId) {
+        String step = stepId == null ? "" : stepId.trim();
+        return HoneywellTempHumiditySkill.STEP_DDC_POWER_PHOTO.equals(step);
+    }
+
     public static String assetPath(String imageId) {
         return isReferenceImageId(imageId) ? imageId.substring("asset://".length()) : "";
     }
@@ -62,8 +67,8 @@ public final class SceneReferenceGuide {
         add(references, HoneywellTempHumiditySkill.STEP_DDC_RS485, "ddc-rs485.jpg");
         add(references, HoneywellTempHumiditySkill.STEP_GATEWAY_RS485, "gateway-rs485.jpg");
         add(references, HoneywellTempHumiditySkill.STEP_GATEWAY_NETWORK, "gateway-network.jpg");
-        add(references, HoneywellTempHumiditySkill.STEP_SENSOR_DEVICE, "sensor-device.jpg");
-        add(references, HoneywellTempHumiditySkill.STEP_SENSOR_WIRING, "sensor-wiring.jpg");
+        add(references, HoneywellTempHumiditySkill.STEP_SENSOR_DEVICE, "sensor-wiring-12v.jpg");
+        add(references, HoneywellTempHumiditySkill.STEP_SENSOR_WIRING, "sensor-wiring-12v.jpg");
         add(references, HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY, "platform-recovery.jpg");
         return Collections.unmodifiableMap(references);
     }

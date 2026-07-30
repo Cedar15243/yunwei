@@ -53,7 +53,7 @@ const testPath = path.join(
 
 assert.ok(existsSync(testPath), "voice event state-machine test is missing");
 assert.match(main, /dingdangexpert\.follow\.preview\.voice/);
-assert.match(main, /VOICE_EVENT_DESCRIPTION_TIMEOUT_MS = 8000L/);
+assert.match(main, /VOICE_EVENT_DESCRIPTION_TIMEOUT_MS = 30000L/);
 assert.match(main, /VOICE_AUTO_WAKE_RECORDING_MS = 10000L/);
 assert.match(main, /\|\| VOICE_WORKFLOW_ENABLED/);
 assert.match(main, /OFFLINE_WAKE_ENABLED/);
@@ -71,19 +71,22 @@ assert.match(main, /叮当待命中/);
 assert.match(main, /onEngineUnavailable/);
 assert.match(main, /composerImageGeneration/);
 assert.match(main, /buildDirectAiRequestPrompt/);
-assert.match(main, /风险判断、已观察到的依据、下一步操作、何时呼叫专家/);
+assert.match(main, /当前问题：/);
+assert.match(main, /不要套用固定栏目/);
+assert.match(main, /回答必须与当前问题直接相关/);
+assert.match(main, /不得被历史任务或当前检测步骤带偏/);
 assert.match(main, /if \(voiceStartedFromAutoWindow\) \{\s*return;\s*\}/s);
-assert.match(main, /voiceStreamState = VoiceStreamState\.IDLE;\s*scheduleForegroundVoiceListening\("ai-complete"\);/s);
+assert.match(main, /voiceStreamState = VoiceStreamState\.IDLE;[\s\S]*?scheduleForegroundVoiceListening\("ai-complete"\);/);
 assert.match(main, /cancelVoiceEventDescriptionTimeout\(\);[\s\S]*?stopVoiceRecording\(false, "expert_enter"\)/);
 assert.match(router, /Everything else remains event narration/);
-assert.match(router, /startsWith\("叮当"\)/);
+assert.match(router, /startsWith\("小叮当"\)/);
 assert.match(stateMachine, /WAITING_FOR_DESCRIPTION/);
 assert.match(stateMachine, /onDescriptionTimeout/);
 assert.match(wakeWord, /must not stream standby microphone audio to a server/);
 assert.match(wakeWordFactory, /IflytekWakeWordEngine/);
 assert.match(asrSessionGate, /invalidatedSessionCannotDeliverLateAsrCallbacks|accepts\(long session\)/);
 assert.match(iflytekWakeWord, /func_wake_up/);
-assert.match(iflytekWakeWord, /AudioSource\.VOICE_RECOGNITION/);
+assert.match(iflytekWakeWord, /AudioSource\.MIC/);
 assert.match(iflytekWakeWord, /SAMPLE_RATE_HZ = 16000/);
 assert.match(iflytekWakeWord, /writeKeywordFile/);
 

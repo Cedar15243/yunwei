@@ -34,6 +34,31 @@ async function startServer(): Promise<RunningCollabServer> {
   return server;
 }
 
+async function startServerWithLifecycle(options: {
+  pendingCallTimeoutMs?: number;
+  pendingCallSweepIntervalMs?: number;
+  participantDisconnectGraceMs?: number;
+  heartbeatIntervalMs?: number;
+}): Promise<RunningCollabServer> {
+  const server = await createCollabServer(config, options).start(0);
+  runningServers.push(server);
+  return server;
+}
+
+function expectNoMessage(socket: WebSocket, timeoutMs = 120): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.off("message", handleMessage);
+      resolve();
+    }, timeoutMs);
+    const handleMessage = (data: WebSocket.RawData): void => {
+      clearTimeout(timeout);
+      reject(new Error(`unexpected websocket message: ${data.toString()}`));
+    };
+    socket.once("message", handleMessage);
+  });
+}
+
 function openSocket(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
@@ -166,6 +191,74 @@ describe("collaboration server", () => {
     glasses.close();
   });
 
+  it("deduplicates a retried pending call from the same glasses", async () => {
+    const server = await startServer();
+    const expert = await openSocket(server.websocketUrl);
+    const glasses = await openSocket(server.websocketUrl);
+
+    expert.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-wang", seq: 1, sentAt: 1, payload: { kind: "expert", name: "Wang" } }));
+    glasses.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "glasses-01", seq: 1, sentAt: 1, payload: { kind: "glasses", name: "Air3-01" } }));
+    await Promise.all([nextMessage(expert), nextMessage(glasses)]);
+
+    const firstIncoming = nextMessage(expert);
+    glasses.send(JSON.stringify({ type: "call.requested", sessionId: null, senderId: "glasses-01", seq: 2, sentAt: 2, payload: {} }));
+    const [firstCall] = await Promise.all([firstIncoming, nextMessage(glasses)]);
+
+    const replayAck = nextMessage(glasses);
+    const noDuplicateRing = expectNoMessage(expert);
+    glasses.send(JSON.stringify({ type: "call.requested", sessionId: null, senderId: "glasses-01", seq: 3, sentAt: 3, payload: {} }));
+    const replayed = await replayAck;
+
+    expect(replayed).toMatchObject({ type: "call.requested", sessionId: firstCall.sessionId });
+    await noDuplicateRing;
+
+    expert.close();
+    glasses.close();
+  });
+
+  it("ends and broadcasts a pending call when the last glasses connection closes", async () => {
+    const server = await startServer();
+    const expert = await openSocket(server.websocketUrl);
+    const glasses = await openSocket(server.websocketUrl);
+
+    expert.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-wang", seq: 1, sentAt: 1, payload: { kind: "expert", name: "Wang" } }));
+    glasses.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "glasses-01", seq: 1, sentAt: 1, payload: { kind: "glasses", name: "Air3-01" } }));
+    await Promise.all([nextMessage(expert), nextMessage(glasses)]);
+
+    const incoming = nextMessage(expert);
+    glasses.send(JSON.stringify({ type: "call.requested", sessionId: null, senderId: "glasses-01", seq: 2, sentAt: 2, payload: {} }));
+    const [call] = await Promise.all([incoming, nextMessage(glasses)]);
+
+    const ended = nextMessage(expert);
+    glasses.close();
+
+    expect(await ended).toMatchObject({ type: "call.ended", sessionId: call.sessionId, payload: {} });
+
+    expert.close();
+  });
+
+  it("ends and broadcasts an unanswered call after its timeout", async () => {
+    const server = await startServerWithLifecycle({
+      pendingCallTimeoutMs: 40,
+      pendingCallSweepIntervalMs: 5,
+    });
+    const expert = await openSocket(server.websocketUrl);
+    const glasses = await openSocket(server.websocketUrl);
+
+    expert.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-wang", seq: 1, sentAt: 1, payload: { kind: "expert", name: "Wang" } }));
+    glasses.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "glasses-01", seq: 1, sentAt: 1, payload: { kind: "glasses", name: "Air3-01" } }));
+    await Promise.all([nextMessage(expert), nextMessage(glasses)]);
+
+    const incoming = nextMessage(expert);
+    glasses.send(JSON.stringify({ type: "call.requested", sessionId: null, senderId: "glasses-01", seq: 2, sentAt: 2, payload: {} }));
+    const [call] = await Promise.all([incoming, nextMessage(glasses)]);
+
+    expect(await nextMessage(expert)).toMatchObject({ type: "call.ended", sessionId: call.sessionId, payload: {} });
+
+    expert.close();
+    glasses.close();
+  });
+
   it("keeps an expert online while another tab with the same identity remains connected", async () => {
     const server = await startServer();
     const firstTab = await openSocket(server.websocketUrl);
@@ -191,7 +284,7 @@ describe("collaboration server", () => {
     glasses.close();
   });
 
-  it("notifies every expert when the first expert accepts a call", async () => {
+  it("notifies one accepting expert and marks every other console as taken", async () => {
     const server = await startServer();
     const expertWang = await openSocket(server.websocketUrl);
     const expertLiu = await openSocket(server.websocketUrl);
@@ -214,7 +307,7 @@ describe("collaboration server", () => {
     expertWang.send(JSON.stringify({ type: "call.accepted", sessionId, senderId: "expert-wang", seq: 2, sentAt: 3, payload: {} }));
 
     const results = await Promise.all([wangAccepted, liuAccepted, glassesAccepted]);
-    expect(results.map((message) => message.type)).toEqual(["call.accepted", "call.accepted", "call.accepted"]);
+    expect(results.map((message) => message.type)).toEqual(["call.accepted", "call.taken", "call.accepted"]);
     expect(results.map((message) => (message.payload as Record<string, unknown>).expertId)).toEqual([
       "expert-wang",
       "expert-wang",
@@ -224,5 +317,79 @@ describe("collaboration server", () => {
     expertWang.close();
     expertLiu.close();
     glasses.close();
+  });
+
+  it("replays an accepted call when the expert reconnects within the grace period", async () => {
+    const server = await startServerWithLifecycle({ participantDisconnectGraceMs: 200 });
+    const expert = await openSocket(server.websocketUrl);
+    const glasses = await openSocket(server.websocketUrl);
+    expert.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-wang", seq: 1, sentAt: 1, payload: { kind: "expert", name: "Wang" } }));
+    glasses.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "glasses-01", seq: 1, sentAt: 1, payload: { kind: "glasses", name: "Air3-01" } }));
+    await Promise.all([nextMessage(expert), nextMessage(glasses)]);
+    const incoming = nextMessage(expert);
+    glasses.send(JSON.stringify({ type: "call.requested", sessionId: null, senderId: "glasses-01", seq: 2, sentAt: 2, payload: {} }));
+    const [call] = await Promise.all([incoming, nextMessage(glasses)]);
+    const expertAccepted = nextMessage(expert);
+    const glassesAccepted = nextMessage(glasses);
+    expert.send(JSON.stringify({ type: "call.accepted", sessionId: call.sessionId, senderId: "expert-wang", seq: 2, sentAt: 3, payload: {} }));
+    await Promise.all([expertAccepted, glassesAccepted]);
+    await new Promise<void>((resolve) => expert.once("close", resolve).close());
+
+    const reconnected = await openSocket(server.websocketUrl);
+    const replay = new Promise<Record<string, unknown>[]>((resolve, reject) => {
+      const messages: Record<string, unknown>[] = [];
+      const timeout = setTimeout(() => reject(new Error("accepted replay timeout")), 2_000);
+      reconnected.on("message", (data) => {
+        messages.push(JSON.parse(data.toString()));
+        if (messages.length === 2) {
+          clearTimeout(timeout);
+          resolve(messages);
+        }
+      });
+    });
+    reconnected.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-wang", seq: 1, sentAt: 4, payload: { kind: "expert", name: "Wang" } }));
+
+    const [, accepted] = await replay;
+    expect(accepted).toMatchObject({
+      type: "call.accepted",
+      sessionId: call.sessionId,
+      payload: { expertId: "expert-wang", glassesId: "glasses-01" },
+    });
+
+    reconnected.close();
+    glasses.close();
+  });
+
+  it("ends an accepted call when the expert does not reconnect", async () => {
+    const server = await startServerWithLifecycle({ participantDisconnectGraceMs: 20 });
+    const expert = await openSocket(server.websocketUrl);
+    const glasses = await openSocket(server.websocketUrl);
+    expert.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "expert-wang", seq: 1, sentAt: 1, payload: { kind: "expert", name: "Wang" } }));
+    glasses.send(JSON.stringify({ type: "presence.registered", sessionId: null, senderId: "glasses-01", seq: 1, sentAt: 1, payload: { kind: "glasses", name: "Air3-01" } }));
+    await Promise.all([nextMessage(expert), nextMessage(glasses)]);
+    const incoming = nextMessage(expert);
+    glasses.send(JSON.stringify({ type: "call.requested", sessionId: null, senderId: "glasses-01", seq: 2, sentAt: 2, payload: {} }));
+    const [call] = await Promise.all([incoming, nextMessage(glasses)]);
+    const expertAccepted = nextMessage(expert);
+    const glassesAccepted = nextMessage(glasses);
+    expert.send(JSON.stringify({ type: "call.accepted", sessionId: call.sessionId, senderId: "expert-wang", seq: 2, sentAt: 3, payload: {} }));
+    await Promise.all([expertAccepted, glassesAccepted]);
+    const ended = nextMessage(glasses);
+    expert.terminate();
+
+    expect(await ended).toMatchObject({ type: "call.ended", sessionId: call.sessionId });
+    glasses.close();
+  });
+
+  it("terminates a half-open websocket that does not answer protocol pings", async () => {
+    const server = await startServerWithLifecycle({ heartbeatIntervalMs: 20 });
+    const socket = await new Promise<WebSocket>((resolve, reject) => {
+      const candidate = new WebSocket(server.websocketUrl, { autoPong: false });
+      candidate.once("open", () => resolve(candidate));
+      candidate.once("error", reject);
+    });
+
+    await new Promise<void>((resolve) => socket.once("close", () => resolve()));
+    expect(socket.readyState).toBe(WebSocket.CLOSED);
   });
 });

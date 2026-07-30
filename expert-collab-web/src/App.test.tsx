@@ -4,11 +4,13 @@ import { App } from "./App";
 
 class FakeBrowserSocket extends EventTarget {
   static instance: FakeBrowserSocket | null = null;
+  static instances: FakeBrowserSocket[] = [];
   readonly sent: string[] = [];
 
   constructor(readonly url: string) {
     super();
     FakeBrowserSocket.instance = this;
+    FakeBrowserSocket.instances.push(this);
   }
 
   send(data: string): void {
@@ -21,14 +23,21 @@ class FakeBrowserSocket extends EventTarget {
     this.dispatchEvent(new Event("open"));
   }
 
+  disconnect(): void {
+    this.dispatchEvent(new Event("close"));
+  }
+
   receive(message: Record<string, unknown>): void {
     this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(message) }));
   }
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
+  sessionStorage.clear();
   FakeBrowserSocket.instance = null;
+  FakeBrowserSocket.instances = [];
 });
 
 describe("expert collaboration console", () => {
@@ -74,5 +83,80 @@ describe("expert collaboration console", () => {
 
     const messages = socket?.sent.map((data) => JSON.parse(data) as { type: string }) ?? [];
     expect(messages.map((message) => message.type)).toEqual(["presence.registered", "call.accepted"]);
+  });
+
+  it("reconnects and registers the expert again after the socket closes", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeBrowserSocket);
+    render(<App live />);
+    const firstSocket = FakeBrowserSocket.instances[0];
+
+    act(() => firstSocket.open());
+    expect(firstSocket.sent.map((data) => JSON.parse(data).type)).toEqual(["presence.registered"]);
+
+    act(() => firstSocket.disconnect());
+    act(() => vi.runOnlyPendingTimers());
+    expect(FakeBrowserSocket.instances).toHaveLength(2);
+
+    const secondSocket = FakeBrowserSocket.instances[1];
+    act(() => secondSocket.open());
+    expect(secondSocket.sent.map((data) => JSON.parse(data).type)).toEqual(["presence.registered"]);
+  });
+
+  it("reuses the same expert identity after a reload-style remount", () => {
+    vi.stubGlobal("WebSocket", FakeBrowserSocket);
+    const firstRender = render(<App live />);
+    const firstSocket = FakeBrowserSocket.instances[0];
+    act(() => firstSocket.open());
+    const firstRegistration = JSON.parse(firstSocket.sent[0]) as { senderId: string };
+
+    firstRender.unmount();
+    render(<App live />);
+    const secondSocket = FakeBrowserSocket.instances[1];
+    act(() => secondSocket.open());
+    const secondRegistration = JSON.parse(secondSocket.sent[0]) as { senderId: string };
+
+    expect(secondRegistration.senderId).toBe(firstRegistration.senderId);
+  });
+
+  it("does not restore the accept prompt when an ended call is replayed after reconnecting", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeBrowserSocket);
+    render(<App live />);
+    const firstSocket = FakeBrowserSocket.instances[0];
+    const callRequested = {
+      type: "call.requested",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 1,
+      sentAt: 1,
+      payload: { glassesId: "glasses-01", glassesName: "Air3-现场01" },
+    };
+
+    act(() => {
+      firstSocket.open();
+      firstSocket.receive(callRequested);
+    });
+    expect(screen.getByRole("button", { name: "接听" })).toBeVisible();
+
+    act(() => firstSocket.receive({
+      type: "call.ended",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 2,
+      sentAt: 2,
+      payload: {},
+    }));
+    expect(screen.queryByRole("button", { name: "接听" })).not.toBeInTheDocument();
+
+    act(() => firstSocket.disconnect());
+    act(() => vi.runOnlyPendingTimers());
+    const secondSocket = FakeBrowserSocket.instances[1];
+    act(() => {
+      secondSocket.open();
+      secondSocket.receive({ ...callRequested, seq: 3, sentAt: 3 });
+    });
+
+    expect(screen.queryByRole("button", { name: "接听" })).not.toBeInTheDocument();
   });
 });

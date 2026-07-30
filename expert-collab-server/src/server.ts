@@ -7,7 +7,7 @@ import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import { createPublicConfig, loadConfig, type ServerConfig } from "./config.js";
 import { parseMessage, type Envelope } from "./protocol.js";
-import { SessionStore } from "./session-store.js";
+import { DEFAULT_PENDING_CALL_TIMEOUT_MS, SessionStore } from "./session-store.js";
 import { generateUserSig } from "./trtc-user-sig.js";
 
 interface RegisteredClient {
@@ -26,6 +26,13 @@ export interface CollabServer {
   start(portOverride?: number): Promise<RunningCollabServer>;
 }
 
+export interface CollabServerOptions {
+  pendingCallTimeoutMs?: number;
+  pendingCallSweepIntervalMs?: number;
+  participantDisconnectGraceMs?: number;
+  heartbeatIntervalMs?: number;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -36,14 +43,23 @@ function send(socket: WebSocket, message: Envelope): void {
   }
 }
 
-export function createCollabServer(config: ServerConfig): CollabServer {
+export function createCollabServer(config: ServerConfig, options: CollabServerOptions = {}): CollabServer {
   const app = express();
   const server = http.createServer(app);
   const websocketServer = new WebSocketServer({ noServer: true });
-  const store = new SessionStore();
+  const store = new SessionStore(
+    undefined,
+    Date.now,
+    options.pendingCallTimeoutMs ?? DEFAULT_PENDING_CALL_TIMEOUT_MS,
+  );
   const clients = new Map<WebSocket, RegisteredClient>();
   const allowedOrigins = new Set(config.allowedOrigin.split(",").map((origin) => origin.trim()).filter(Boolean));
   let serverSequence = 0;
+  let pendingCallSweep: ReturnType<typeof setInterval> | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  const socketAlive = new WeakMap<WebSocket, boolean>();
+  const expertDisconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const participantDisconnectGraceMs = options.participantDisconnectGraceMs ?? 8_000;
 
   const envelope = (type: string, sessionId: string | null, payload: Record<string, unknown>): Envelope => ({
     type,
@@ -53,6 +69,43 @@ export function createCollabServer(config: ServerConfig): CollabServer {
     sentAt: Date.now(),
     payload,
   });
+
+  const broadcastEnded = (sessionIds: string[]): void => {
+    for (const sessionId of sessionIds) {
+      const ended = envelope("call.ended", sessionId, {});
+      for (const peerSocket of clients.keys()) {
+        send(peerSocket, ended);
+      }
+    }
+  };
+
+  const clearExpertDisconnectTimer = (expertId: string): void => {
+    const timer = expertDisconnectTimers.get(expertId);
+    if (timer) {
+      clearTimeout(timer);
+      expertDisconnectTimers.delete(expertId);
+    }
+  };
+
+  const sendAcceptedSession = (socket: WebSocket, expertId: string): boolean => {
+    const session = store.listActiveSessionsForExpert(expertId)
+      .find((candidate) => candidate.primaryExpertId === expertId);
+    if (!session) {
+      return false;
+    }
+    const glasses = [...clients.values()].find(
+      (peer) => peer.kind === "glasses" && peer.id === session.glassesId,
+    );
+    send(socket, envelope("call.accepted", session.id, {
+      sessionId: session.id,
+      expertId,
+      role: "primary",
+      glassesId: session.glassesId,
+      glassesName: glasses?.name ?? session.glassesId,
+      resumed: true,
+    }));
+    return true;
+  };
 
   app.use(express.json({ limit: "2mb" }));
   app.use((request, response, next) => {
@@ -146,6 +199,8 @@ export function createCollabServer(config: ServerConfig): CollabServer {
   });
 
   websocketServer.on("connection", (socket) => {
+    socketAlive.set(socket, true);
+    socket.on("pong", () => socketAlive.set(socket, true));
     socket.on("message", (data) => {
       try {
         const message = parseMessage(JSON.parse(data.toString()));
@@ -158,16 +213,19 @@ export function createCollabServer(config: ServerConfig): CollabServer {
           }
           clients.set(socket, { id: message.senderId, kind, name: name.trim() });
           if (kind === "expert") {
+            clearExpertDisconnectTimer(message.senderId);
             store.registerExpert(message.senderId, name.trim());
           }
           send(socket, envelope("presence.registered", null, { id: message.senderId, kind, name: name.trim() }));
           if (kind === "expert") {
-            for (const session of store.listPendingCalls()) {
-              const glasses = [...clients.values()].find((peer) => peer.kind === "glasses" && peer.id === session.glassesId);
-              send(socket, envelope("call.requested", session.id, {
-                glassesId: session.glassesId,
-                glassesName: glasses?.name ?? session.glassesId,
-              }));
+            if (!sendAcceptedSession(socket, message.senderId)) {
+              for (const session of store.listPendingCalls()) {
+                const glasses = [...clients.values()].find((peer) => peer.kind === "glasses" && peer.id === session.glassesId);
+                send(socket, envelope("call.requested", session.id, {
+                  glassesId: session.glassesId,
+                  glassesName: glasses?.name ?? session.glassesId,
+                }));
+              }
             }
           }
           return;
@@ -179,15 +237,25 @@ export function createCollabServer(config: ServerConfig): CollabServer {
         }
 
         if (message.type === "call.requested" && client.kind === "glasses") {
+          const existing = store.getActiveSessionForGlasses(client.id);
           const session = store.requestCall(client.id);
-          const call = envelope("call.requested", session.id, { glassesId: client.id, glassesName: client.name });
-          const availableIds = new Set(store.listAvailableExperts().map((expert) => expert.id));
-          for (const [peerSocket, peer] of clients) {
-            if (peer.kind === "expert" && availableIds.has(peer.id)) {
-              send(peerSocket, call);
+          if (!existing && session.status === "calling") {
+            const call = envelope("call.requested", session.id, { glassesId: client.id, glassesName: client.name });
+            const availableIds = new Set(store.listAvailableExperts().map((expert) => expert.id));
+            for (const [peerSocket, peer] of clients) {
+              if (peer.kind === "expert" && availableIds.has(peer.id)) {
+                send(peerSocket, call);
+              }
             }
           }
           send(socket, envelope("call.requested", session.id, { accepted: true }));
+          if (session.primaryExpertId) {
+            send(socket, envelope("call.accepted", session.id, {
+              sessionId: session.id,
+              expertId: session.primaryExpertId,
+              role: "primary",
+            }));
+          }
           return;
         }
 
@@ -196,8 +264,12 @@ export function createCollabServer(config: ServerConfig): CollabServer {
           const accepted = envelope("call.accepted", message.sessionId, participant as unknown as Record<string, unknown>);
           const session = store.getSession(message.sessionId);
           for (const [peerSocket, peer] of clients) {
-            if (peer.kind === "expert" || peer.id === session?.glassesId) {
+            if (peerSocket === socket || peer.id === session?.glassesId) {
               send(peerSocket, accepted);
+            } else if (peer.kind === "expert") {
+              send(peerSocket, envelope("call.taken", message.sessionId, {
+                expertId: participant.expertId,
+              }));
             }
           }
           return;
@@ -278,9 +350,29 @@ export function createCollabServer(config: ServerConfig): CollabServer {
           );
           if (!hasAnotherConnection) {
             store.setExpertOnline(client.id, false);
+            clearExpertDisconnectTimer(client.id);
+            const timer = setTimeout(() => {
+              expertDisconnectTimers.delete(client.id);
+              const stillDisconnected = ![...clients.values()].some(
+                (peer) => peer.kind === "expert" && peer.id === client.id,
+              );
+              if (stillDisconnected) {
+                const ended = store.endSessionsForExpert(client.id);
+                broadcastEnded(ended.map((session) => session.id));
+              }
+            }, participantDisconnectGraceMs);
+            expertDisconnectTimers.set(client.id, timer);
           }
         } catch {
           // A client can disconnect before registration is committed.
+        }
+      } else if (client?.kind === "glasses") {
+        const hasAnotherConnection = [...clients.values()].some(
+          (peer) => peer.kind === "glasses" && peer.id === client.id,
+        );
+        if (!hasAnotherConnection) {
+          const ended = store.endPendingCallsForGlasses(client.id);
+          broadcastEnded(ended.map((session) => session.id));
         }
       }
     });
@@ -298,10 +390,40 @@ export function createCollabServer(config: ServerConfig): CollabServer {
             return;
           }
           const httpUrl = `http://${config.host}:${address.port}`;
+          const sweepIntervalMs = options.pendingCallSweepIntervalMs ?? 1_000;
+          pendingCallSweep = setInterval(() => {
+            const expired = store.expirePendingCalls();
+            broadcastEnded(expired.map((session) => session.id));
+          }, sweepIntervalMs);
+          pendingCallSweep.unref();
+          const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 15_000;
+          heartbeat = setInterval(() => {
+            for (const socket of websocketServer.clients) {
+              if (socketAlive.get(socket) === false) {
+                socket.terminate();
+                continue;
+              }
+              socketAlive.set(socket, false);
+              socket.ping();
+            }
+          }, heartbeatIntervalMs);
+          heartbeat.unref();
           resolve({
             httpUrl,
             websocketUrl: `ws://${config.host}:${address.port}${config.websocketPath}`,
             close: async () => {
+              if (pendingCallSweep) {
+                clearInterval(pendingCallSweep);
+                pendingCallSweep = null;
+              }
+              if (heartbeat) {
+                clearInterval(heartbeat);
+                heartbeat = null;
+              }
+              for (const timer of expertDisconnectTimers.values()) {
+                clearTimeout(timer);
+              }
+              expertDisconnectTimers.clear();
               for (const socket of websocketServer.clients) {
                 socket.terminate();
               }

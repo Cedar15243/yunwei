@@ -65,6 +65,7 @@ const initialSnapshot: CollaborationSnapshot = {
 
 export class CollaborationController {
   private snapshot = initialSnapshot;
+  private readonly endedSessionIds = new Set<string>();
   private readonly listeners = new Set<SnapshotListener>();
   private unsubscribeSignal: (() => void) | null = null;
 
@@ -121,6 +122,7 @@ export class CollaborationController {
 
   async end(): Promise<void> {
     if (this.snapshot.sessionId) {
+      this.endedSessionIds.add(this.snapshot.sessionId);
       if (this.snapshot.role === "observer") {
         this.options.signaling.leaveObserver(this.snapshot.sessionId);
       } else {
@@ -139,7 +141,17 @@ export class CollaborationController {
   }
 
   private readonly handleMessage = (message: CollabEnvelope): void => {
+    if (message.sessionId
+      && message.type !== "call.ended"
+      && this.endedSessionIds.has(message.sessionId)) {
+      return;
+    }
+
     if (message.type === "call.requested" && message.sessionId) {
+      if (this.snapshot.status === "connecting"
+        || this.snapshot.status === "in_call") {
+        return;
+      }
       this.snapshot = {
         status: "ringing",
         sessionId: message.sessionId,
@@ -153,17 +165,55 @@ export class CollaborationController {
       return;
     }
 
-    if (message.type === "call.accepted" && message.sessionId === this.snapshot.sessionId) {
+    if (message.type === "call.accepted" && message.sessionId) {
       const primaryExpertId = typeof message.payload.expertId === "string" ? message.payload.expertId : null;
       if (primaryExpertId !== this.options.expertId) {
-        this.update({ status: "taken", primaryExpertId });
+        if (message.sessionId === this.snapshot.sessionId) {
+          this.update({ status: "taken", primaryExpertId });
+        }
+        return;
+      }
+      if (message.sessionId !== this.snapshot.sessionId) {
+        const glassesId = typeof message.payload.glassesId === "string"
+          ? message.payload.glassesId
+          : null;
+        if (!glassesId || (this.snapshot.status !== "available" && this.snapshot.status !== "ended")) {
+          return;
+        }
+        this.snapshot = {
+          status: "connecting",
+          sessionId: message.sessionId,
+          glassesId,
+          glassesName: typeof message.payload.glassesName === "string"
+            ? message.payload.glassesName
+            : "Air3现场",
+          primaryExpertId,
+          error: null,
+          role: "primary",
+        };
+        this.notify();
+      } else if (this.snapshot.status === "in_call"
+          || this.snapshot.status === "failed"
+          || (this.snapshot.status === "connecting" && this.snapshot.role === "primary")) {
         return;
       }
       void this.joinCall(primaryExpertId, "primary");
       return;
     }
 
+    if (message.type === "call.taken" && message.sessionId === this.snapshot.sessionId) {
+      const primaryExpertId = typeof message.payload.expertId === "string"
+        ? message.payload.expertId
+        : null;
+      this.update({ status: "taken", primaryExpertId });
+      return;
+    }
+
     if (message.type === "observer.invited" && message.sessionId && message.payload.expertId === this.options.expertId) {
+      if (this.snapshot.status === "connecting"
+        || this.snapshot.status === "in_call") {
+        return;
+      }
       this.snapshot = {
         status: "invited",
         sessionId: message.sessionId,
@@ -186,9 +236,12 @@ export class CollaborationController {
       return;
     }
 
-    if (message.type === "call.ended" && message.sessionId === this.snapshot.sessionId) {
-      void this.options.trtc.leave();
-      this.update({ status: "ended" });
+    if (message.type === "call.ended" && message.sessionId) {
+      this.endedSessionIds.add(message.sessionId);
+      if (message.sessionId === this.snapshot.sessionId) {
+        void this.options.trtc.leave();
+        this.update({ status: "ended" });
+      }
       return;
     }
 
@@ -215,9 +268,16 @@ export class CollaborationController {
         localVideoView: this.options.localVideoView,
         publishVideo: role === "primary",
       });
+      if (this.snapshot.sessionId !== sessionId || this.endedSessionIds.has(sessionId)) {
+        await this.options.trtc.leave();
+        return;
+      }
       this.update({ status: "in_call" });
     } catch (error) {
       await this.options.trtc.leave();
+      if (this.snapshot.sessionId !== sessionId || this.endedSessionIds.has(sessionId)) {
+        return;
+      }
       if (role === "observer") {
         this.options.signaling.leaveObserver(sessionId);
       }

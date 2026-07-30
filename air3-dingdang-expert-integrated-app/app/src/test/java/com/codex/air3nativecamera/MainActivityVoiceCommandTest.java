@@ -634,6 +634,9 @@ public final class MainActivityVoiceCommandTest {
         assertTrue(instruction.contains("只给出一个当前最需要执行的下一步"));
         assertTrue(instruction.contains("只能包含一个动作和一个检查对象"));
         assertTrue(instruction.contains("不要罗列多个可能原因"));
+        assertTrue(instruction.contains("回答必须与当前问题直接相关"));
+        assertTrue(instruction.contains("不得被历史任务或当前检测步骤带偏"));
+        assertTrue(instruction.contains("不得输出检查状态或下一步模板"));
         assertTrue(instruction.contains("180 个汉字"));
         assertFalse(instruction.contains("固定使用"));
         assertFalse(instruction.contains("问题：一句话"));
@@ -733,6 +736,18 @@ public final class MainActivityVoiceCommandTest {
         assertFalse(MainActivity.isUserEvidenceImage(
                 "user", "image", "asset://scene-reference/gateway-rs485.jpg"));
         assertFalse(MainActivity.isUserEvidenceImage("assistant", "text", "backend-image-1"));
+    }
+
+    @Test
+    public void referenceImagesCanBeDisplayedInTheTaskHudWithoutBecomingAiEvidence() {
+        assertTrue(MainActivity.isTaskHudDisplayImage(
+                "user", "image", "backend-image-1"));
+        assertTrue(MainActivity.isTaskHudDisplayImage(
+                "assistant", "image", "asset://scene-reference/ddc-power.jpg"));
+        assertFalse(MainActivity.isTaskHudDisplayImage(
+                "assistant", "image", "backend-image-1"));
+        assertFalse(MainActivity.isTaskHudDisplayImage(
+                "assistant", "text", "asset://scene-reference/ddc-power.jpg"));
     }
 
     private void assertCommand(String phrase, LegacyVoiceCommandRouter.Command expected) {

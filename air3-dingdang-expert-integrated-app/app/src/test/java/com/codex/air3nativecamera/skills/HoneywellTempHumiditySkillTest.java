@@ -162,16 +162,16 @@ public final class HoneywellTempHumiditySkillTest {
     }
 
     @Test
-    public void unrelatedModelTagCannotBlockABoundDemoPhotoStep() {
+    public void unrelatedPhotoDoesNotAdvanceABoundDemoStep() {
         TaskSession task = atDdcPowerPhoto();
 
         HoneywellTempHumiditySkill.Result result = skill.evaluate(task,
                 "拍好了", tags("unrelated", "insufficient"), true, false);
 
         assertTrue(result.matched());
-        assertTrue(result.accepted());
-        assertEquals(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT, task.sceneStepId());
-        assertTrue(result.reply().contains("DDC"));
+        assertFalse(result.accepted());
+        assertEquals(HoneywellTempHumiditySkill.STEP_DDC_POWER_PHOTO, task.sceneStepId());
+        assertTrue(result.reply().contains("检查状态：无法判断"));
     }
 
     @Test
@@ -185,8 +185,14 @@ public final class HoneywellTempHumiditySkillTest {
 
         assertTrue(result.accepted());
         assertEquals(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT, task.sceneStepId());
+        assertTrue(result.reply().contains("检查状态：无法判断"));
+        assertTrue(result.reply().contains("10号 24VAC"));
+        assertTrue(result.reply().contains("11号 COM"));
         assertTrue(result.reply().contains("万用表"));
-        assertTrue(result.reply().contains("口述"));
+        assertTrue(result.reply().contains("10 / 11 / 12"));
+        assertTrue(result.reply().contains("黑表笔"));
+        assertTrue(result.reply().contains("红表笔"));
+        assertTrue(result.reply().contains("12号 E-GND"));
         assertFalse(result.reply().contains("供电正常"));
     }
 
@@ -205,11 +211,12 @@ public final class HoneywellTempHumiditySkillTest {
         assertFalse(low.accepted());
         assertEquals(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT,
                 task.sceneStepId());
-        assertTrue(low.reply().contains("不能推进"));
+        assertTrue(low.reply().contains("检查状态：异常"));
+        assertTrue(low.reply().contains("暂不进入下一步"));
     }
 
     @Test
-    public void normalDdcVoltageAdvancesToDdcRs485() {
+    public void normalDdcVoltageAdvancesToSpokenGatewayLightCheck() {
         TaskSession task = atDdcPowerMeasurement();
 
         HoneywellTempHumiditySkill.Result result = skill.evaluate(task,
@@ -218,33 +225,126 @@ public final class HoneywellTempHumiditySkillTest {
                         "voltage-in-range"), false, false);
 
         assertTrue(result.accepted());
-        assertEquals(HoneywellTempHumiditySkill.STEP_DDC_RS485, task.sceneStepId());
-        assertTrue(result.reply().contains("DDC"));
-        assertTrue(result.reply().contains("485"));
-    }
-
-    @Test
-    public void oneGatewayPhotoChecksRs485AndNetworkTogether() {
-        TaskSession task = atDdcRs485();
-
-        acceptPhoto(task, "DDC的485端子和状态灯",
-                "honeywell-ddc", "rs485-terminal", "rs485-led");
         assertEquals(HoneywellTempHumiditySkill.STEP_GATEWAY_RS485, task.sceneStepId());
-
-        acceptPhoto(task, "网关上方485灯和下方网络口都在这张照片里",
-                "honeywell-gateway", "gateway-rs485-led", "network-port", "link-led");
-        assertEquals(HoneywellTempHumiditySkill.STEP_SENSOR_DEVICE, task.sceneStepId());
+        assertTrue(result.reply().contains("检查状态：正常"));
+        assertTrue(result.reply().contains("485通讯灯"));
+        assertTrue(result.reply().contains("网络通讯灯"));
+        assertTrue(result.reply().contains("不需要拍照"));
     }
 
     @Test
-    public void ddcRs485ReusesTheDdcIdentityConfirmedByThePreviousStep() {
-        TaskSession task = atDdcRs485();
+    public void chineseTwentySixVoltReportAdvancesToTheFixedDoubleLightQuestion() {
+        TaskSession task = atDdcPowerMeasurement();
+        String report = "刚才测量十号和十一号接口有二十六伏电压，读数稳定";
 
-        HoneywellTempHumiditySkill.Result result = skill.evaluate(task,
-                "看下485", tags("rs485-terminal", "rs485-led"), true, true);
+        assertTrue(skill.shouldHandleTurn(task, report, false));
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                task, report, SceneSkillAiBridge.parse(""), false);
+        HoneywellTempHumiditySkill.Result result = skill.evaluate(
+                task, report, evidence, false, false);
 
         assertTrue(result.accepted());
         assertEquals(HoneywellTempHumiditySkill.STEP_GATEWAY_RS485, task.sceneStepId());
+        assertTrue(result.reply().contains("485通讯灯"));
+        assertTrue(result.reply().contains("网络通讯灯"));
+        assertTrue(result.reply().contains("不亮、常亮还是闪烁"));
+        assertTrue(result.reply().contains("21.6-26.4VAC"));
+        assertTrue(result.reply().contains("26V"));
+        assertFalse(result.reply().contains("同步"));
+        assertFalse(result.reply().contains("每秒"));
+    }
+
+    @Test
+    public void outOfSequenceDdcLightReportRepeatsTheVoltageMeasurement() {
+        TaskSession task = atDdcPowerMeasurement();
+        String report = "DDC运行指示灯状态正常";
+
+        assertTrue(skill.shouldHandleTurn(task, report, false));
+        HoneywellTempHumiditySkill.Result result = skill.evaluate(
+                task, report, tags(), false, false);
+
+        assertTrue(result.matched());
+        assertFalse(result.accepted());
+        assertEquals(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT,
+                task.sceneStepId());
+        assertTrue(result.reply().contains("10号"));
+        assertTrue(result.reply().contains("11号"));
+        assertTrue(result.reply().contains("实测电压"));
+    }
+
+    @Test
+    public void ddcTerminalNumbersWithoutVoltageStayOnTheMeasurementStep() {
+        TaskSession task = atDdcPowerMeasurement();
+        String report = "已经测量10号和11号端子，读数稳定";
+
+        assertTrue(skill.shouldHandleTurn(task, report, false));
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                task, report, SceneSkillAiBridge.parse(""), false);
+        HoneywellTempHumiditySkill.Result result = skill.evaluate(
+                task, report, evidence, false, false);
+
+        assertTrue(result.matched());
+        assertFalse(result.accepted());
+        assertEquals(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT,
+                task.sceneStepId());
+        assertTrue(result.reply().contains("实测电压"));
+    }
+
+    @Test
+    public void bothGatewayLightsMustBeReportedAsBlinkingBeforeAdvancing() {
+        TaskSession task = atGatewayRs485();
+
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(task,
+                "上面的485灯一闪一闪，下面网口灯也在闪",
+                SceneSkillAiBridge.parse(""), false);
+        HoneywellTempHumiditySkill.Result result = skill.evaluate(task,
+                "上面的485灯一闪一闪，下面网口灯也在闪",
+                evidence, false, false);
+
+        assertTrue(result.accepted());
+        assertEquals(HoneywellTempHumiditySkill.STEP_SENSOR_DEVICE, task.sceneStepId());
+        assertTrue(result.reply().contains("485通讯状态：正常"));
+        assertTrue(result.reply().contains("网络通讯状态：正常"));
+    }
+
+    @Test
+    public void gatewayPhotoWithModelBlinkingTagsStillRequiresSpokenStates() {
+        TaskSession task = atGatewayRs485();
+        SceneSkillAiBridge.ParsedResponse parsed = SceneSkillAiBridge.parse(
+                "两个灯闪烁。\n"
+                        + "[[scene-evidence:gateway-rs485-blinking,network-link-blinking]]");
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                task, "这是网关指示灯照片", parsed, true);
+
+        HoneywellTempHumiditySkill.Result result = skill.evaluate(
+                task, "这是网关指示灯照片", evidence, true, false);
+
+        assertTrue(result.matched());
+        assertFalse(result.accepted());
+        assertEquals(HoneywellTempHumiditySkill.STEP_GATEWAY_RS485, task.sceneStepId());
+        assertTrue(result.reply().contains("不亮、常亮还是闪烁"));
+    }
+
+    @Test
+    public void solidOrDarkGatewayLightBlocksTheWorkflow() {
+        String[] reports = {
+                "485灯常亮，网络灯在闪",
+                "485没亮，网口灯闪烁",
+                "上面一直亮，下面也在闪"
+        };
+        for (String report : reports) {
+            TaskSession task = atGatewayRs485();
+            Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                    task, report, SceneSkillAiBridge.parse(""), false);
+            HoneywellTempHumiditySkill.Result result = skill.evaluate(
+                    task, report, evidence, false, false);
+
+            assertTrue(report, result.matched());
+            assertFalse(report, result.accepted());
+            assertEquals(report, HoneywellTempHumiditySkill.STEP_GATEWAY_RS485,
+                    task.sceneStepId());
+            assertTrue(report, result.reply().contains("检查状态：异常"));
+        }
     }
 
     @Test
@@ -252,9 +352,9 @@ public final class HoneywellTempHumiditySkillTest {
         TaskSession task = atGatewayNetwork();
 
         HoneywellTempHumiditySkill.Result result = skill.evaluate(task,
-                "这是网关下方网络接口和网络状态灯",
-                tags("honeywell-gateway", "network-port", "network-cable", "link-led"),
-                true, true);
+                "485灯闪烁，网络灯也闪烁",
+                tags("gateway-rs485-blinking", "network-link-blinking"),
+                false, false);
 
         assertTrue(result.accepted());
         assertEquals(HoneywellTempHumiditySkill.STEP_SENSOR_DEVICE, task.sceneStepId());
@@ -268,12 +368,165 @@ public final class HoneywellTempHumiditySkillTest {
         acceptPhoto(task, "这是霍尼韦尔温湿度传感器本体",
                 "temp-humidity-sensor", "sensor-cable-entry");
         assertEquals(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING, task.sceneStepId());
+        assertTrue(skill.evaluate(atSensorDevice(), "这是传感器",
+                tags("temp-humidity-sensor", "sensor-cable-entry"), true, true)
+                .reply().contains("电压是否正常"));
 
         assertTrue(skill.shouldHandleTurn(task,
-                "接线点虚接，已经接好，现在电压正常", false));
-        acceptSpoken(task, "接线点虚接，已经接好，现在电压正常",
-                "terminal", "wiring-anomaly=loose", "voltage-in-range");
+                "端子有点松，我拧紧了，测了十二伏，很稳", false));
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(task,
+                "端子有点松，我拧紧了，测了十二伏，很稳",
+                SceneSkillAiBridge.parse(""), false);
+        HoneywellTempHumiditySkill.Result result = skill.evaluate(task,
+                "端子有点松，我拧紧了，测了十二伏，很稳",
+                evidence, false, false);
+        assertTrue(result.accepted());
         assertEquals(HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY, task.sceneStepId());
+        assertTrue(result.reply().contains("原检查状态：异常"));
+        assertTrue(result.reply().contains("当前检查状态：正常"));
+    }
+
+    @Test
+    public void lowSensorVoltageBlocksEvenAfterTheTerminalWasTightened() {
+        TaskSession task = atSensorWiring();
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(task,
+                "线松了已经接好，不过现在只有9伏",
+                SceneSkillAiBridge.parse(""), false);
+
+        HoneywellTempHumiditySkill.Result result = skill.evaluate(task,
+                "线松了已经接好，不过现在只有9伏", evidence, false, false);
+
+        assertTrue(result.matched());
+        assertFalse(result.accepted());
+        assertEquals(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING, task.sceneStepId());
+        assertTrue(result.reply().contains("检查状态：异常"));
+        assertTrue(result.reply().contains("12V"));
+    }
+
+    @Test
+    public void restoredLoosePowerConnectionAtElevenPointEightVoltsAdvancesToPlatformRefresh() {
+        TaskSession task = atSensorWiring();
+        String report = "因为电源虚接，现在已恢复，电压11.8伏，读数稳定";
+
+        assertTrue(skill.shouldHandleTurn(task, report, false));
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                task, report, SceneSkillAiBridge.parse(""), false);
+        HoneywellTempHumiditySkill.Result result = skill.evaluate(
+                task, report, evidence, false, false);
+
+        assertTrue(result.accepted());
+        assertEquals(HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY, task.sceneStepId());
+        assertTrue(result.reply().contains("接线"));
+        assertTrue(result.reply().contains("11.8V"));
+        assertTrue(result.reply().contains("10.8-13.2V"));
+        assertTrue(result.reply().contains("刷新平台"));
+    }
+
+    @Test
+    public void naturalSensorWiringOutcomesAdvanceWithoutRepeatingTheTwelveVoltCheck() {
+        String[] reports = {
+                "接线接触不良",
+                "原来接线虚接，现在已经恢复",
+                "接线正常，电压正常",
+                "12V正常",
+                "十二伏正常"
+        };
+
+        for (String report : reports) {
+            TaskSession task = atSensorWiring();
+            assertTrue(report, skill.shouldHandleTurn(task, report, false));
+            Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                    task, report, SceneSkillAiBridge.parse("[[scene-evidence:insufficient]]"), false);
+            HoneywellTempHumiditySkill.Result result = skill.evaluate(
+                    task, report, evidence, false, false);
+
+            assertTrue(report, result.accepted());
+            assertEquals(report, HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY,
+                    task.sceneStepId());
+            assertTrue(report, result.reply().contains("刷新平台"));
+            assertFalse(report, result.reply().contains("重新测量"));
+        }
+    }
+
+    @Test
+    public void sensorPhotoPromptTellsTheEngineerToOpenTheCoverBeforeCheckingWiring() {
+        TaskSession task = atSensorDevice();
+
+        HoneywellTempHumiditySkill.Result result = skill.evaluate(task,
+                "这是温湿度传感器",
+                tags("temp-humidity-sensor", "sensor-cable-entry"), true, true);
+
+        assertTrue(result.accepted());
+        assertEquals(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING, task.sceneStepId());
+        assertTrue(result.reply().contains("打开"));
+        assertTrue(result.reply().contains("盖"));
+        assertTrue(result.reply().contains("接线"));
+        assertTrue(result.reply().contains("电压"));
+    }
+
+    @Test
+    public void questionsAndSideQuestionsDoNotEnterTheFixedWorkflowTemplate() {
+        TaskSession measurement = atDdcPowerMeasurement();
+        assertFalse(skill.shouldHandleTurn(measurement, "为什么要测10号和11号？", false));
+        assertFalse(skill.shouldHandleTurn(measurement, "这个DDC是做什么用的", false));
+        assertEquals(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT,
+                measurement.sceneStepId());
+
+        TaskSession sensor = atSensorWiring();
+        assertFalse(skill.shouldHandleTurn(sensor, "万用表应该调到什么档位？", false));
+        assertFalse(skill.shouldHandleTurn(sensor, "今天星期几", false));
+        assertEquals(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING, sensor.sceneStepId());
+    }
+
+    @Test
+    public void unrelatedStatementsDoNotEnterTheFixedWorkflowTemplate() {
+        TaskSession measurement = atDdcPowerMeasurement();
+        assertFalse(skill.shouldHandleTurn(measurement,
+                "这套系统已经连续24小时运行正常", false));
+        assertEquals(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT,
+                measurement.sceneStepId());
+
+        TaskSession lights = atGatewayRs485();
+        assertFalse(skill.shouldHandleTurn(lights, "这个网络协议我不了解", false));
+        assertEquals(HoneywellTempHumiditySkill.STEP_GATEWAY_RS485, lights.sceneStepId());
+
+        TaskSession sensor = atSensorWiring();
+        assertFalse(skill.shouldHandleTurn(sensor, "服务器电源是12伏，运行正常", false));
+        assertEquals(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING, sensor.sceneStepId());
+
+        TaskSession recovery = fullWorkflowAtRecovery(new TaskSessionManager());
+        assertFalse(skill.shouldHandleTurn(recovery, "网络连接已经恢复正常", false));
+        assertEquals(HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY,
+                recovery.sceneStepId());
+    }
+
+    @Test
+    public void shortNaturalFieldReportsAreAcceptedWithoutOneScriptedSentence() {
+        String[] ddcReports = {"24伏，挺稳的", "二十四伏，没跳", "测出来24V正常", "测了24，读数稳定"};
+        for (String report : ddcReports) {
+            TaskSession task = atDdcPowerMeasurement();
+            assertTrue(report, skill.shouldHandleTurn(task, report, false));
+            Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                    task, report, SceneSkillAiBridge.parse(""), false);
+            assertTrue(report, skill.evaluate(task, report, evidence, false, false).accepted());
+        }
+
+        String[] lightReports = {"两个都闪", "485和网口都是闪烁", "上面闪，下面也闪"};
+        for (String report : lightReports) {
+            TaskSession task = atGatewayRs485();
+            assertTrue(report, skill.shouldHandleTurn(task, report, false));
+            Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                    task, report, SceneSkillAiBridge.parse(""), false);
+            assertTrue(report, skill.evaluate(task, report, evidence, false, false).accepted());
+        }
+    }
+
+    @Test
+    public void aQuestionContainingAReadingStillDoesNotAdvanceTheStep() {
+        TaskSession task = atDdcPowerMeasurement();
+
+        assertFalse(skill.shouldHandleTurn(task, "我测的是24伏，为什么还要看稳定性？", false));
+        assertEquals(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT, task.sceneStepId());
     }
 
     @Test
@@ -291,15 +544,17 @@ public final class HoneywellTempHumiditySkillTest {
     }
 
     @Test
-    public void spokenRepairNeedsBothFaultAndNormalVoltage() {
+    public void spokenResolvedWiringAdvancesWithoutRepeatingTheVoltageCheck() {
         TaskSession task = atSensorWiring();
 
-        HoneywellTempHumiditySkill.Result incomplete = skill.evaluate(task,
+        HoneywellTempHumiditySkill.Result result = skill.evaluate(task,
                 "发现接线点虚接，已经重新接好",
-                tags("terminal", "wiring-anomaly=loose"), false, false);
+                tags("terminal", "wiring-anomaly=loose", "wiring-resolved"), false, false);
 
-        assertFalse(incomplete.accepted());
-        assertEquals(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING, task.sceneStepId());
+        assertTrue(result.accepted());
+        assertEquals(HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY, task.sceneStepId());
+        assertTrue(result.reply().contains("刷新平台"));
+        assertFalse(result.reply().contains("重新测量"));
     }
 
     @Test
@@ -345,8 +600,31 @@ public final class HoneywellTempHumiditySkillTest {
                 "平台数据已恢复", tags("platform", "temperature-normal"), false, false);
 
         assertTrue(completed.accepted());
+        assertEquals(com.codex.air3nativecamera.task.MaintenanceTask.Phase.COMPLETED,
+                task.maintenanceTask().phase());
+        assertTrue(completed.reply().contains("维修记录已生成"));
+        assertTrue(completed.reply().contains("任务历史"));
+        assertTrue(completed.reply().contains("知识库"));
+        assertTrue(completed.reply().contains("已保存至华方知识库"));
         assertEquals("", task.sceneSkillId());
         assertEquals("", task.sceneStepId());
+    }
+
+    @Test
+    public void naturalPlatformRecoveryReportsCompleteWithoutAScriptedSentence() {
+        String[] reports = {"数据回来了，报警没了", "页面正常了"};
+        for (String report : reports) {
+            TaskSession task = fullWorkflowAtRecovery(new TaskSessionManager());
+            assertTrue(report, skill.shouldHandleTurn(task, report, false));
+            Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                    task, report, SceneSkillAiBridge.parse(""), false);
+            HoneywellTempHumiditySkill.Result result = skill.evaluate(
+                    task, report, evidence, false, false);
+
+            assertTrue(report, result.accepted());
+            assertEquals(report, "", task.sceneSkillId());
+            assertEquals(report, "", task.sceneStepId());
+        }
     }
 
     @Test
@@ -395,13 +673,12 @@ public final class HoneywellTempHumiditySkillTest {
                 "rated-voltage", "probe-point");
         acceptSpoken(task, "DDC额定24伏，输入端实测24伏且稳定", "honeywell-ddc",
                 "rated-voltage", "meter", "meter-reading", "probe-point", "voltage-in-range");
-        acceptPhoto(task, "DDC 485端子与状态灯", "honeywell-ddc", "rs485-terminal",
-                "rs485-led");
-        acceptPhoto(task, "网关485与网络接口", "honeywell-gateway",
-                "gateway-rs485-led", "network-port", "link-led");
+        acceptSpoken(task, "485灯闪烁，网络灯也闪烁",
+                "gateway-rs485-blinking", "network-link-blinking");
         acceptPhoto(task, "温湿度传感器", "temp-humidity-sensor", "sensor-cable-entry");
-        acceptSpoken(task, "接线点虚接，已经接好，现在电压正常", "terminal",
-                "wiring-anomaly", "voltage-in-range");
+        acceptSpoken(task, "接线点虚接，已经接好，现在测量12伏且稳定", "terminal",
+                "wiring-anomaly", "wiring-resolved", "meter-reading", "probe-point",
+                "voltage-in-range");
         assertEquals(HoneywellTempHumiditySkill.STEP_PLATFORM_RECOVERY, task.sceneStepId());
         return task;
     }
@@ -433,6 +710,14 @@ public final class HoneywellTempHumiditySkillTest {
         return task;
     }
 
+    private TaskSession atGatewayRs485() {
+        TaskSession task = atDdcPowerMeasurement();
+        acceptSpoken(task, "输入端测得24伏，读数稳定", "honeywell-ddc",
+                "rated-voltage", "meter-reading", "probe-point", "voltage-in-range");
+        assertEquals(HoneywellTempHumiditySkill.STEP_GATEWAY_RS485, task.sceneStepId());
+        return task;
+    }
+
     private TaskSession atGatewayNetwork() {
         TaskSession task = atDdcRs485();
         task.bindSceneSkill(HoneywellTempHumiditySkill.SKILL_ID,
@@ -441,11 +726,9 @@ public final class HoneywellTempHumiditySkillTest {
     }
 
     private TaskSession atSensorDevice() {
-        TaskSession task = atDdcRs485();
-        acceptPhoto(task, "DDC 485端子与状态灯", "honeywell-ddc", "rs485-terminal",
-                "rs485-led");
-        acceptPhoto(task, "网关485与网络接口", "honeywell-gateway",
-                "gateway-rs485-led", "network-port", "link-led");
+        TaskSession task = atGatewayRs485();
+        acceptSpoken(task, "485灯闪，网络灯也闪",
+                "gateway-rs485-blinking", "network-link-blinking");
         return task;
     }
 

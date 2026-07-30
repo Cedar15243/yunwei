@@ -29,10 +29,12 @@ final class CollabSocketClient {
 
     private static final String TAG = "ExpertCollabSocket";
     private final OkHttpClient client = new OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
             .pingInterval(15, TimeUnit.SECONDS)
             .build();
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final CollabReconnectPolicy reconnectPolicy = new CollabReconnectPolicy();
+    private final Runnable reconnect = this::connect;
     private final String websocketUrl;
     private final String deviceId;
     private final String deviceName;
@@ -50,10 +52,19 @@ final class CollabSocketClient {
     }
 
     void connect() {
+        if (closed) {
+            return;
+        }
+        handler.removeCallbacks(reconnect);
         closed = false;
         socket = client.newWebSocket(new Request.Builder().url(websocketUrl).build(), new WebSocketListener() {
             @Override
             public void onOpen(WebSocket webSocket, Response response) {
+                if (closed) {
+                    webSocket.close(1000, "client closed");
+                    return;
+                }
+                reconnectPolicy.reset();
                 try {
                     JSONObject payload = new JSONObject();
                     payload.put("kind", "glasses");
@@ -73,10 +84,13 @@ final class CollabSocketClient {
             @Override
             public void onFailure(WebSocket webSocket, Throwable error, Response response) {
                 Log.w(TAG, "signaling connection failed", error);
-                listener.onSignalingError("协同服务连接中断");
-                if (!closed) {
-                    handler.postDelayed(CollabSocketClient.this::connect, 2_000);
-                }
+                listener.onSignalingError("协同服务连接中断，正在重连");
+                scheduleReconnect(webSocket);
+            }
+
+            @Override
+            public void onClosed(WebSocket webSocket, int code, String reason) {
+                scheduleReconnect(webSocket);
             }
         });
     }
@@ -112,6 +126,17 @@ final class CollabSocketClient {
         if (current == null || !current.send(message)) {
             listener.onSignalingError("协同服务尚未连接");
         }
+    }
+
+    private void scheduleReconnect(WebSocket disconnectedSocket) {
+        if (socket == disconnectedSocket) {
+            socket = null;
+        }
+        if (closed) {
+            return;
+        }
+        handler.removeCallbacks(reconnect);
+        handler.postDelayed(reconnect, reconnectPolicy.nextDelayMs());
     }
 
     private void handleMessage(String text) {

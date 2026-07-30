@@ -2,6 +2,7 @@ package com.codex.air3nativecamera;
 
 import android.app.Instrumentation;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.os.PowerManager;
 
 import androidx.test.core.app.ActivityScenario;
@@ -69,6 +70,9 @@ public final class HoneywellFullFlowDeviceTest {
                 assertNotEquals("repeated reply at " + step.name, previousReply, reply);
                 assertContainsAny(step.name, reply, step.terms);
                 previousReply = reply;
+                if ("03-ddc-power".equals(step.name)) {
+                    captureScreen(instrumentation, activity, "current-ddc-reference.png");
+                }
                 int thermal = currentThermalStatus(activity);
                 evidence.add(step.name + "|" + step.expectedStep + "|" + thermal + "|" + reply);
                 assertTrue("thermal stop at " + step.name + ": " + thermal, thermal < 3);
@@ -186,6 +190,23 @@ public final class HoneywellFullFlowDeviceTest {
         }
     }
 
+    private static void captureScreen(Instrumentation instrumentation, MainActivity activity,
+            String name) throws Exception {
+        instrumentation.waitForIdleSync();
+        Thread.sleep(800L);
+        Bitmap screenshot = instrumentation.getUiAutomation().takeScreenshot();
+        assertNotNull("screenshot must be available: " + name, screenshot);
+        File directory = new File(activity.getExternalFilesDir(null), "qa-screenshots");
+        assertTrue("unable to create screenshot directory",
+                directory.isDirectory() || directory.mkdirs());
+        try (FileOutputStream output = new FileOutputStream(new File(directory, name), false)) {
+            assertTrue("unable to encode screenshot: " + name,
+                    screenshot.compress(Bitmap.CompressFormat.PNG, 100, output));
+        } finally {
+            screenshot.recycle();
+        }
+    }
+
     private static byte[] readBytes(File file) throws Exception {
         assertTrue("missing QA photo: " + file, file.isFile());
         try (FileInputStream input = new FileInputStream(file);
@@ -245,18 +266,18 @@ public final class HoneywellFullFlowDeviceTest {
                 terms("RERD", "55S15rqQ6L6T5YWl")));
         steps.add(new Step("03-ddc-power", "ddc-power.jpg", decode("6L+Z5pivRERD5ZKM55S15rqQ5L2N572u"), "ddc-power-measurement",
                 terms("5LiH55So6KGo", "5a6e5rWL55S15Y6L")));
-        steps.add(new Step("04-ddc-voltage", "", decode("6aKd5a6aMjTkvI/vvIzlrp7mtYsyNOS8j++8jDI0VkFD5ZKMQ09N5LmL6Ze077yM6K+75pWw56iz5a6a"), "ddc-rs485",
-                terms("NDg1")));
-        steps.add(new Step("05-ddc-rs485", "ddc-rs485.jpg", decode("6L+Z5pivRERD55qENDg15o6l57q/"), "gateway-rs485",
-                terms("572R5YWz", "NDg1")));
-        steps.add(new Step("06-gateway", "gateway.jpg", decode("572R5YWzNDg15ZKM572R57uc54q25oCB6YO95Zyo6L+Z5byg5Zu+6YeM"), "sensor-device",
+        steps.add(new Step("04-ddc-voltage", "", decode("5Yia5omN5rWL6YePMTDlj7flkowxMeWPt+aOpeWPo+acieS6jOWNgeWFreS8j+eUteWOi++8jOivu+aVsOeos+Wumg=="), "gateway-rs485",
+                terms("NDg16YCa6K6v54Gv", "572R57uc6YCa6K6v54Gv")));
+        steps.add(new Step("05-gateway-lights", "", decode("NDg154Gv6Zeq54OB77yM572R57uc54Gv5Lmf6Zeq54OB"), "sensor-device",
                 terms("5Lyg5oSf5Zmo")));
-        steps.add(new Step("07-sensor", "sensor.jpg", decode("6L+Z5piv5rip5rm/5bqm5Lyg5oSf5Zmo"), "sensor-wiring",
+        steps.add(new Step("06-sensor", "sensor.jpg", decode("6L+Z5piv5rip5rm/5bqm5Lyg5oSf5Zmo"), "sensor-wiring",
                 terms("5o6l57q/", "5aSW5aOz")));
-        steps.add(new Step("08-sensor-repair", "", decode("5o6l57q/54K56Jma5o6l77yM5bey57uP5o6l5aW977yM546w5Zyo55S15Y6L5q2j5bi4"), "platform-recovery",
+        steps.add(new Step("07-sensor-repair", "", decode("5Zug5Li655S15rqQ6Jma5o6l77yM546w5Zyo5bey5oGi5aSN77yM55S15Y6LMTEuOOS8j++8jOivu+aVsOeos+Wumg=="), "platform-recovery",
                 terms("5bmz5Y+w", "5oGi5aSN")));
-        steps.add(new Step("09-recovery", "", decode("5bmz5Y+w5pWw5o2u5bey5oGi5aSN"), "",
-                terms("6Zet546v", "5oGi5aSN", "5a6M5oiQ")));
+        steps.add(new Step("08-recovery", "", decode("5bmz5Y+w5pWw5o2u5bey5oGi5aSN"), "",
+                terms("6Zet546v", "5oGi5aSN", "57u05L+u6K6w5b2V5bey55Sf5oiQ",
+                        "5Lu75Yqh5Y6G5Y+y", "55+l6K+G5bqT",
+                        "5bey5L+d5a2Y6Iez5Y2O5pa555+l6K+G5bqT")));
         return steps;
     }
 

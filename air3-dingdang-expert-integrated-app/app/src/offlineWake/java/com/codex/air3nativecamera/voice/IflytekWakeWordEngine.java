@@ -35,6 +35,10 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
     private static final int SAMPLE_RATE_HZ = 16000;
     private static final int FRAME_BYTES = 1280;
     private static final int AUDIO_DIAGNOSTIC_FRAME_INTERVAL = 125;
+    private static final int HEALTHY_SESSION_FRAME_COUNT = 25;
+    private static final int MAX_EMPTY_AUDIO_READS = 3;
+    private static final long EMPTY_AUDIO_READ_DELAY_MS = 15L;
+    private static final long[] RESTART_DELAYS_MS = {250L, 500L, 1_000L, 2_000L, 4_000L, 8_000L};
     private static final String WAKE_THRESHOLD_PARAMETER = "0 0:850";
 
     private final Context context;
@@ -56,6 +60,8 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
     private volatile AiHandle handle;
     private volatile AudioRecord recorder;
     private volatile Thread audioThread;
+    private int restartAttempt;
+    private Runnable restartRunnable;
 
     public IflytekWakeWordEngine(Context context, String appId, String apiKey, String apiSecret) {
         this.context = context.getApplicationContext();
@@ -82,6 +88,10 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
     @Override
     public void stop() {
         startRequested.set(false);
+        synchronized (lock) {
+            cancelRestartLocked();
+            restartAttempt = 0;
+        }
         stopSession();
     }
 
@@ -141,7 +151,8 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
 
     private void startSession() {
         synchronized (lock) {
-            if (!startRequested.get() || audioLoopRunning.get() || audioThread != null) {
+            if (!startRequested.get() || audioLoopRunning.get() || audioThread != null
+                    || restartRunnable != null) {
                 return;
             }
             try {
@@ -151,12 +162,14 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                 int code = AiHelper.getInst().loadData(ABILITY_ID, custom.build());
                 if (code != 0) {
                     Log.e(TAG, "AIKit loadData failed code=" + code);
+                    scheduleSessionRestart();
                     notifyUnavailable("离线唤醒资源加载失败，请稍后重试");
                     return;
                 }
                 code = AiHelper.getInst().specifyDataSet(ABILITY_ID, "key_word", new int[]{0});
                 if (code != 0) {
                     Log.e(TAG, "AIKit specifyDataSet failed code=" + code);
+                    scheduleSessionRestart();
                     notifyUnavailable("离线唤醒资源加载失败，请稍后重试");
                     return;
                 }
@@ -204,6 +217,7 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                     @Override
                     public void onError(int handleId, int code, String message, Object userContext) {
                         Log.e(TAG, "AIKit wake error code=" + code + " message=" + message);
+                        failCurrentSession();
                         notifyUnavailable("离线唤醒异常，请稍后重试");
                     }
                 });
@@ -211,6 +225,7 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                 if (handle == null || handle.getCode() != 0) {
                     Log.e(TAG, "AIKit start failed code=" + (handle == null ? -1 : handle.getCode()));
                     handle = null;
+                    scheduleSessionRestart();
                     notifyUnavailable("离线唤醒启动失败，请稍后重试");
                     return;
                 }
@@ -249,14 +264,32 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                 AiStatus status = AiStatus.BEGIN;
                 byte[] pcm = new byte[FRAME_BYTES];
                 int diagnosticFrames = 0;
+                int emptyReads = 0;
                 try {
                     while (audioLoopRunning.get()) {
                         int read = currentRecorder.read(pcm, 0, pcm.length);
                         if (read <= 0) {
                             Log.w(TAG, "Offline wake recorder read code=" + read);
-                            continue;
+                            if (read == 0) {
+                                emptyReads++;
+                                if (!shouldAbortAudioRead(read, emptyReads)) {
+                                    try {
+                                        Thread.sleep(EMPTY_AUDIO_READ_DELAY_MS);
+                                    } catch (InterruptedException error) {
+                                        Thread.currentThread().interrupt();
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            }
+                            notifyUnavailable("离线唤醒异常，请稍后重试");
+                            break;
                         }
+                        emptyReads = 0;
                         diagnosticFrames++;
+                        if (diagnosticFrames == HEALTHY_SESSION_FRAME_COUNT) {
+                            markSessionHealthy();
+                        }
                         if (diagnosticFrames == 1
                                 || diagnosticFrames % AUDIO_DIAGNOSTIC_FRAME_INTERVAL == 0) {
                             Log.i(TAG, "Offline wake audio frames=" + diagnosticFrames
@@ -264,7 +297,9 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                                     + " rmsDbfs=" + pcmRmsDbfs(pcm, read)
                                     + " peak=" + pcmPeak(pcm, read));
                         }
-                        writeAudio(audioRequestBuilder, pcm, read, status);
+                        if (!writeAudio(audioRequestBuilder, pcm, read, status)) {
+                            break;
+                        }
                         status = AiStatus.CONTINUE;
                     }
                 } catch (RuntimeException error) {
@@ -273,6 +308,7 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                         notifyUnavailable("离线唤醒异常，请稍后重试");
                     }
                 } finally {
+                    audioLoopRunning.set(false);
                     releaseRecorderFromAudioThread(currentRecorder);
                     completeAudioSession();
                 }
@@ -316,11 +352,20 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
         return peak;
     }
 
-    private void writeAudio(AiRequest.Builder audioRequestBuilder,
+    static long restartDelayMillis(int attempt) {
+        int index = Math.max(0, Math.min(attempt, RESTART_DELAYS_MS.length - 1));
+        return RESTART_DELAYS_MS[index];
+    }
+
+    static boolean shouldAbortAudioRead(int readCode, int consecutiveEmptyReads) {
+        return readCode < 0 || (readCode == 0 && consecutiveEmptyReads >= MAX_EMPTY_AUDIO_READS);
+    }
+
+    private boolean writeAudio(AiRequest.Builder audioRequestBuilder,
                             byte[] pcm, int length, AiStatus status) {
         AiHandle current = handle;
         if (current == null) {
-            return;
+            return false;
         }
         byte[] frame = length == pcm.length ? pcm : Arrays.copyOf(pcm, length);
         audioRequestBuilder.clear().status(status).audio("wav", frame);
@@ -328,7 +373,9 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
         if (code != 0) {
             Log.e(TAG, "AIKit write failed code=" + code);
             notifyUnavailable("离线唤醒异常，请稍后重试");
+            return false;
         }
+        return true;
     }
 
     private void notifyUnavailable(final String reason) {
@@ -391,13 +438,61 @@ public final class IflytekWakeWordEngine implements WakeWordEngine {
                 AiHelper.getInst().end(current);
             }
             if (startRequested.get()) {
-                mainHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        startSession();
-                    }
-                });
+                scheduleSessionRestartLocked();
             }
+        }
+    }
+
+    private void failCurrentSession() {
+        audioLoopRunning.set(false);
+        AudioRecord current = recorder;
+        if (current != null) {
+            try {
+                current.stop();
+            } catch (Exception ignored) {
+            }
+        } else {
+            scheduleSessionRestart();
+        }
+    }
+
+    private void markSessionHealthy() {
+        synchronized (lock) {
+            restartAttempt = 0;
+        }
+    }
+
+    private void scheduleSessionRestart() {
+        synchronized (lock) {
+            scheduleSessionRestartLocked();
+        }
+    }
+
+    private void scheduleSessionRestartLocked() {
+        if (!startRequested.get() || restartRunnable != null) {
+            return;
+        }
+        long delayMs = restartDelayMillis(restartAttempt++);
+        restartRunnable = new Runnable() {
+            @Override
+            public void run() {
+                synchronized (lock) {
+                    if (restartRunnable != this) {
+                        return;
+                    }
+                    restartRunnable = null;
+                }
+                startSession();
+            }
+        };
+        mainHandler.postDelayed(restartRunnable, delayMs);
+        Log.w(TAG, "Offline wake restart scheduled delayMs=" + delayMs);
+    }
+
+    private void cancelRestartLocked() {
+        if (restartRunnable != null) {
+            mainHandler.removeCallbacks(restartRunnable);
+            restartRunnable = null;
         }
     }
 

@@ -283,7 +283,7 @@ public final class ExpertCollabCoordinator implements
         setWaitingSurfaceVisible(!videoActive);
         switch (state) {
             case CALLING:
-                statusText.setText("正在广播呼叫在线专家");
+                statusText.setText(sessionId == null ? "正在发送专家邀请" : "专家邀请已发送");
                 expertText.setText("等待接听");
                 primaryButton.setText("挂断");
                 break;
@@ -336,11 +336,17 @@ public final class ExpertCollabCoordinator implements
     @Override
     public void onSignalingConnected() {
         ui(() -> {
-            if (!released
-                    && !initialCallRequested
+            if (released) {
+                return;
+            }
+            if (!initialCallRequested
                     && stateMachine.getState() == CollabStateMachine.State.IDLE) {
                 initialCallRequested = true;
                 onPrimaryAction();
+            } else if (stateMachine.shouldReplayPendingCallOnSignalingConnected()) {
+                sessionId = null;
+                signaling.requestCall();
+                renderState();
             }
         });
     }
@@ -350,6 +356,7 @@ public final class ExpertCollabCoordinator implements
         ui(() -> {
             if (!released) {
                 sessionId = createdSessionId;
+                renderState();
             }
         });
     }
@@ -434,7 +441,9 @@ public final class ExpertCollabCoordinator implements
     public void onSignalingError(String reason) {
         ui(() -> {
             if (!released) {
-                statusText.setText(reason == null || reason.isEmpty() ? "协同服务连接中断" : reason);
+                statusText.setText(reason == null || reason.isEmpty()
+                        ? "协同服务连接中断，正在重连"
+                        : reason);
             }
         });
     }

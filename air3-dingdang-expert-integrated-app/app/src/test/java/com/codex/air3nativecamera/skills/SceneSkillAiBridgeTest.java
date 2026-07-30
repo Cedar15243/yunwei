@@ -117,54 +117,42 @@ public final class SceneSkillAiBridgeTest {
     }
 
     @Test
-    public void gatewayProtocolChecksRs485AndEthernetInOnePhoto() {
+    public void gatewayProtocolChecksRs485AndEthernetFromOneSpokenReport() {
         TaskSession task = new TaskSessionManager().startNew("project-1", "温湿度异常");
         task.bindSceneSkill(HoneywellTempHumiditySkill.SKILL_ID,
                 HoneywellTempHumiditySkill.STEP_GATEWAY_RS485);
 
-        String rs485 = SceneSkillAiBridge.instruction(task);
-        assertTrue(rs485.contains("COM1/COM2"));
-        assertTrue(rs485.contains("gateway-rs485-led"));
-        assertTrue(rs485.contains("RJ45"));
-        assertTrue(rs485.contains("link-led"));
-        assertFalse(rs485.contains("gateway-rs485-terminal"));
+        String rs485 = SceneSkillAiBridge.instruction(task, false);
+        assertTrue(rs485.contains("本轮不要求照片"));
+        assertTrue(rs485.contains("gateway-rs485-blinking"));
+        assertTrue(rs485.contains("network-link-blinking"));
+        assertTrue(rs485.contains("不亮、常亮还是闪烁"));
 
         task.bindSceneSkill(HoneywellTempHumiditySkill.SKILL_ID,
                 HoneywellTempHumiditySkill.STEP_GATEWAY_NETWORK);
-        String network = SceneSkillAiBridge.instruction(task);
-        assertTrue(network.contains("RJ45"));
-        assertTrue(network.contains("network-cable"));
-        assertFalse(network.contains("gateway-rs485-terminal"));
+        String network = SceneSkillAiBridge.instruction(task, false);
+        assertTrue(network.contains("gateway-rs485-off/solid"));
+        assertTrue(network.contains("network-link-off/solid"));
     }
 
     @Test
-    public void rs485ProtocolsIdentifyThePhysicalTerminalsAndExcludeNearbyStatusAreas() {
+    public void legacyRs485StepAlsoUsesTheSpokenIndicatorProtocol() {
         TaskSession task = new TaskSessionManager().startNew("project-1", "温湿度异常");
         task.bindSceneSkill(HoneywellTempHumiditySkill.SKILL_ID,
                 HoneywellTempHumiditySkill.STEP_DDC_RS485);
 
-        String ddc = SceneSkillAiBridge.instruction(task);
-        assertTrue(ddc.contains("3号端子"));
-        assertTrue(ddc.contains("4号端子"));
-        assertTrue(ddc.contains("包含“485”文字与上方指示灯的局部区域"));
-        assertTrue(ddc.contains("不要框选 S-BUS"));
-        assertTrue(ddc.contains("不要求状态灯必须点亮"));
-        assertTrue(ddc.contains("设备身份沿用上一阶段"));
-        assertTrue(ddc.contains("必须输出 rs485-terminal、rs485-led"));
-        assertFalse(ddc.contains("必须输出 honeywell-ddc、rs485-terminal、rs485-led"));
-        assertFalse(ddc.contains("紧贴其正上方灰色方形指示灯框选"));
+        String ddc = SceneSkillAiBridge.instruction(task, false);
+        assertTrue(ddc.contains("口述网关485与网络通讯灯状态"));
+        assertTrue(ddc.contains("gateway-rs485-blinking"));
+        assertTrue(ddc.contains("network-link-blinking"));
+        assertFalse(ddc.contains("3号端子"));
+        assertFalse(ddc.contains("请只判断本轮实际照片"));
 
         task.bindSceneSkill(HoneywellTempHumiditySkill.SKILL_ID,
                 HoneywellTempHumiditySkill.STEP_GATEWAY_RS485);
-        String gateway = SceneSkillAiBridge.instruction(task);
-        assertTrue(gateway.contains("COM1/COM2"));
-        assertTrue(gateway.contains("不要框选 PWR/RUN"));
-        assertTrue(gateway.contains("从上到下依次为 PWR、RUN、COM1、COM2"));
-        assertTrue(gateway.contains("第三、第四个"));
-        assertTrue(gateway.contains("只输出两个检测框"));
-        assertTrue(gateway.contains("同时覆盖 COM1 和 COM2 两个通讯灯"));
-        assertTrue(gateway.contains("下方 RJ45 网络口通讯灯区"));
-        assertTrue(gateway.contains("不要框选 A/B 端子排"));
+        String gateway = SceneSkillAiBridge.instruction(task, false);
+        assertTrue(gateway.contains("本轮不要求照片"));
+        assertTrue(gateway.contains("只有两个灯都明确为闪烁才能通过"));
 
         task.bindSceneSkill(HoneywellTempHumiditySkill.SKILL_ID,
                 HoneywellTempHumiditySkill.STEP_SENSOR_WIRING);
@@ -566,6 +554,190 @@ public final class SceneSkillAiBridgeTest {
         Set<String> vague = SceneSkillAiBridge.reconcileEvidence(
                 sensorTask, "量过了", SceneSkillAiBridge.parse(""), false);
         assertFalse(vague.contains("wiring-anomaly"));
+    }
+
+    @Test
+    public void chineseSpokenDdcVoltageIsParsedAcrossTheAllowedRange() {
+        TaskSession normal = taskAt(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT);
+        Set<String> normalEvidence = SceneSkillAiBridge.reconcileEvidence(
+                normal, "刚才测量十号和十一号接口有二十六伏电压，读数稳定",
+                SceneSkillAiBridge.parse("[[scene-evidence:insufficient]]"), false);
+        assertFalse(normalEvidence.contains("insufficient"));
+        assertTrue(normalEvidence.contains("meter-reading"));
+        assertTrue(normalEvidence.contains("probe-point"));
+        assertTrue(normalEvidence.contains("voltage-in-range"));
+
+        TaskSession high = taskAt(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT);
+        Set<String> highEvidence = SceneSkillAiBridge.reconcileEvidence(
+                high, "十号和十一号之间测得二十七伏，读数稳定",
+                SceneSkillAiBridge.parse(""), false);
+        assertTrue(highEvidence.contains("voltage-high"));
+        assertFalse(highEvidence.contains("voltage-in-range"));
+    }
+
+    @Test
+    public void voltageRangesIncludeTheirBoundariesAndUseTheLastReportedReading() {
+        TaskSession ddc = taskAt(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT);
+        assertTrue(SceneSkillAiBridge.reconcileEvidence(
+                ddc, "实测21.6伏，读数稳定", SceneSkillAiBridge.parse(""), false)
+                .contains("voltage-in-range"));
+        assertTrue(SceneSkillAiBridge.reconcileEvidence(
+                ddc, "实测26.4伏，读数稳定", SceneSkillAiBridge.parse(""), false)
+                .contains("voltage-in-range"));
+        Set<String> actualHigh = SceneSkillAiBridge.reconcileEvidence(
+                ddc, "额定二十四伏，实测二十七伏，读数稳定",
+                SceneSkillAiBridge.parse(""), false);
+        assertTrue(actualHigh.contains("voltage-high"));
+        assertFalse(actualHigh.contains("voltage-in-range"));
+
+        TaskSession sensor = taskAt(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING);
+        assertTrue(SceneSkillAiBridge.reconcileEvidence(
+                sensor, "虚接已恢复，实测10.8伏稳定", SceneSkillAiBridge.parse(""), false)
+                .contains("voltage-in-range"));
+        assertTrue(SceneSkillAiBridge.reconcileEvidence(
+                sensor, "虚接已恢复，实测13.2伏稳定", SceneSkillAiBridge.parse(""), false)
+                .contains("voltage-in-range"));
+    }
+
+    @Test
+    public void terminalNumbersWithoutAReportedReadingAreNotParsedAsVoltage() {
+        TaskSession task = taskAt(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT);
+
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                task, "已经测量10号和11号端子，读数稳定",
+                SceneSkillAiBridge.parse(""), false);
+
+        assertFalse(evidence.contains("meter-reading"));
+        assertFalse(evidence.contains("voltage-low"));
+        assertFalse(evidence.contains("voltage-in-range"));
+    }
+
+    @Test
+    public void naturalGatewayLightReportsProduceSeparateStateEvidence() {
+        TaskSession normal = taskAt(HoneywellTempHumiditySkill.STEP_GATEWAY_RS485);
+        Set<String> normalEvidence = SceneSkillAiBridge.reconcileEvidence(
+                normal, "上面485灯闪，下面网口也一闪一闪",
+                SceneSkillAiBridge.parse(""), false);
+        assertTrue(normalEvidence.contains("gateway-rs485-blinking"));
+        assertTrue(normalEvidence.contains("network-link-blinking"));
+
+        TaskSession abnormal = taskAt(HoneywellTempHumiditySkill.STEP_GATEWAY_RS485);
+        Set<String> abnormalEvidence = SceneSkillAiBridge.reconcileEvidence(
+                abnormal, "485灯一直亮，网络灯不亮",
+                SceneSkillAiBridge.parse(""), false);
+        assertTrue(abnormalEvidence.contains("gateway-rs485-solid"));
+        assertTrue(abnormalEvidence.contains("network-link-off"));
+    }
+
+    @Test
+    public void gatewayPhotoCannotProvideDynamicLightStateEvidence() {
+        TaskSession task = taskAt(HoneywellTempHumiditySkill.STEP_GATEWAY_RS485);
+        SceneSkillAiBridge.ParsedResponse parsed = SceneSkillAiBridge.parse(
+                "照片中两个灯都在闪烁。\n"
+                        + "[[scene-evidence:gateway-rs485-blinking,network-link-blinking]]\n"
+                        + "[[scene-marker:485通讯灯|normal|0.20|0.20|0.10|0.10|0.94]]\n"
+                        + "[[scene-marker:网络通讯灯|normal|0.20|0.60|0.10|0.10|0.92]]");
+
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                task, "这是网关指示灯照片", parsed, true);
+
+        assertFalse(evidence.contains("gateway-rs485-blinking"));
+        assertFalse(evidence.contains("network-link-blinking"));
+    }
+
+    @Test
+    public void explicitSpokenResultOverridesModelInsufficientOrConflictingStateTags() {
+        TaskSession lights = taskAt(HoneywellTempHumiditySkill.STEP_GATEWAY_RS485);
+        Set<String> lightEvidence = SceneSkillAiBridge.reconcileEvidence(
+                lights, "两个都闪",
+                SceneSkillAiBridge.parse("[[scene-evidence:insufficient,rs485-abnormal]]"), false);
+        assertFalse(lightEvidence.contains("insufficient"));
+        assertFalse(lightEvidence.contains("rs485-abnormal"));
+        assertTrue(lightEvidence.contains("gateway-rs485-blinking"));
+        assertTrue(lightEvidence.contains("network-link-blinking"));
+
+        TaskSession voltage = taskAt(HoneywellTempHumiditySkill.STEP_DDC_POWER_MEASUREMENT);
+        Set<String> voltageEvidence = SceneSkillAiBridge.reconcileEvidence(
+                voltage, "测了24，挺稳",
+                SceneSkillAiBridge.parse("[[scene-evidence:insufficient,voltage-low]]"), false);
+        assertFalse(voltageEvidence.contains("insufficient"));
+        assertFalse(voltageEvidence.contains("voltage-low"));
+        assertTrue(voltageEvidence.contains("voltage-in-range"));
+    }
+
+    @Test
+    public void naturalSensorRepairReportsRequireAStableTwelveVoltReading() {
+        TaskSession normal = taskAt(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING);
+        Set<String> normalEvidence = SceneSkillAiBridge.reconcileEvidence(
+                normal, "端子松了，已经拧紧，测的是十二伏很稳定",
+                SceneSkillAiBridge.parse(""), false);
+        assertTrue(normalEvidence.contains("wiring-anomaly"));
+        assertTrue(normalEvidence.contains("wiring-resolved"));
+        assertTrue(normalEvidence.contains("meter-reading"));
+        assertTrue(normalEvidence.contains("probe-point"));
+        assertTrue(normalEvidence.contains("voltage-in-range"));
+
+        TaskSession low = taskAt(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING);
+        Set<String> lowEvidence = SceneSkillAiBridge.reconcileEvidence(
+                low, "重新接好了，现在只有9伏",
+                SceneSkillAiBridge.parse(""), false);
+        assertTrue(lowEvidence.contains("wiring-resolved"));
+        assertTrue(lowEvidence.contains("voltage-low"));
+        assertFalse(lowEvidence.contains("voltage-in-range"));
+    }
+
+    @Test
+    public void restoredLoosePowerConnectionWithElevenPointEightVoltsIsCompleteEvidence() {
+        TaskSession task = taskAt(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING);
+
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                task, "因为电源虚接，现在已恢复，电压11.8伏，读数稳定",
+                SceneSkillAiBridge.parse("[[scene-evidence:insufficient]]"), false);
+
+        assertFalse(evidence.contains("insufficient"));
+        assertTrue(evidence.contains("wiring-anomaly"));
+        assertTrue(evidence.contains("wiring-resolved"));
+        assertTrue(evidence.contains("meter-reading"));
+        assertTrue(evidence.contains("probe-point"));
+        assertTrue(evidence.contains("voltage-in-range"));
+    }
+
+    @Test
+    public void naturalSensorWiringOutcomesOverrideModelInsufficientEvidence() {
+        String[] reports = {
+                "接线接触不良",
+                "原来接线虚接，现在已经恢复",
+                "接线正常，电压正常",
+                "12V正常",
+                "十二伏正常"
+        };
+
+        for (String report : reports) {
+            TaskSession task = taskAt(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING);
+            Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                    task, report,
+                    SceneSkillAiBridge.parse("[[scene-evidence:insufficient]]"), false);
+
+            assertFalse(report, evidence.contains("insufficient"));
+            assertTrue(report, evidence.contains("terminal"));
+            assertTrue(report, evidence.contains("wiring-anomaly")
+                    || evidence.contains("wiring-resolved")
+                    || evidence.contains("voltage-in-range"));
+        }
+    }
+
+    @Test
+    public void anotherDevicesTwelveVoltStatementIsNotPromotedToSensorEvidence() {
+        TaskSession task = taskAt(HoneywellTempHumiditySkill.STEP_SENSOR_WIRING);
+
+        Set<String> evidence = SceneSkillAiBridge.reconcileEvidence(
+                task, "服务器电源是12伏，运行正常",
+                SceneSkillAiBridge.parse(""), false);
+
+        assertFalse(evidence.contains("terminal"));
+        assertFalse(evidence.contains("meter-reading"));
+        assertFalse(evidence.contains("probe-point"));
+        assertFalse(evidence.contains("voltage-in-range"));
     }
 
     @Test

@@ -34,4 +34,22 @@ public final class CollabStateMachineTest {
 
         assertThrows(IllegalStateException.class, () -> machine.onAccepted("expert-wang"));
     }
+
+    @Test
+    public void reconnectWhileCallingResendsTheInvitationForServerDeduplication() {
+        CollabStateMachine machine = new CollabStateMachine();
+        machine.onPrimaryAction();
+
+        assertEquals(true, machine.shouldReplayPendingCallOnSignalingConnected());
+    }
+
+    @Test
+    public void activeMediaSessionNeverCreatesAnotherInvitationOnReconnect() {
+        CollabStateMachine machine = new CollabStateMachine();
+        machine.onPrimaryAction();
+        machine.onAccepted("expert-wang");
+        machine.onMediaConnected();
+
+        assertEquals(false, machine.shouldReplayPendingCallOnSignalingConnected());
+    }
 }

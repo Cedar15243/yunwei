@@ -18,6 +18,13 @@ interface CollabSocketOptions {
   now?: () => number;
 }
 
+export type CollabConnectionStatus = "connecting" | "connected" | "disconnected";
+
+interface ReconnectingCollabSocketOptions extends CollabSocketOptions {
+  reconnectDelayMs?: number;
+  onStatusChange?: (status: CollabConnectionStatus) => void;
+}
+
 type MessageListener = (message: CollabEnvelope) => void;
 
 export class CollabSocket {
@@ -100,5 +107,142 @@ export class CollabSocket {
       payload,
     };
     this.socket.send(JSON.stringify(message));
+  }
+}
+
+export class ReconnectingCollabSocket {
+  private readonly listeners = new Set<MessageListener>();
+  private readonly reconnectDelayMs: number;
+  private socket: WebSocket | null = null;
+  private client: CollabSocket | null = null;
+  private unsubscribeClient: (() => void) | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private registeredName: string | null = null;
+  private stopped = true;
+
+  constructor(
+    private readonly url: string,
+    private readonly options: ReconnectingCollabSocketOptions,
+  ) {
+    this.reconnectDelayMs = options.reconnectDelayMs ?? 1_000;
+  }
+
+  connect(): void {
+    if (!this.stopped || this.socket) {
+      return;
+    }
+    this.stopped = false;
+    this.openSocket();
+  }
+
+  register(name: string): void {
+    this.registeredName = name;
+    this.client?.register(name);
+  }
+
+  accept(sessionId: string): boolean {
+    return this.client?.accept(sessionId) ?? false;
+  }
+
+  acceptObserver(sessionId: string): boolean {
+    return this.client?.acceptObserver(sessionId) ?? false;
+  }
+
+  end(sessionId: string): void {
+    this.client?.end(sessionId);
+  }
+
+  inviteObserver(sessionId: string, expertId: string): void {
+    this.client?.inviteObserver(sessionId, expertId);
+  }
+
+  leaveObserver(sessionId: string): void {
+    this.client?.leaveObserver(sessionId);
+  }
+
+  sendSessionEvent(type: string, sessionId: string, payload: Record<string, unknown>): void {
+    this.client?.sendSessionEvent(type, sessionId, payload);
+  }
+
+  subscribe(listener: MessageListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  close(): void {
+    this.stopped = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const socket = this.socket;
+    this.releaseSocket(socket);
+    socket?.close();
+    this.listeners.clear();
+  }
+
+  private openSocket(): void {
+    this.options.onStatusChange?.("connecting");
+    const socket = new WebSocket(this.url);
+    this.socket = socket;
+
+    const handleOpen = (): void => {
+      if (this.socket !== socket || this.stopped) {
+        return;
+      }
+      const client = new CollabSocket(socket, { senderId: this.options.senderId, now: this.options.now });
+      this.client = client;
+      this.unsubscribeClient = client.subscribe((message) => {
+        for (const listener of this.listeners) {
+          listener(message);
+        }
+      });
+      if (this.registeredName) {
+        client.register(this.registeredName);
+      }
+      this.options.onStatusChange?.("connected");
+    };
+    const handleClose = (): void => this.handleDisconnect(socket);
+    const handleError = (): void => {
+      socket.close();
+      this.handleDisconnect(socket);
+    };
+    socket.addEventListener("open", handleOpen);
+    socket.addEventListener("close", handleClose);
+    socket.addEventListener("error", handleError);
+    this.detachSocketListeners = () => {
+      socket.removeEventListener("open", handleOpen);
+      socket.removeEventListener("close", handleClose);
+      socket.removeEventListener("error", handleError);
+    };
+  }
+
+  private detachSocketListeners: (() => void) | null = null;
+
+  private handleDisconnect(socket: WebSocket): void {
+    if (this.socket !== socket) {
+      return;
+    }
+    this.releaseSocket(socket);
+    this.options.onStatusChange?.("disconnected");
+    if (!this.stopped && !this.reconnectTimer) {
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        this.openSocket();
+      }, this.reconnectDelayMs);
+    }
+  }
+
+  private releaseSocket(socket: WebSocket | null): void {
+    if (socket && this.socket !== socket) {
+      return;
+    }
+    this.detachSocketListeners?.();
+    this.detachSocketListeners = null;
+    this.unsubscribeClient?.();
+    this.unsubscribeClient = null;
+    this.client?.close();
+    this.client = null;
+    this.socket = null;
   }
 }

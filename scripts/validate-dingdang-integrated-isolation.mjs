@@ -40,6 +40,16 @@ assert.ok(existsSync(installScriptPath), "integrated preview install script is m
 const buildScript = readFileSync(buildScriptPath, "utf8");
 const installScript = readFileSync(installScriptPath, "utf8");
 assert.match(buildScript, /collabServerUrl/);
+assert.match(
+  buildScript,
+  /\[string\]\$CollabServerUrl\s*=\s*"https:\/\/bb\.chinacedar\.top:2305"/,
+  "integrated delivery builds must default to the public collaboration origin",
+);
+assert.doesNotMatch(
+  buildScript,
+  /Get-NetIPAddress|http:\/\/\$\{lanAddress\}:8787/,
+  "delivery builds must not silently compile the developer workstation LAN address",
+);
 assert.match(buildScript, /ApplicationId must remain in the protected integrated preview namespace/);
 assert.match(buildScript, /assembleDebug/);
 assert.match(buildScript, /\[switch\]\$DirectAi/);

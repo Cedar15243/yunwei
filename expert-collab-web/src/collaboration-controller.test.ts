@@ -67,6 +67,130 @@ describe("CollaborationController", () => {
     });
   });
 
+  it("does not revive an ended call when the server replays it", () => {
+    const { controller, emit } = setup();
+    emit(incomingCall);
+    emit({
+      type: "call.ended",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 2,
+      sentAt: 2,
+      payload: {},
+    });
+
+    expect(controller.getSnapshot().status).toBe("ended");
+    emit({ ...incomingCall, seq: 3, sentAt: 3 });
+
+    expect(controller.getSnapshot().status).toBe("ended");
+  });
+
+  it("ignores a late acceptance after the call ended", () => {
+    const { controller, emit, trtc } = setup();
+    emit(incomingCall);
+    emit({
+      type: "call.ended",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 2,
+      sentAt: 2,
+      payload: {},
+    });
+
+    emit({
+      type: "call.accepted",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 3,
+      sentAt: 3,
+      payload: { expertId: "expert-wang", role: "primary" },
+    });
+
+    expect(controller.getSnapshot().status).toBe("ended");
+    expect(trtc.join).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a connecting call with an unrelated incoming call", () => {
+    const { controller, emit } = setup();
+    emit(incomingCall);
+    controller.accept();
+
+    emit({
+      ...incomingCall,
+      sessionId: "session-2",
+      seq: 2,
+      sentAt: 2,
+      payload: { glassesId: "glasses-02", glassesName: "Air3-02" },
+    });
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: "connecting",
+      sessionId: "session-1",
+      glassesId: "glasses-01",
+    });
+  });
+
+  it("does not replace an active call with an unrelated incoming call", async () => {
+    const { controller, emit } = setup();
+    emit(incomingCall);
+    controller.accept();
+    emit({
+      type: "call.accepted",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 2,
+      sentAt: 2,
+      payload: { expertId: "expert-wang", role: "primary" },
+    });
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe("in_call"));
+
+    emit({
+      ...incomingCall,
+      sessionId: "session-2",
+      seq: 3,
+      sentAt: 3,
+      payload: { glassesId: "glasses-02", glassesName: "Air3-02" },
+    });
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: "in_call",
+      sessionId: "session-1",
+      glassesId: "glasses-01",
+    });
+  });
+
+  it("stays ended when TRTC finishes joining after the call ended", async () => {
+    const { controller, emit, trtc } = setup();
+    let finishJoin = (): void => undefined;
+    vi.mocked(trtc.join).mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishJoin = resolve;
+    }));
+    emit(incomingCall);
+    controller.accept();
+    emit({
+      type: "call.accepted",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 2,
+      sentAt: 2,
+      payload: { expertId: "expert-wang", role: "primary" },
+    });
+    expect(controller.getSnapshot().status).toBe("connecting");
+
+    emit({
+      type: "call.ended",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 3,
+      sentAt: 3,
+      payload: {},
+    });
+    finishJoin();
+
+    await vi.waitFor(() => expect(trtc.leave).toHaveBeenCalled());
+    expect(controller.getSnapshot().status).toBe("ended");
+  });
+
   it("joins TRTC only after this expert wins the call", async () => {
     const { controller, emit, signaling, trtc } = setup();
     emit(incomingCall);
@@ -89,6 +213,72 @@ describe("CollaborationController", () => {
       glassesUserId: "glasses-01",
       publishVideo: true,
     }));
+  });
+
+  it("restores an accepted call after the expert console reconnects", async () => {
+    const { controller, emit, trtc } = setup();
+
+    emit({
+      type: "call.accepted",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 1,
+      sentAt: 1,
+      payload: {
+        expertId: "expert-wang",
+        role: "primary",
+        glassesId: "glasses-01",
+        glassesName: "Air3-01",
+      },
+    });
+
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe("in_call"));
+    expect(controller.getSnapshot()).toMatchObject({
+      sessionId: "session-1",
+      glassesId: "glasses-01",
+      primaryExpertId: "expert-wang",
+    });
+    expect(trtc.join).toHaveBeenCalledOnce();
+  });
+
+  it("does not join TRTC twice when an accepted call is replayed", async () => {
+    const { controller, emit, trtc } = setup();
+    emit(incomingCall);
+    controller.accept();
+    const accepted: CollabEnvelope = {
+      type: "call.accepted",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 2,
+      sentAt: 2,
+      payload: { expertId: "expert-wang", role: "primary", glassesId: "glasses-01" },
+    };
+    emit(accepted);
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe("in_call"));
+
+    emit({ ...accepted, seq: 3, sentAt: 3 });
+
+    expect(trtc.join).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an owned primary call available for reconnect when the console stops", async () => {
+    const { controller, emit, signaling, trtc } = setup();
+    emit(incomingCall);
+    controller.accept();
+    emit({
+      type: "call.accepted",
+      sessionId: "session-1",
+      senderId: "server",
+      seq: 2,
+      sentAt: 2,
+      payload: { expertId: "expert-wang", role: "primary" },
+    });
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe("in_call"));
+
+    await controller.stop();
+
+    expect(signaling.end).not.toHaveBeenCalled();
+    expect(trtc.leave).toHaveBeenCalledOnce();
   });
 
   it("keeps the session alive when the primary expert cannot join TRTC", async () => {
