@@ -20,6 +20,8 @@ expert-collab-web/dist/
 expert-collab-web/*.tsbuildinfo
 expert-collab-web/vite.config.js
 expert-collab-web/vite.config.d.ts
+ops-management-web/dist/
+ops-management-web/*.tsbuildinfo
 
 # Android build intermediates
 air3-expert-collab-app/.gradle/
