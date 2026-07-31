@@ -1,0 +1,15 @@
+services:
+  ops-management-web:
+    build:
+      context: .
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+        VITE_OPS_API_BASE_URL: ${VITE_OPS_API_BASE_URL}
+    container_name: dingdang-ops-management-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OPS_MANAGEMENT_PORT:-8788}:8080"
+    mem_limit: 128m
+    cpus: "0.30"
+
