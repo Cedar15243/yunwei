@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { ensureSchema } from "./automigrate.ts";
+import { createManagementGateway, routeManagement } from "./management.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
@@ -171,7 +172,8 @@ Deno.serve(async (request) => {
   try {
     const env = readEnv();
     const path = urlPath(request);
-    if (path !== "/health" && !isAuthorized(request, env)) {
+    const managementRequest = path.startsWith("/management/");
+    if (path !== "/health" && !managementRequest && !isAuthorized(request, env)) {
       return json({ ok: false, error: "unauthorized" }, 401);
     }
 
@@ -182,6 +184,10 @@ Deno.serve(async (request) => {
 
     if (request.method === "GET" && path === "/health") {
       return json({ ok: true, service: "ops-glasses" });
+    }
+
+    if (managementRequest) {
+      return await routeManagement(request, createManagementGateway(supabase));
     }
 
     if (request.method === "GET" && path.match(/^\/sessions\/[^/]+\/asr$/)) {
