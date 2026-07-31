@@ -8,6 +8,7 @@ function gateway(): ManagementGateway {
     authenticate: async (token) => token === "valid-token" ? identity : null,
     dashboard: async () => ({ activeTaskCount: 1, onlineDeviceCount: 1, failedMediaCount: 0, recentTasks: [] }),
     projects: async () => [{ id: "project-a", title: "实训室" }],
+    devices: async () => [{ id: "device-a", display_name: "Air3" }],
     tasks: async () => ({ items: [{ id: "task-a", title: "温湿度异常", status: "active" }], nextCursor: null }),
     taskDetail: async (_identity, taskId) => taskId === "task-a" ? {
       task: { id: "task-a", title: "温湿度异常" },
@@ -31,6 +32,14 @@ Deno.test("returns only authenticated organization tasks", async () => {
   }), gateway());
   assertEquals(response.status, 200);
   assertEquals(await response.json(), { items: [{ id: "task-a", title: "温湿度异常", status: "active" }], nextCursor: null });
+});
+
+Deno.test("returns devices only after bearer authentication", async () => {
+  const response = await routeManagement(new Request("https://ops/management/devices", {
+    headers: { Authorization: "Bearer valid-token" },
+  }), gateway());
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), { items: [{ id: "device-a", display_name: "Air3" }] });
 });
 
 Deno.test("returns signed media only for an authorized task", async () => {

@@ -18,6 +18,7 @@ export type ManagementGateway = {
   authenticate(token: string): Promise<Identity | null>;
   dashboard(identity: Identity): Promise<Record<string, unknown>>;
   projects(identity: Identity): Promise<Array<Record<string, unknown>>>;
+  devices(identity: Identity): Promise<Array<Record<string, unknown>>>;
   tasks(identity: Identity, filters: URLSearchParams): Promise<TaskListResult>;
   taskDetail(identity: Identity, taskId: string): Promise<TaskDetail | null>;
   retryMedia(identity: Identity, taskId: string, mediaId: string): Promise<boolean>;
@@ -42,6 +43,9 @@ export async function routeManagement(request: Request, gateway: ManagementGatew
   }
   if (request.method === "GET" && path === "/management/projects") {
     return response({ items: await gateway.projects(identity) });
+  }
+  if (request.method === "GET" && path === "/management/devices") {
+    return response({ items: await gateway.devices(identity) });
   }
   if (request.method === "GET" && path === "/management/tasks") {
     return response(await gateway.tasks(identity, url.searchParams));
@@ -100,6 +104,14 @@ export function createManagementGateway(supabase: any): ManagementGateway {
         .select("id, title, status, summary, updated_at")
         .eq("organization_id", identity.organizationId)
         .order("updated_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+    async devices(identity) {
+      const { data, error } = await supabase.from("glasses_devices")
+        .select("id, device_key, display_name, status, last_seen_at")
+        .eq("organization_id", identity.organizationId)
+        .order("last_seen_at", { ascending: false, nullsFirst: false });
       if (error) throw error;
       return data ?? [];
     },
