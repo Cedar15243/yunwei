@@ -10,6 +10,7 @@ import {
   type WorkOrderFacts,
 } from "./workflow-binding.ts";
 import type { WorkflowPackageSigner } from "./workflow-signing.ts";
+import { publicWorkflowCatalog } from "./workflow-catalog.ts";
 
 export type WorkflowManagementIdentity = {
   id: string;
@@ -131,6 +132,10 @@ export async function routeWorkflowManagement(
   }
 
   const path = routePath(request);
+  if (request.method === "GET" && path === "/management/workflow-catalog") {
+    return response(publicWorkflowCatalog);
+  }
+
   const workOrderResolution = path.match(
     /^\/management\/work-orders\/([^/]+)\/resolve-workflow$/,
   );

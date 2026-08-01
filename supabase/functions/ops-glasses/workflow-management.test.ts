@@ -173,6 +173,27 @@ Deno.test("returns not found for unknown workflow management routes", async () =
   assertEquals(await response.json(), { ok: false, error: "not_found" });
 });
 
+Deno.test("returns the public typed workflow node catalog", async () => {
+  const response = await routeWorkflowManagement(
+    request("GET", "/management/workflow-catalog", "admin-token"),
+    gateway(),
+  );
+
+  assertEquals(response.status, 200);
+  const body = await response.json();
+  assertEquals(body.schemaVersion, 1);
+  assertEquals(body.nodes.length, 15);
+  assertEquals(body.nodes[0].type, "start");
+  assertEquals(body.nodes[4].type, "photo_capture");
+  assertEquals(body.nodes[4].pageTemplate, "evidence_capture");
+  assertEquals(
+    body.nodes.some((node: Record<string, unknown>) =>
+      "url" in node || "script" in node || "credential" in node
+    ),
+    false,
+  );
+});
+
 Deno.test("creates a field app from a strict organization-independent command", async () => {
   let received: Record<string, unknown> | null = null;
   const response = await routeWorkflowManagement(

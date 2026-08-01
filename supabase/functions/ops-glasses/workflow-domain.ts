@@ -1,22 +1,11 @@
-export const WORKFLOW_NODE_TYPES = [
-  "start",
-  "instruction",
-  "choice",
-  "form",
-  "photo_capture",
-  "video_capture",
-  "voice_input",
-  "ai_assist",
-  "expert_call",
-  "confirmation",
-  "condition",
-  "repeat_group",
-  "subflow",
-  "connector_action",
-  "complete",
-] as const;
+import {
+  validateWorkflowNodeConfig,
+  WORKFLOW_NODE_TYPES,
+  type WorkflowNodeType,
+} from "./workflow-catalog.ts";
 
-export type WorkflowNodeType = typeof WORKFLOW_NODE_TYPES[number];
+export { WORKFLOW_NODE_TYPES };
+export type { WorkflowNodeType };
 
 export type WorkflowValidationErrorCode =
   | "invalid_draft"
@@ -30,6 +19,8 @@ export type WorkflowValidationErrorCode =
   | "unsupported_node_type"
   | "invalid_node_config"
   | "forbidden_config_key"
+  | "node_config_key_invalid"
+  | "node_config_value_invalid"
   | "duplicate_node_id"
   | "transitions_required"
   | "invalid_transition"
@@ -243,6 +234,7 @@ function validateNode(
   );
   if (forbiddenPath !== null) {
     errors.push({ code: "forbidden_config_key", path: forbiddenPath });
+    return;
   }
 
   validateNodeTypeConfig(value.type, value.config, path, errors);
@@ -254,17 +246,8 @@ function validateNodeTypeConfig(
   path: string,
   errors: WorkflowValidationError[],
 ): void {
-  if (nodeType === "repeat_group") {
-    const maxIterations = config.maxIterations;
-    if (
-      !Number.isInteger(maxIterations) || Number(maxIterations) < 1 ||
-      Number(maxIterations) > 100
-    ) {
-      errors.push({
-        code: "repeat_iterations_invalid",
-        path: `${path}.config.maxIterations`,
-      });
-    }
+  for (const issue of validateWorkflowNodeConfig(nodeType, config, path)) {
+    errors.push(issue);
   }
   if (
     nodeType === "subflow" && !requiredText(config.workflowVersionId)

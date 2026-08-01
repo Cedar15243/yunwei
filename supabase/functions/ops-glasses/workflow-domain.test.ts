@@ -167,6 +167,68 @@ Deno.test("requires exact subflow and connector references", () => {
   ]);
 });
 
+Deno.test("enforces typed node configuration keys and values", () => {
+  const unknownKey = linearDraft();
+  unknownKey.nodes[1].config = {
+    minCount: 1,
+    arbitraryHtml: "<iframe src='https://unsafe.example'>",
+  };
+  assertEquals(validateWorkflowDraft(unknownKey).errors, [{
+    code: "node_config_key_invalid",
+    path: "$.nodes[1].config.arbitraryHtml",
+  }]);
+
+  const invalidValues = linearDraft();
+  invalidValues.nodes[1].config = {
+    title: 7,
+    minCount: 0,
+    offlinePolicy: "silently_continue",
+  };
+  assertEquals(validateWorkflowDraft(invalidValues).errors, [{
+    code: "node_config_value_invalid",
+    path: "$.nodes[1].config.title",
+  }, {
+    code: "node_config_value_invalid",
+    path: "$.nodes[1].config.minCount",
+  }, {
+    code: "node_config_value_invalid",
+    path: "$.nodes[1].config.offlinePolicy",
+  }]);
+
+  const valid = linearDraft();
+  valid.nodes[1].config = {
+    title: "拍摄设备铭牌",
+    description: "画面需包含完整型号和序列号。",
+    minCount: 1,
+    allowRetake: true,
+    offlinePolicy: "allowed",
+    riskLevel: "low",
+  };
+  assertEquals(validateWorkflowDraft(valid).errors, []);
+
+  const unsafeDeclaredValues = linearDraft();
+  unsafeDeclaredValues.nodes[1].config = {
+    title: "x".repeat(161),
+    description: "<div>伪造页面</div>",
+    voicePrompt: "访问 https://unsafe.example",
+    allowedActions: ["next", "shell"],
+    minCount: 1,
+  };
+  assertEquals(validateWorkflowDraft(unsafeDeclaredValues).errors, [{
+    code: "node_config_value_invalid",
+    path: "$.nodes[1].config.title",
+  }, {
+    code: "node_config_value_invalid",
+    path: "$.nodes[1].config.description",
+  }, {
+    code: "node_config_value_invalid",
+    path: "$.nodes[1].config.voicePrompt",
+  }, {
+    code: "node_config_value_invalid",
+    path: "$.nodes[1].config.allowedActions",
+  }]);
+});
+
 Deno.test("validates safe typed transition conditions", () => {
   const valid = linearDraft();
   valid.transitions[1].condition = {
