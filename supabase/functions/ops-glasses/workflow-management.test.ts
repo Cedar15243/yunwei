@@ -1,6 +1,8 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
+  createWorkflowManagementGateway,
   routeWorkflowManagement,
+  WorkflowBindingRuleVersionConflictError,
   type WorkflowManagementGateway,
 } from "./workflow-management.ts";
 import type { WorkflowPackageSigner } from "./workflow-signing.ts";
@@ -64,7 +66,10 @@ function gateway(
       ...command,
     }),
     getWorkOrder: async () => workOrder(),
+    listWorkOrders: async () => [],
     listWorkflowBindingRules: async () => [],
+    createWorkflowBindingRule: async () => bindingRuleRecord(),
+    updateWorkflowBindingRule: async () => bindingRuleRecord(),
     applyWorkOrderWorkflowResolution: async (
       _identity,
       _order,
@@ -505,6 +510,486 @@ Deno.test("lists immutable versions and returns a version detail", async () => {
   assertEquals(detail.status, 200);
 });
 
+Deno.test("lists organization work orders with validated filters and a strict DTO", async () => {
+  let received: Record<string, unknown> | null = null;
+  const listGateway = Object.assign(gateway(), {
+    listWorkOrders: async (
+      identity: typeof adminIdentity,
+      status: string | null,
+      limit: number,
+    ) => {
+      received = { identity, status, limit };
+      return [{
+        id: "11111111-1111-4111-8111-111111111111",
+        organization_id: "org-a",
+        source_system: "mvs",
+        external_work_order_id: "MVS-42",
+        external_workflow_code: "receive-controller",
+        project_id: "22222222-2222-4222-8222-222222222222",
+        assigned_profile_id: "33333333-3333-4333-8333-333333333333",
+        title: "Receive controller",
+        customer_id: "customer-a",
+        work_order_type: "receiving",
+        asset_id: "asset-a",
+        asset_category: "controller",
+        asset_brand: "Honeywell",
+        asset_model: "DDC-01",
+        fault_type: null,
+        priority: "normal",
+        risk_level: "low",
+        tags: ["pilot"],
+        status: "received",
+        binding_mode: "required",
+        binding_status: "resolved",
+        bound_workflow_version_id: "44444444-4444-4444-8444-444444444444",
+        due_at: null,
+        received_at: "2026-08-01T01:00:00.000Z",
+        updated_at: "2026-08-01T02:00:00.000Z",
+        external_payload: { adminToken: "must-not-leak" },
+        connector_secret: "must-not-leak",
+      }];
+    },
+  }) as WorkflowManagementGateway;
+  const response = await routeWorkflowManagement(
+    request(
+      "GET",
+      "/management/work-orders?status=received&limit=50",
+      "admin-token",
+    ),
+    listGateway,
+  );
+
+  assertEquals(response.status, 200);
+  assertEquals(received, {
+    identity: adminIdentity,
+    status: "received",
+    limit: 50,
+  });
+  assertEquals(await response.json(), {
+    items: [{
+      id: "11111111-1111-4111-8111-111111111111",
+      sourceSystem: "mvs",
+      externalWorkOrderId: "MVS-42",
+      externalWorkflowCode: "receive-controller",
+      projectId: "22222222-2222-4222-8222-222222222222",
+      assignedProfileId: "33333333-3333-4333-8333-333333333333",
+      title: "Receive controller",
+      customerId: "customer-a",
+      workOrderType: "receiving",
+      assetId: "asset-a",
+      assetCategory: "controller",
+      assetBrand: "Honeywell",
+      assetModel: "DDC-01",
+      faultType: null,
+      priority: "normal",
+      riskLevel: "low",
+      tags: ["pilot"],
+      status: "received",
+      bindingMode: "required",
+      bindingStatus: "resolved",
+      boundWorkflowVersionId: "44444444-4444-4444-8444-444444444444",
+      dueAt: null,
+      receivedAt: "2026-08-01T01:00:00.000Z",
+      updatedAt: "2026-08-01T02:00:00.000Z",
+    }],
+  });
+});
+
+Deno.test("rejects invalid work order status and limit filters", async () => {
+  let listed = false;
+  const listGateway = Object.assign(gateway(), {
+    listWorkOrders: async () => {
+      listed = true;
+      return [];
+    },
+  }) as WorkflowManagementGateway;
+  const invalidStatus = await routeWorkflowManagement(
+    request(
+      "GET",
+      "/management/work-orders?status=pending&limit=50",
+      "admin-token",
+    ),
+    listGateway,
+  );
+  const invalidLimit = await routeWorkflowManagement(
+    request(
+      "GET",
+      "/management/work-orders?status=received&limit=0",
+      "admin-token",
+    ),
+    listGateway,
+  );
+
+  assertEquals(invalidStatus.status, 400);
+  assertEquals(invalidLimit.status, 400);
+  assertEquals(listed, false);
+});
+
+Deno.test("lists workflow binding rules as strict management DTOs", async () => {
+  const response = await routeWorkflowManagement(
+    request("GET", "/management/workflow-binding-rules", "admin-token"),
+    gateway({
+      listWorkflowBindingRules: async () => [{
+        id: "55555555-5555-4555-8555-555555555555",
+        organization_id: "org-a",
+        rule_key: "project_receiving",
+        source: "project",
+        mode: "required",
+        workflow_version_id: "44444444-4444-4444-8444-444444444444",
+        match_conditions: [{
+          field: "projectId",
+          operator: "eq",
+          value: "22222222-2222-4222-8222-222222222222",
+        }],
+        enabled: true,
+        active_from: "2026-08-01T00:00:00.000Z",
+        active_until: null,
+        reason: "Approved for receiving",
+        version: 3,
+        created_by: "admin-a",
+        updated_by: "admin-a",
+        created_at: "2026-08-01T01:00:00.000Z",
+        updated_at: "2026-08-01T02:00:00.000Z",
+        workflow_versions: { status: "published", package_signature: "secret" },
+      }],
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), {
+    items: [{
+      id: "55555555-5555-4555-8555-555555555555",
+      ruleKey: "project_receiving",
+      source: "project",
+      mode: "required",
+      workflowVersionId: "44444444-4444-4444-8444-444444444444",
+      matchConditions: [{
+        field: "projectId",
+        operator: "eq",
+        value: "22222222-2222-4222-8222-222222222222",
+      }],
+      enabled: true,
+      activeFrom: "2026-08-01T00:00:00.000Z",
+      activeUntil: null,
+      reason: "Approved for receiving",
+      version: 3,
+      workflowVersionStatus: "published",
+      createdAt: "2026-08-01T01:00:00.000Z",
+      updatedAt: "2026-08-01T02:00:00.000Z",
+    }],
+  });
+});
+
+Deno.test("creates a validated workflow binding rule and ignores forged scope", async () => {
+  let received: Record<string, unknown> | null = null;
+  const response = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/workflow-binding-rules", {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      organizationId: "forged-organization",
+      actorId: "forged-actor",
+    }),
+    Object.assign(gateway(), {
+      createWorkflowBindingRule: async (
+        identity: typeof adminIdentity,
+        command: Record<string, unknown>,
+      ) => {
+        received = { identity, command };
+        return bindingRuleRecord();
+      },
+    }) as WorkflowManagementGateway,
+  );
+
+  assertEquals(response.status, 201);
+  assertEquals(received, {
+    identity: adminIdentity,
+    command: validBindingRuleCommand(),
+  });
+  const item = await response.json();
+  assertEquals(item.id, "55555555-5555-4555-8555-555555555555");
+  assertEquals(item.organization_id, undefined);
+  assertEquals(item.created_by, undefined);
+});
+
+Deno.test("creates an explicit none rule without a workflow version", async () => {
+  let received: Record<string, unknown> | null = null;
+  const body = {
+    ruleKey: "ordinary_task_default",
+    source: "organization_default",
+    mode: "none",
+    workflowVersionId: null,
+    matchConditions: [],
+    enabled: true,
+    activeFrom: null,
+    activeUntil: null,
+    reason: "Keep unmatched work orders on the ordinary task path",
+    idempotencyKey: "create-ordinary-default",
+  };
+  const response = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/workflow-binding-rules", {
+      ...body,
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+    }),
+    Object.assign(gateway(), {
+      createWorkflowBindingRule: async (
+        _identity: typeof adminIdentity,
+        command: Record<string, unknown>,
+      ) => {
+        received = command;
+        return { ...bindingRuleRecord(), ...command };
+      },
+    }) as WorkflowManagementGateway,
+  );
+
+  assertEquals(response.status, 201);
+  assertEquals(received, body);
+});
+
+Deno.test("rejects malformed workflow binding rule commands", async () => {
+  const invalidBodies = [
+    validBindingRuleCommand(),
+    { ...validBindingRuleCommand(), confirmation: "CREATE_RULE" },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      reason: " ",
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      idempotencyKey: " ",
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      source: "connector",
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      mode: "dynamic",
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      workflowVersionId: "not-a-uuid",
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      mode: "none",
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      activeUntil: "2026-07-31T00:00:00.000Z",
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      matchConditions: [{
+        field: "projectId",
+        operator: "eq",
+        value: "project-a",
+        script: "alert(1)",
+      }],
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      matchConditions: [{
+        field: "projectId",
+        operator: "eq",
+        value: "https://evil.example/token",
+      }],
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      matchConditions: [{ field: "adminToken", operator: "eq", value: "x" }],
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      matchConditions: [],
+    },
+    {
+      ...validBindingRuleCommand(),
+      confirmation: "CREATE_WORKFLOW_BINDING_RULE",
+      source: "organization_default",
+    },
+  ];
+  let created = false;
+  const commandGateway = Object.assign(gateway(), {
+    createWorkflowBindingRule: async () => {
+      created = true;
+      return bindingRuleRecord();
+    },
+  }) as WorkflowManagementGateway;
+
+  for (const body of invalidBodies) {
+    const response = await routeWorkflowManagement(
+      jsonRequest("POST", "/management/workflow-binding-rules", body),
+      commandGateway,
+    );
+    assertEquals(response.status, 400);
+  }
+  assertEquals(created, false);
+});
+
+Deno.test("updates workflow binding rules with optimistic concurrency", async () => {
+  let received: Record<string, unknown> | null = null;
+  const ruleId = "55555555-5555-4555-8555-555555555555";
+  const response = await routeWorkflowManagement(
+    jsonRequest("PUT", `/management/workflow-binding-rules/${ruleId}`, {
+      ...validBindingRuleCommand(),
+      confirmation: "UPDATE_WORKFLOW_BINDING_RULE",
+      expectedVersion: 3,
+      organizationId: "forged-organization",
+      actorId: "forged-actor",
+    }),
+    Object.assign(gateway(), {
+      updateWorkflowBindingRule: async (
+        identity: typeof adminIdentity,
+        targetRuleId: string,
+        command: Record<string, unknown>,
+      ) => {
+        received = { identity, targetRuleId, command };
+        return { ...bindingRuleRecord(), version: 4 };
+      },
+    }) as WorkflowManagementGateway,
+  );
+
+  assertEquals(response.status, 200);
+  assertEquals(received, {
+    identity: adminIdentity,
+    targetRuleId: ruleId,
+    command: { ...validBindingRuleCommand(), expectedVersion: 3 },
+  });
+  assertEquals((await response.json()).version, 4);
+});
+
+Deno.test("requires update confirmation and a positive expected version", async () => {
+  const ruleId = "55555555-5555-4555-8555-555555555555";
+  const missingConfirmation = await routeWorkflowManagement(
+    jsonRequest("PUT", `/management/workflow-binding-rules/${ruleId}`, {
+      ...validBindingRuleCommand(),
+      expectedVersion: 3,
+    }),
+    gateway(),
+  );
+  const invalidVersion = await routeWorkflowManagement(
+    jsonRequest("PUT", `/management/workflow-binding-rules/${ruleId}`, {
+      ...validBindingRuleCommand(),
+      confirmation: "UPDATE_WORKFLOW_BINDING_RULE",
+      expectedVersion: 0,
+    }),
+    gateway(),
+  );
+
+  assertEquals(missingConfirmation.status, 400);
+  assertEquals(
+    (await missingConfirmation.json()).error,
+    "confirmation_required",
+  );
+  assertEquals(invalidVersion.status, 400);
+});
+
+Deno.test("returns a stable conflict when the binding rule version changed", async () => {
+  const ruleId = "55555555-5555-4555-8555-555555555555";
+  const response = await routeWorkflowManagement(
+    jsonRequest("PUT", `/management/workflow-binding-rules/${ruleId}`, {
+      ...validBindingRuleCommand(),
+      confirmation: "UPDATE_WORKFLOW_BINDING_RULE",
+      expectedVersion: 3,
+    }),
+    Object.assign(gateway(), {
+      updateWorkflowBindingRule: async () => {
+        throw new WorkflowBindingRuleVersionConflictError();
+      },
+    }) as WorkflowManagementGateway,
+  );
+
+  assertEquals(response.status, 409);
+  assertEquals(await response.json(), {
+    ok: false,
+    error: "binding_rule_version_conflict",
+  });
+});
+
+Deno.test("maps binding rule RPC calls without client-controlled scope", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const supabase = {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      calls.push({ name, args });
+      return { data: bindingRuleRecord(), error: null };
+    },
+  };
+  const actual = createWorkflowManagementGateway(supabase) as unknown as {
+    createWorkflowBindingRule(
+      identity: typeof adminIdentity,
+      command: Record<string, unknown>,
+    ): Promise<Record<string, unknown> | null>;
+    updateWorkflowBindingRule(
+      identity: typeof adminIdentity,
+      ruleId: string,
+      command: Record<string, unknown>,
+    ): Promise<Record<string, unknown> | null>;
+  };
+  const ruleId = "55555555-5555-4555-8555-555555555555";
+
+  await actual.createWorkflowBindingRule(
+    adminIdentity,
+    validBindingRuleCommand(),
+  );
+  await actual.updateWorkflowBindingRule(adminIdentity, ruleId, {
+    ...validBindingRuleCommand(),
+    expectedVersion: 3,
+  });
+
+  assertEquals(calls, [{
+    name: "create_workflow_binding_rule",
+    args: {
+      rule_key: "project_receiving",
+      binding_source: "project",
+      binding_mode: "required",
+      target_workflow_version_id: "44444444-4444-4444-8444-444444444444",
+      binding_match_conditions: [{
+        field: "projectId",
+        operator: "eq",
+        value: "22222222-2222-4222-8222-222222222222",
+      }],
+      binding_enabled: true,
+      binding_active_from: "2026-08-01T00:00:00.000Z",
+      binding_active_until: null,
+      binding_idempotency_key: "create-project-receiving",
+      actor_id: "admin-a",
+      command_reason: "Approve receiving workflow",
+    },
+  }, {
+    name: "update_workflow_binding_rule",
+    args: {
+      target_rule_id: ruleId,
+      rule_key: "project_receiving",
+      binding_source: "project",
+      binding_mode: "required",
+      target_workflow_version_id: "44444444-4444-4444-8444-444444444444",
+      binding_match_conditions: [{
+        field: "projectId",
+        operator: "eq",
+        value: "22222222-2222-4222-8222-222222222222",
+      }],
+      binding_enabled: true,
+      binding_active_from: "2026-08-01T00:00:00.000Z",
+      binding_active_until: null,
+      expected_version: 3,
+      binding_idempotency_key: "create-project-receiving",
+      actor_id: "admin-a",
+      command_reason: "Approve receiving workflow",
+    },
+  }]);
+});
+
 Deno.test("requires confirmation reason and idempotency before resolving a work order workflow", async () => {
   const missingConfirmation = await routeWorkflowManagement(
     jsonRequest("POST", "/management/work-orders/order-a/resolve-workflow", {
@@ -765,6 +1250,51 @@ function bindingRule(
     enabled: true,
     active_from: null,
     active_until: null,
+    workflow_versions: { status: "published" },
+  };
+}
+
+function validBindingRuleCommand(): Record<string, unknown> {
+  return {
+    ruleKey: "project_receiving",
+    source: "project",
+    mode: "required",
+    workflowVersionId: "44444444-4444-4444-8444-444444444444",
+    matchConditions: [{
+      field: "projectId",
+      operator: "eq",
+      value: "22222222-2222-4222-8222-222222222222",
+    }],
+    enabled: true,
+    activeFrom: "2026-08-01T00:00:00.000Z",
+    activeUntil: null,
+    reason: "Approve receiving workflow",
+    idempotencyKey: "create-project-receiving",
+  };
+}
+
+function bindingRuleRecord(): Record<string, unknown> {
+  return {
+    id: "55555555-5555-4555-8555-555555555555",
+    organization_id: "org-a",
+    rule_key: "project_receiving",
+    source: "project",
+    mode: "required",
+    workflow_version_id: "44444444-4444-4444-8444-444444444444",
+    match_conditions: [{
+      field: "projectId",
+      operator: "eq",
+      value: "22222222-2222-4222-8222-222222222222",
+    }],
+    enabled: true,
+    active_from: "2026-08-01T00:00:00.000Z",
+    active_until: null,
+    reason: "Approve receiving workflow",
+    version: 3,
+    created_by: "admin-a",
+    updated_by: "admin-a",
+    created_at: "2026-08-01T01:00:00.000Z",
+    updated_at: "2026-08-01T02:00:00.000Z",
     workflow_versions: { status: "published" },
   };
 }

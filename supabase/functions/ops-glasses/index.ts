@@ -2620,11 +2620,14 @@ function urlPath(request: Request): string {
 }
 
 function isWorkflowManagementPath(path: string): boolean {
-  return path === "/management/field-apps" ||
+  return path === "/management/workflow-catalog" ||
+    path === "/management/work-orders" ||
+    path === "/management/workflow-binding-rules" ||
+    path === "/management/field-apps" ||
     path.startsWith("/management/field-apps/") ||
     path.startsWith("/management/workflows/") ||
     path.startsWith("/management/workflow-versions/") ||
-    path.startsWith("/management/workflow-binding-rules") ||
+    path.startsWith("/management/workflow-binding-rules/") ||
     /^\/management\/work-orders\/[^/]+\/resolve-workflow$/.test(path);
 }
 
