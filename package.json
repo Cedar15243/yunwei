@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "validate:supabase": "node scripts/validate-supabase-assets.mjs && node scripts/validate-ops-management.mjs && node scripts/validate-identity-device-control-plane.mjs && node scripts/validate-short-lived-device-sessions.mjs && node scripts/validate-configurable-workflows.mjs && node scripts/validate-ai-brain-flow.mjs && node scripts/check-text-balance.mjs",
+    "validate:supabase": "node scripts/validate-supabase-assets.mjs && node scripts/validate-ops-management.mjs && node scripts/validate-identity-device-control-plane.mjs && node scripts/validate-short-lived-device-sessions.mjs && node scripts/validate-configurable-workflows.mjs && node scripts/validate-workflow-api-transactions.mjs && node scripts/validate-ai-brain-flow.mjs && node scripts/check-text-balance.mjs",
+    "validate:workflow-api-transactions": "node scripts/validate-workflow-api-transactions.mjs",
     "validate:ai-brain": "node scripts/validate-ai-brain-flow.mjs",
     "validate:native-hud": "node scripts/validate-native-hud-flow.mjs",
     "validate:native-build": "node scripts/validate-native-build-versioning.mjs && node scripts/validate-device-session-android.mjs",
