@@ -23,6 +23,7 @@ public final class WorkflowRuntimeState {
     }
 
     private final String workflowVersionId;
+    private final String executionId;
     private final String currentNodeId;
     private final Status status;
     private final int sequence;
@@ -38,7 +39,7 @@ public final class WorkflowRuntimeState {
             int sequence,
             JSONObject variables
     ) {
-        this(workflowVersionId, currentNodeId, status, sequence, variables,
+        this(workflowVersionId, "", currentNodeId, status, sequence, variables,
                 Collections.<WorkflowEvidenceReference>emptyList(),
                 Collections.<String, Integer>emptyMap(),
                 new TaskSyncQueue());
@@ -46,6 +47,7 @@ public final class WorkflowRuntimeState {
 
     private WorkflowRuntimeState(
             String workflowVersionId,
+            String executionId,
             String currentNodeId,
             Status status,
             int sequence,
@@ -55,6 +57,7 @@ public final class WorkflowRuntimeState {
             TaskSyncQueue pendingEvents
     ) {
         this.workflowVersionId = clean(workflowVersionId);
+        this.executionId = clean(executionId);
         this.currentNodeId = clean(currentNodeId);
         this.status = status;
         this.sequence = sequence;
@@ -62,7 +65,9 @@ public final class WorkflowRuntimeState {
         this.evidenceReferences = Collections.unmodifiableList(new ArrayList<>(evidenceReferences));
         this.stepAttempts = Collections.unmodifiableMap(new LinkedHashMap<>(stepAttempts));
         this.pendingEvents = copyQueue(pendingEvents);
-        if (this.workflowVersionId.isEmpty() || this.currentNodeId.isEmpty() || status == null || sequence < 0) {
+        if (this.workflowVersionId.isEmpty()
+                || (!this.executionId.isEmpty() && !validExecutionId(this.executionId))
+                || this.currentNodeId.isEmpty() || status == null || sequence < 0) {
             throw new IllegalArgumentException("workflow runtime state is invalid");
         }
         if (this.evidenceReferences.size() > 2000
@@ -75,6 +80,7 @@ public final class WorkflowRuntimeState {
     WorkflowRuntimeState moveTo(String nodeId, Status nextStatus, JSONObject nextVariables) {
         return new WorkflowRuntimeState(
                 workflowVersionId,
+                executionId,
                 nodeId,
                 nextStatus,
                 sequence + 1,
@@ -87,6 +93,7 @@ public final class WorkflowRuntimeState {
     WorkflowRuntimeState retain(Status nextStatus, JSONObject nextVariables) {
         return new WorkflowRuntimeState(
                 workflowVersionId,
+                executionId,
                 currentNodeId,
                 nextStatus,
                 sequence,
@@ -98,6 +105,31 @@ public final class WorkflowRuntimeState {
 
     public String workflowVersionId() {
         return workflowVersionId;
+    }
+
+    public String executionId() {
+        return executionId;
+    }
+
+    public WorkflowRuntimeState withExecutionId(String value) {
+        String accepted = clean(value);
+        if (!validExecutionId(accepted)) {
+            throw new IllegalArgumentException("workflow execution identifier is invalid");
+        }
+        if (executionId.equals(accepted)) return this;
+        if (!executionId.isEmpty()) {
+            throw new IllegalStateException("workflow execution identifier is immutable");
+        }
+        return new WorkflowRuntimeState(
+                workflowVersionId,
+                accepted,
+                currentNodeId,
+                status,
+                sequence,
+                variables,
+                evidenceReferences,
+                stepAttempts,
+                pendingEvents);
     }
 
     public String currentNodeId() {
@@ -210,6 +242,7 @@ public final class WorkflowRuntimeState {
             }
             return new JSONObject()
                     .put("workflow_version_id", workflowVersionId)
+                    .put("execution_id", executionId.isEmpty() ? JSONObject.NULL : executionId)
                     .put("current_node_id", currentNodeId)
                     .put("status", status.name())
                     .put("sequence", sequence)
@@ -243,6 +276,7 @@ public final class WorkflowRuntimeState {
         TaskSyncQueue events = TaskSyncQueue.fromJsonStrict(value.optJSONArray("pending_events"));
         return new WorkflowRuntimeState(
                 value.optString("workflow_version_id", ""),
+                nullableText(value, "execution_id"),
                 value.optString("current_node_id", ""),
                 status,
                 sequence,
@@ -259,6 +293,7 @@ public final class WorkflowRuntimeState {
     ) {
         return new WorkflowRuntimeState(
                 workflowVersionId,
+                executionId,
                 currentNodeId,
                 status,
                 sequence,
@@ -328,5 +363,15 @@ public final class WorkflowRuntimeState {
 
     private static String clean(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static String nullableText(JSONObject value, String key) {
+        Object raw = value.opt(key);
+        return raw == null || raw == JSONObject.NULL ? "" : clean(String.valueOf(raw));
+    }
+
+    private static boolean validExecutionId(String value) {
+        return value.matches(
+                "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$");
     }
 }

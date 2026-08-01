@@ -848,9 +848,10 @@ end;
 $$;
 
 create or replace function public.start_workflow_execution(
+  requested_execution_id uuid,
   target_assignment_id uuid,
   target_project_id uuid,
-  target_task_id uuid,
+  target_local_task_id text,
   initial_node_id text,
   execution_snapshot jsonb,
   start_idempotency_key text,
@@ -864,16 +865,24 @@ set search_path = ''
 as $$
 declare
   assignment public.workflow_assignments;
+  work_order public.work_orders;
   task public.maintenance_tasks;
   existing_execution public.workflow_executions;
   created_execution public.workflow_executions;
   previous_assignment_status text;
 begin
+  if requested_execution_id is null then
+    raise exception 'workflow execution identifier is required';
+  end if;
   if nullif(btrim(start_idempotency_key), '') is null then
     raise exception 'workflow execution start idempotency key is required';
   end if;
   if nullif(btrim(initial_node_id), '') is null then
     raise exception 'workflow execution initial node is required';
+  end if;
+  if nullif(btrim(target_local_task_id), '') is null
+     or char_length(btrim(target_local_task_id)) > 200 then
+    raise exception 'workflow execution local task identifier is invalid';
   end if;
   if execution_snapshot is null or jsonb_typeof(execution_snapshot) <> 'object' then
     raise exception 'workflow execution snapshot must be an object';
@@ -892,7 +901,8 @@ begin
   where execution.organization_id = assignment.organization_id
     and execution.start_idempotency_key = btrim(start_idempotency_key);
   if existing_execution.id is not null then
-    if existing_execution.assignment_id <> assignment.id
+    if existing_execution.id <> requested_execution_id
+       or existing_execution.assignment_id <> assignment.id
        or existing_execution.operator_profile_id <> target_profile_id
        or existing_execution.device_id <> target_device_id then
       raise exception 'workflow execution idempotency key was already used';
@@ -940,11 +950,39 @@ begin
 
   select item.* into task
   from public.maintenance_tasks item
-  where item.id = target_task_id
-    and item.organization_id = assignment.organization_id
-    and item.project_id = target_project_id;
-  if task.id is null or task.status <> 'active' then
-    raise exception 'active workflow maintenance task not found';
+  where item.organization_id = assignment.organization_id
+    and item.project_id = target_project_id
+    and item.local_task_id = btrim(target_local_task_id)
+  for update;
+  if task.id is null then
+    select item.* into work_order
+    from public.work_orders item
+    where item.id = assignment.work_order_id
+      and item.organization_id = assignment.organization_id;
+    if work_order.id is null then
+      raise exception 'workflow work order not found';
+    end if;
+    insert into public.maintenance_tasks (
+      organization_id,
+      project_id,
+      created_by,
+      local_task_id,
+      title,
+      status,
+      current_step,
+      skill_version
+    ) values (
+      assignment.organization_id,
+      target_project_id,
+      target_profile_id,
+      btrim(target_local_task_id),
+      work_order.title,
+      'active',
+      btrim(initial_node_id),
+      assignment.workflow_version_id::text
+    ) returning * into task;
+  elsif task.status <> 'active' then
+    raise exception 'workflow maintenance task is not active';
   end if;
   if not exists (
     select 1
@@ -976,6 +1014,7 @@ begin
   end if;
 
   insert into public.workflow_executions (
+    id,
     organization_id,
     assignment_id,
     work_order_id,
@@ -990,11 +1029,12 @@ begin
     started_at,
     start_idempotency_key
   ) values (
+    requested_execution_id,
     assignment.organization_id,
     assignment.id,
     assignment.work_order_id,
     target_project_id,
-    target_task_id,
+    task.id,
     assignment.workflow_version_id,
     target_profile_id,
     target_device_id,
@@ -1044,7 +1084,7 @@ begin
     created_execution.id::text,
     jsonb_build_object(
       'assignmentId', assignment.id,
-      'taskId', target_task_id,
+      'taskId', task.id,
       'deviceId', target_device_id,
       'initialNodeId', btrim(initial_node_id)
     )
@@ -1430,12 +1470,12 @@ revoke all on function public.publish_workflow_version(uuid, jsonb, text, text, 
 revoke all on function public.apply_work_order_workflow_resolution(uuid, text, text, uuid, uuid, text, jsonb, uuid, uuid, text, uuid, text) from public, anon, authenticated;
 revoke all on function public.claim_workflow_assignment(uuid, uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public.report_workflow_assignment_status(uuid, uuid, uuid, text, text, text, text) from public, anon, authenticated;
-revoke all on function public.start_workflow_execution(uuid, uuid, uuid, text, jsonb, text, uuid, uuid) from public, anon, authenticated;
+revoke all on function public.start_workflow_execution(uuid, uuid, uuid, text, text, jsonb, text, uuid, uuid) from public, anon, authenticated;
 revoke all on function public.append_workflow_step_execution(uuid, text, integer, text, text, jsonb, jsonb, uuid[], jsonb, text, text, text, jsonb, uuid, uuid) from public, anon, authenticated;
 
 grant execute on function public.publish_workflow_version(uuid, jsonb, text, text, text, text[], integer, text, uuid, text) to service_role;
 grant execute on function public.apply_work_order_workflow_resolution(uuid, text, text, uuid, uuid, text, jsonb, uuid, uuid, text, uuid, text) to service_role;
 grant execute on function public.claim_workflow_assignment(uuid, uuid, uuid, text) to service_role;
 grant execute on function public.report_workflow_assignment_status(uuid, uuid, uuid, text, text, text, text) to service_role;
-grant execute on function public.start_workflow_execution(uuid, uuid, uuid, text, jsonb, text, uuid, uuid) to service_role;
+grant execute on function public.start_workflow_execution(uuid, uuid, uuid, text, text, jsonb, text, uuid, uuid) to service_role;
 grant execute on function public.append_workflow_step_execution(uuid, text, integer, text, text, jsonb, jsonb, uuid[], jsonb, text, text, text, jsonb, uuid, uuid) to service_role;

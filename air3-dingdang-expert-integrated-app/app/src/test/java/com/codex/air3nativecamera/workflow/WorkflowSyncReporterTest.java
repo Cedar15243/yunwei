@@ -82,6 +82,31 @@ public final class WorkflowSyncReporterTest {
         assertEquals(0, rejectedPersistence.state().pendingEvents().size());
     }
 
+    @Test
+    public void persistsAStateTransitionAndItsSyncEventAsOneCheckpoint() throws Exception {
+        List<WorkflowRuntimeState> persisted = new ArrayList<>();
+        List<Runnable> jobs = new ArrayList<>();
+        WorkflowRuntimeState initial = state().withExecutionId(
+                "11111111-1111-4111-8111-111111111111");
+        WorkflowSyncReporter reporter = new WorkflowSyncReporter(
+                initial,
+                next -> {
+                    persisted.add(WorkflowRuntimeState.fromJson(next.toJson()));
+                    return true;
+                },
+                event -> { },
+                jobs::add);
+        WorkflowRuntimeState advanced = initial.moveTo(
+                "complete", WorkflowRuntimeState.Status.ACTIVE, new JSONObject());
+
+        assertEquals(WorkflowSyncReporter.RecordResult.QUEUED,
+                reporter.recordStateAndEvent(advanced, event()));
+        assertEquals("complete", persisted.get(0).currentNodeId());
+        assertTrue(persisted.get(0).hasPendingEvent("execution-a:photo:1:completed"));
+        assertEquals("complete", reporter.state().currentNodeId());
+        assertEquals(1, jobs.size());
+    }
+
     private WorkflowRuntimeState state() {
         return new WorkflowRuntimeState(
                 "33333333-3333-4333-8333-333333333333",

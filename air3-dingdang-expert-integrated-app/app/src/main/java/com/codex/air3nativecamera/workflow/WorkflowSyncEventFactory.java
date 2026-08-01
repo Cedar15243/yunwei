@@ -49,6 +49,7 @@ public final class WorkflowSyncEventFactory {
     public static TaskSyncEvent executionStart(
             String projectId,
             String taskId,
+            String executionId,
             String assignmentId,
             String initialNodeId,
             WorkflowRuntimeState state,
@@ -57,9 +58,10 @@ public final class WorkflowSyncEventFactory {
     ) {
         if (state == null) throw new IllegalArgumentException("workflow runtime state is required");
         JSONObject payload = object(
+                "executionId", uuid(executionId, "workflow execution is invalid"),
                 "assignmentId", required(assignmentId, 200, "workflow assignment is invalid"),
                 "projectId", required(projectId, 200, "workflow project is invalid"),
-                "taskId", required(taskId, 200, "workflow task is invalid"),
+                "localTaskId", required(taskId, 200, "workflow task is invalid"),
                 "initialNodeId", required(initialNodeId, 160, "workflow initial node is invalid"),
                 "runtimeSnapshot", state.toJson(),
                 "idempotencyKey", required(idempotencyKey, 200, "workflow idempotency key is invalid"));
@@ -189,6 +191,15 @@ public final class WorkflowSyncEventFactory {
             throw new IllegalArgumentException("workflow sync text is invalid");
         }
         return text;
+    }
+
+    private static String uuid(String value, String message) {
+        String text = required(value, 36, message);
+        if (!text.matches(
+                "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")) {
+            throw new IllegalArgumentException(message);
+        }
+        return text.toLowerCase(java.util.Locale.ROOT);
     }
 
     private static boolean containsControl(String value) {

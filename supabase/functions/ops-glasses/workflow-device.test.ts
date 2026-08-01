@@ -452,14 +452,16 @@ Deno.test("rejects direct revocation malformed reports and backward transitions"
 });
 
 Deno.test("starts an owned workflow execution from authenticated identity only", async () => {
+  const executionId = "11111111-1111-4111-8111-111111111111";
   let received: Record<string, unknown> | null = null;
   const response = await routeWorkflowDevice(
     request("POST", "/device-sync/workflows/executions", {
       token: "access-token",
       body: {
+        executionId,
         assignmentId: "assignment-a",
         projectId: "project-a",
-        taskId: "task-a",
+        localTaskId: "workflow-task-a",
         initialNodeId: "start-a",
         runtimeSnapshot: { currentNodeId: "start-a", localRevision: 1 },
         idempotencyKey: "start-execution-a",
@@ -471,7 +473,8 @@ Deno.test("starts an owned workflow execution from authenticated identity only",
     gateway({
       startExecution: async (receivedIdentity, command) => {
         received = { receivedIdentity, command };
-        return await gateway().startExecution(receivedIdentity, command);
+        const started = await gateway().startExecution(receivedIdentity, command);
+        return { ...started, id: executionId };
       },
     }),
   );
@@ -480,16 +483,17 @@ Deno.test("starts an owned workflow execution from authenticated identity only",
   assertEquals(received, {
     receivedIdentity: identity,
     command: {
+      executionId,
       assignmentId: "assignment-a",
       projectId: "project-a",
-      taskId: "task-a",
+      localTaskId: "workflow-task-a",
       initialNodeId: "start-a",
       runtimeSnapshot: { currentNodeId: "start-a", localRevision: 1 },
       idempotencyKey: "start-execution-a",
     },
   });
   assertEquals(await response.json(), {
-    executionId: "execution-a",
+    executionId,
     assignmentId: "assignment-a",
     taskId: "task-a",
     status: "active",
@@ -518,7 +522,7 @@ Deno.test("rejects malformed workflow execution start commands", async () => {
       body: {
         assignmentId: "assignment-a",
         projectId: "project-a",
-        taskId: "task-a",
+        localTaskId: "workflow-task-a",
         initialNodeId: "start-a",
         runtimeSnapshot: ["not-an-object"],
         idempotencyKey: "start-execution-a",
@@ -526,9 +530,25 @@ Deno.test("rejects malformed workflow execution start commands", async () => {
     }),
     gateway(),
   );
+  const invalidExecutionId = await routeWorkflowDevice(
+    request("POST", "/device-sync/workflows/executions", {
+      token: "access-token",
+      body: {
+        executionId: "not-a-uuid",
+        assignmentId: "assignment-a",
+        projectId: "project-a",
+        localTaskId: "workflow-task-a",
+        initialNodeId: "start-a",
+        runtimeSnapshot: {},
+        idempotencyKey: "start-execution-a",
+      },
+    }),
+    gateway(),
+  );
 
   assertEquals(missingTask.status, 400);
   assertEquals(invalidSnapshot.status, 400);
+  assertEquals(invalidExecutionId.status, 400);
   assertEquals(
     (await missingTask.json()).error,
     "invalid_execution_start",
@@ -725,9 +745,10 @@ Deno.test("maps workflow execution commands to server-only transaction RPCs", as
   const evidenceId = "11111111-1111-4111-8111-111111111111";
 
   await actual.startExecution(identity, {
+    executionId: evidenceId,
     assignmentId: "assignment-a",
     projectId: "project-a",
-    taskId: "task-a",
+    localTaskId: "workflow-task-a",
     initialNodeId: "start-a",
     runtimeSnapshot: { currentNodeId: "start-a" },
     idempotencyKey: "start-execution-a",
@@ -750,9 +771,10 @@ Deno.test("maps workflow execution commands to server-only transaction RPCs", as
   assertEquals(calls, [{
     name: "start_workflow_execution",
     args: {
+      requested_execution_id: evidenceId,
       target_assignment_id: "assignment-a",
       target_project_id: "project-a",
-      target_task_id: "task-a",
+      target_local_task_id: "workflow-task-a",
       initial_node_id: "start-a",
       execution_snapshot: { currentNodeId: "start-a" },
       start_idempotency_key: "start-execution-a",

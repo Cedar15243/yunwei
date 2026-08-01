@@ -144,9 +144,13 @@ const start = functionBody("start_workflow_execution");
 for (const contract of [
   /from public\.workflow_assignments[\s\S]*?for update/i,
   /start_idempotency_key/i,
+  /requested_execution_id/i,
   /from public\.maintenance_tasks/i,
+  /insert into public\.maintenance_tasks/i,
+  /target_local_task_id/i,
   /from public\.device_bindings/i,
   /insert into public\.workflow_executions/i,
+  /insert into public\.workflow_executions \(\s*id,/i,
   /status not in \('ready', 'active'\)/i,
 ]) {
   assert.match(start, contract, "execution start must enforce assignment and task ownership");

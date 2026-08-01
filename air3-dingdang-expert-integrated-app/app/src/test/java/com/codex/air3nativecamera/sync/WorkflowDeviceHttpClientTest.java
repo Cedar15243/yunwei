@@ -20,6 +20,9 @@ import java.util.Arrays;
 import java.util.Queue;
 
 public final class WorkflowDeviceHttpClientTest {
+    private static final String EXECUTION_ID = "11111111-1111-4111-8111-111111111111";
+    private static final String OTHER_EXECUTION_ID = "22222222-2222-4222-8222-222222222222";
+
     @Test
     public void listsAssignmentsAndFetchesAPackageWithShortSessionAndCapabilities() throws Exception {
         DeviceSyncConfiguration configuration = configuration();
@@ -61,7 +64,7 @@ public final class WorkflowDeviceHttpClientTest {
     public void routesPersistedWorkflowEventsOnlyToWhitelistedGatewayEndpoints() throws Exception {
         QueueConnectionFactory connections = new QueueConnectionFactory();
         connections.enqueue(200, "{\"assignmentId\":\"assignment-a\",\"status\":\"verified\"}");
-        connections.enqueue(201, "{\"executionId\":\"execution-a\"}");
+        connections.enqueue(201, "{\"executionId\":\"" + EXECUTION_ID + "\"}");
         connections.enqueue(200, "{\"stepExecutionId\":\"step-a\"}");
         WorkflowDeviceHttpClient client = client(configuration(), connections);
 
@@ -75,8 +78,9 @@ public final class WorkflowDeviceHttpClientTest {
         client.send(workflowEvent(
                 "assignment-a:start",
                 "workflow_execution_start",
-                json("assignmentId", "assignment-a", "projectId", "project-a",
-                        "taskId", "task-a", "initialNodeId", "photo",
+                json("executionId", EXECUTION_ID,
+                        "assignmentId", "assignment-a", "projectId", "project-a",
+                        "localTaskId", "workflow-task-a", "initialNodeId", "photo",
                         "runtimeSnapshot", new JSONObject(),
                         "idempotencyKey", "assignment-a:start"),
                 1001L));
@@ -97,6 +101,22 @@ public final class WorkflowDeviceHttpClientTest {
         assertTrue(connections.opened.get(2).endsWith("/executions/execution-a/steps"));
         assertFalse(connections.used.get(0).requestText().contains("\"assignmentId\""));
         assertFalse(connections.used.get(2).requestText().contains("\"executionId\""));
+    }
+
+    @Test(expected = IOException.class)
+    public void rejectsExecutionStartWhenServerReturnsADifferentExecutionId() throws Exception {
+        QueueConnectionFactory connections = new QueueConnectionFactory();
+        connections.enqueue(201, "{\"executionId\":\"" + OTHER_EXECUTION_ID + "\"}");
+
+        client(configuration(), connections).send(workflowEvent(
+                "assignment-a:start",
+                "workflow_execution_start",
+                json("executionId", EXECUTION_ID,
+                        "assignmentId", "assignment-a", "projectId", "project-a",
+                        "localTaskId", "workflow-task-a", "initialNodeId", "photo",
+                        "runtimeSnapshot", new JSONObject(),
+                        "idempotencyKey", "assignment-a:start"),
+                1001L));
     }
 
     @Test(expected = IOException.class)

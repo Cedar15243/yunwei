@@ -61,15 +61,38 @@ public final class WorkflowSyncReporter {
     }
 
     public RecordResult record(TaskSyncEvent event) {
+        return recordStateAndEvent(state(), event);
+    }
+
+    public RecordResult recordStateAndEvent(
+            WorkflowRuntimeState nextState,
+            TaskSyncEvent event
+    ) {
         synchronized (this) {
-            if (event == null) throw new IllegalArgumentException("workflow sync event is required");
-            if (state.hasPendingEvent(event.idempotencyKey())) return RecordResult.DUPLICATE;
-            WorkflowRuntimeState next = state.enqueuePendingEvent(event);
+            if (nextState == null || event == null) {
+                throw new IllegalArgumentException("workflow sync checkpoint is required");
+            }
+            validateTransition(nextState);
+            if (nextState.hasPendingEvent(event.idempotencyKey())) return RecordResult.DUPLICATE;
+            WorkflowRuntimeState next = nextState.enqueuePendingEvent(event);
             if (!persist(next)) return RecordResult.PERSIST_FAILED;
             state = next;
         }
         scheduleDelivery();
         return RecordResult.QUEUED;
+    }
+
+    private void validateTransition(WorkflowRuntimeState next) {
+        if (!state.workflowVersionId().equals(next.workflowVersionId())
+                || !state.executionId().equals(next.executionId())
+                || next.sequence() < state.sequence()) {
+            throw new IllegalArgumentException("workflow sync state transition is invalid");
+        }
+        for (TaskSyncEvent pending : state.pendingEvents()) {
+            if (!next.hasPendingEvent(pending.idempotencyKey())) {
+                throw new IllegalArgumentException("workflow sync state drops a pending event");
+            }
+        }
     }
 
     public synchronized WorkflowRuntimeState state() {

@@ -189,8 +189,15 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
                         + "/assignments/" + assignmentId + "/status";
                 break;
             case "workflow_execution_start":
+                String requestedExecutionId = requiredIdentifier(
+                        body.optString("executionId", ""),
+                        "workflow execution identifier is invalid");
                 endpoint = configuration.workflowEndpoint() + "/executions";
-                break;
+                JSONObject execution = request("POST", endpoint, body, false);
+                if (!requestedExecutionId.equals(clean(execution.optString("executionId", "")))) {
+                    throw new IOException("workflow_execution_response_mismatch");
+                }
+                return;
             case "workflow_step_event":
                 String executionId = requiredIdentifier(
                         body.optString("executionId", ""),

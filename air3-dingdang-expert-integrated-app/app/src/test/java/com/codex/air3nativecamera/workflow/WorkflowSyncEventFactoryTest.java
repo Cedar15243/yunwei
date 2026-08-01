@@ -12,6 +12,8 @@ import java.util.Arrays;
 import java.util.Collections;
 
 public final class WorkflowSyncEventFactoryTest {
+    private static final String EXECUTION_ID = "11111111-1111-4111-8111-111111111111";
+
     @Test
     public void buildsACompletedStepWithTheRuntimeSnapshotAndUploadedEvidenceOnly() throws Exception {
         WorkflowRuntimeState state = state().recordEvidence(new WorkflowEvidenceReference(
@@ -82,13 +84,15 @@ public final class WorkflowSyncEventFactoryTest {
                 "project-a", "task-a", "assignment-a", "verified",
                 null, null, 1000L, "assignment-a:verified");
         TaskSyncEvent start = WorkflowSyncEventFactory.executionStart(
-                "project-a", "task-a", "assignment-a", "photo", state(),
+                "project-a", "task-a", EXECUTION_ID, "assignment-a", "photo", state(),
                 1001L, "assignment-a:start");
 
         assertEquals("workflow_assignment_status", status.eventType());
         assertEquals("assignment-a", new JSONObject(status.payload()).getString("assignmentId"));
         assertEquals("workflow_execution_start", start.eventType());
-        assertEquals("task-a", new JSONObject(start.payload()).getString("taskId"));
+        assertEquals("task-a", start.taskId());
+        assertEquals("task-a", new JSONObject(start.payload()).getString("localTaskId"));
+        assertEquals(EXECUTION_ID, new JSONObject(start.payload()).getString("executionId"));
     }
 
     private WorkflowRuntimeState state() {

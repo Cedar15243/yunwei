@@ -17,9 +17,10 @@ export type WorkflowAssignmentStatusCommand = {
 };
 
 export type WorkflowExecutionStartCommand = {
+  executionId: string;
   assignmentId: string;
   projectId: string;
-  taskId: string;
+  localTaskId: string;
   initialNodeId: string;
   runtimeSnapshot: Record<string, unknown>;
   idempotencyKey: string;
@@ -262,7 +263,7 @@ export async function routeWorkflowDevice(
       const item = await gateway.startExecution(identity, command);
       if (!item) return response({ ok: false, error: "not_found" }, 404);
       const execution = executionResponse(item);
-      if (!execution) {
+      if (!execution || execution.executionId !== command.executionId) {
         throw new WorkflowDeviceError(502, "workflow_execution_invalid");
       }
       return response(execution, 201);
@@ -375,9 +376,10 @@ export function createWorkflowDeviceGateway(
       const { data, error } = await supabase.rpc(
         "start_workflow_execution",
         {
+          requested_execution_id: command.executionId,
           target_assignment_id: command.assignmentId,
           target_project_id: command.projectId,
-          target_task_id: command.taskId,
+          target_local_task_id: command.localTaskId,
           initial_node_id: command.initialNodeId,
           execution_snapshot: command.runtimeSnapshot,
           start_idempotency_key: command.idempotencyKey,
@@ -477,24 +479,35 @@ function packageResponse(value: unknown): DeviceWorkflowPackage | null {
 function executionStartCommand(
   body: Record<string, unknown> | null,
 ): WorkflowExecutionStartCommand | null {
+  const executionId = uuidValue(body?.executionId);
   const assignmentId = boundedText(body?.assignmentId, 200);
   const projectId = boundedText(body?.projectId, 200);
-  const taskId = boundedText(body?.taskId, 200);
+  const localTaskId = boundedText(body?.localTaskId, 200);
   const initialNodeId = boundedText(body?.initialNodeId, 160);
   const runtimeSnapshot = recordValue(body?.runtimeSnapshot);
   const idempotencyKey = boundedText(body?.idempotencyKey, 200);
   if (
-    !assignmentId || !projectId || !taskId || !initialNodeId ||
+    !executionId || !assignmentId || !projectId || !localTaskId || !initialNodeId ||
     !runtimeSnapshot || !idempotencyKey
   ) return null;
   return {
+    executionId,
     assignmentId,
     projectId,
-    taskId,
+    localTaskId,
     initialNodeId,
     runtimeSnapshot,
     idempotencyKey,
   };
+}
+
+function uuidValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+      .test(normalized)
+    ? normalized
+    : null;
 }
 
 function executionResponse(
