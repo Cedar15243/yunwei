@@ -557,6 +557,7 @@ Deno.test("lists organization work orders with validated filters and a strict DT
         status: "received",
         binding_mode: "required",
         binding_status: "resolved",
+        binding_source: "project",
         bound_workflow_version_id: "44444444-4444-4444-8444-444444444444",
         due_at: null,
         received_at: "2026-08-01T01:00:00.000Z",
@@ -603,6 +604,7 @@ Deno.test("lists organization work orders with validated filters and a strict DT
       status: "received",
       bindingMode: "required",
       bindingStatus: "resolved",
+      bindingSource: "project",
       boundWorkflowVersionId: "44444444-4444-4444-8444-444444444444",
       dueAt: null,
       receivedAt: "2026-08-01T01:00:00.000Z",
@@ -1074,7 +1076,18 @@ Deno.test("resolves an organization work order from published server rules and p
         command: Record<string, unknown>,
       ) => {
         persisted = { resolution, command };
-        return { kind: "assigned", assignmentId: "assignment-a" };
+        return {
+          kind: "assigned",
+          workOrderId: "11111111-1111-4111-8111-111111111111",
+          assignmentId: "assignment-a",
+          mode: "required",
+          workflowVersionId: "version-approved",
+          bindingStatus: "resolved",
+          resolutionSource: "project",
+          matchedRuleId: "rule-project",
+          conflictRuleIds: [],
+          binding_evidence: { mustNotLeak: true },
+        };
       },
     }),
   );
@@ -1082,7 +1095,14 @@ Deno.test("resolves an organization work order from published server rules and p
   assertEquals(response.status, 200);
   assertEquals(await response.json(), {
     kind: "assigned",
+    workOrderId: "11111111-1111-4111-8111-111111111111",
     assignmentId: "assignment-a",
+    mode: "required",
+    workflowVersionId: "version-approved",
+    bindingStatus: "resolved",
+    resolutionSource: "project",
+    matchedRuleId: "rule-project",
+    conflictRuleIds: [],
   });
   assertEquals(persisted, {
     resolution: {

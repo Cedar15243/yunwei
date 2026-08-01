@@ -44,6 +44,12 @@ function api(overrides: Partial<WorkflowStudioApi> = {}): WorkflowStudioApi {
   return {
     getWorkflow: vi.fn().mockResolvedValue(workflow),
     getWorkflowCatalog: vi.fn().mockResolvedValue(catalog),
+    saveWorkflowDraft: vi.fn().mockResolvedValue(workflow),
+    validateWorkflow: vi.fn().mockResolvedValue({ valid: true, validationErrors: [] }),
+    publishWorkflow: vi.fn(),
+    getWorkflowVersions: vi.fn().mockResolvedValue([]),
+    getWorkOrders: vi.fn().mockResolvedValue([]),
+    resolveWorkOrderWorkflow: vi.fn(),
     ...overrides,
   };
 }
@@ -96,5 +102,21 @@ describe("WorkflowStudioPage", () => {
 
     expect(await screen.findByRole("heading", { name: "设备收货检查" })).toBeVisible();
     expect(getWorkflow).toHaveBeenCalledTimes(2);
+  });
+
+  it("connects the real command, immutable version and work order controls", async () => {
+    render(
+      <WorkflowStudioPage
+        api={api()}
+        onBack={vi.fn()}
+        workflowId={workflow.id}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "保存草稿" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "服务端校验" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "发布工作流" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "不可变版本" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "工单绑定" })).toBeVisible();
   });
 });

@@ -121,6 +121,7 @@ describe("workflow management API", () => {
     await api.publishWorkflow("workflow/a", {
       reason: "通过样例与异常路径验证",
       minAppVersionCode: 9000,
+      idempotencyKey: "publish-workflow-a-v1",
       confirmation: "FORGED_CONFIRMATION",
     } as Parameters<typeof api.publishWorkflow>[1]);
     await api.createWorkflowBindingRule(rule);
@@ -136,6 +137,7 @@ describe("workflow management API", () => {
       confirmation: "PUBLISH_WORKFLOW",
       reason: "通过样例与异常路径验证",
       minAppVersionCode: 9000,
+      idempotencyKey: "publish-workflow-a-v1",
     });
     expect(JSON.parse(String(requestAt(1)[1].body))).toMatchObject({
       confirmation: "CREATE_WORKFLOW_BINDING_RULE",
@@ -184,6 +186,7 @@ describe("workflow management API", () => {
     const failure = await api.publishWorkflow("workflow-a", {
       reason: "验证错误合同",
       minAppVersionCode: 9000,
+      idempotencyKey: "publish-workflow-a-error",
     }).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(ManagementApiError);

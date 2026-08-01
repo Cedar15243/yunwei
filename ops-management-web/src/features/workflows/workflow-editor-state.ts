@@ -43,6 +43,26 @@ export function createWorkflowEditorState(
   };
 }
 
+export function acceptSavedWorkflow(
+  state: WorkflowEditorState,
+  workflow: WorkflowDefinition,
+): WorkflowEditorState {
+  const savedDraft = isWorkflowDraft(workflow.draft_graph)
+    ? workflow.draft_graph
+    : state.draft;
+  const selectedNodeId = state.selectedNodeId && savedDraft.nodes.some(
+      (node) => node.nodeId === state.selectedNodeId,
+    )
+    ? state.selectedNodeId
+    : null;
+  return {
+    draft: cloneDraft(savedDraft),
+    baseline: cloneDraft(savedDraft),
+    selectedNodeId,
+    dirty: false,
+  };
+}
+
 export function addWorkflowNode(
   state: WorkflowEditorState,
   type: WorkflowNodeType,

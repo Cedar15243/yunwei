@@ -11,11 +11,13 @@ import type {
   WorkflowCatalog,
   WorkflowDefinition,
   WorkflowNodeCatalogItem,
+  WorkflowVersion,
 } from "../../api/workflow-types";
 import { WorkflowCanvas } from "./WorkflowCanvas";
 import { Air3HudPreview } from "./Air3HudPreview";
 import { NodeInspector } from "./NodeInspector";
 import {
+  acceptSavedWorkflow,
   addWorkflowNode,
   connectWorkflowNodes,
   createWorkflowEditorState,
@@ -28,10 +30,21 @@ import {
   WorkflowEditorError,
   type WorkflowEditorState,
 } from "./workflow-editor-state";
+import { WorkflowCommandBar } from "./WorkflowCommandBar";
+import { WorkflowVersionsPanel } from "./WorkflowVersionsPanel";
+import { WorkOrderBindingPanel } from "./WorkOrderBindingPanel";
+import "./workflow-operations.css";
 
 export type WorkflowStudioApi = Pick<
   ManagementApi,
-  "getWorkflow" | "getWorkflowCatalog"
+  | "getWorkflow"
+  | "getWorkflowCatalog"
+  | "saveWorkflowDraft"
+  | "validateWorkflow"
+  | "publishWorkflow"
+  | "getWorkflowVersions"
+  | "getWorkOrders"
+  | "resolveWorkOrderWorkflow"
 >;
 
 type LoadedStudio = {
@@ -63,6 +76,7 @@ export function WorkflowStudioPage({
   const [error, setError] = useState("");
   const [editorError, setEditorError] = useState("");
   const [reloadVersion, setReloadVersion] = useState(0);
+  const [versionsReloadToken, setVersionsReloadToken] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -143,6 +157,28 @@ export function WorkflowStudioPage({
     onBack();
   }
 
+  function acceptSave(savedWorkflow: WorkflowDefinition) {
+    setLoaded((current) => current ? { ...current, workflow: savedWorkflow } : current);
+    setEditor((current) => current ? acceptSavedWorkflow(current, savedWorkflow) : current);
+  }
+
+  function acceptPublication(version: WorkflowVersion) {
+    setLoaded((current) => current
+      ? {
+        ...current,
+        workflow: {
+          ...current.workflow,
+          status: "published",
+          latest_version_number: Math.max(
+            current.workflow.latest_version_number,
+            version.version_number,
+          ),
+        },
+      }
+      : current);
+    setVersionsReloadToken((value) => value + 1);
+  }
+
   return (
     <section className="workflow-studio">
       <header className="studio-heading">
@@ -157,9 +193,14 @@ export function WorkflowStudioPage({
           <span className={`status ${loaded.workflow.status}`}>{workflowStatusLabel(loaded.workflow.status)}</span>
         </div>
         <div className="studio-actions">
-          <span className={activeEditor.dirty ? "draft-state dirty" : "draft-state"}>
-            {activeEditor.dirty ? "有未保存修改" : "当前草稿"}
-          </span>
+          <WorkflowCommandBar
+            api={api}
+            dirty={activeEditor.dirty}
+            draft={activeEditor.draft}
+            onPublished={acceptPublication}
+            onSaved={acceptSave}
+            workflow={loaded.workflow}
+          />
           <button className="secondary-button" disabled={!activeEditor.dirty} onClick={() => update(discardWorkflowChanges)} type="button">
             <RotateCcw size={16} />撤销未保存修改
           </button>
@@ -231,6 +272,15 @@ export function WorkflowStudioPage({
             <div className="node-inspector-empty">未选择节点</div>
           )}
         </aside>
+      </div>
+
+      <div className="workflow-ops-grid">
+        <WorkflowVersionsPanel
+          api={api}
+          reloadToken={versionsReloadToken}
+          workflowId={loaded.workflow.id}
+        />
+        <WorkOrderBindingPanel api={api} />
       </div>
     </section>
   );

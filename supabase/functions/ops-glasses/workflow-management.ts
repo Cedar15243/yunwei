@@ -354,7 +354,7 @@ export async function routeWorkflowManagement(
       { reason, idempotencyKey, assignedProfileId, assignedDeviceId },
     );
     return item
-      ? response(item)
+      ? response(workOrderWorkflowResolutionDto(item))
       : response({ ok: false, error: "not_found" }, 404);
   }
 
@@ -711,7 +711,7 @@ export function createWorkflowManagementGateway(
     async listWorkOrders(identity, status, limit) {
       let query = supabase.from("work_orders")
         .select(
-          "id, source_system, external_work_order_id, external_workflow_code, project_id, assigned_profile_id, title, customer_id, work_order_type, asset_id, asset_category, asset_brand, asset_model, fault_type, priority, risk_level, tags, status, binding_mode, binding_status, bound_workflow_version_id, due_at, received_at, updated_at",
+          "id, source_system, external_work_order_id, external_workflow_code, project_id, assigned_profile_id, title, customer_id, work_order_type, asset_id, asset_category, asset_brand, asset_model, fault_type, priority, risk_level, tags, status, binding_mode, binding_status, binding_source, bound_workflow_version_id, due_at, received_at, updated_at",
         )
         .eq("organization_id", identity.organizationId)
         .order("received_at", { ascending: false })
@@ -1198,10 +1198,27 @@ function workOrderManagementDto(
     status: outputText(row.status),
     bindingMode: outputText(row.binding_mode),
     bindingStatus: outputText(row.binding_status),
+    bindingSource: outputText(row.binding_source),
     boundWorkflowVersionId: outputText(row.bound_workflow_version_id),
     dueAt: outputText(row.due_at),
     receivedAt: outputText(row.received_at),
     updatedAt: outputText(row.updated_at),
+  };
+}
+
+function workOrderWorkflowResolutionDto(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    kind: outputText(row.kind),
+    workOrderId: outputText(row.workOrderId),
+    assignmentId: outputText(row.assignmentId),
+    mode: outputText(row.mode),
+    workflowVersionId: outputText(row.workflowVersionId),
+    bindingStatus: outputText(row.bindingStatus),
+    resolutionSource: outputText(row.resolutionSource),
+    matchedRuleId: outputText(row.matchedRuleId),
+    conflictRuleIds: outputStringArray(row.conflictRuleIds),
   };
 }
 

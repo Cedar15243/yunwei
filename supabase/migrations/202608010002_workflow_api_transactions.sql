@@ -517,7 +517,15 @@ begin
     'assignmentId', created_assignment.id,
     'mode', resolved_mode,
     'workflowVersionId', resolved_workflow_version_id,
-    'bindingStatus', case when resolution_kind = 'conflict' then 'conflict' else 'resolved' end
+    'bindingStatus', case when resolution_kind = 'conflict' then 'conflict' else 'resolved' end,
+    'resolutionSource', resolved_source,
+    'matchedRuleId', resolved_rule_id,
+    'conflictRuleIds', case
+      when resolution_kind = 'conflict'
+        and jsonb_typeof(resolved_evidence -> 'candidateIds') = 'array'
+      then resolved_evidence -> 'candidateIds'
+      else '[]'::jsonb
+    end
   );
 
   insert into public.workflow_resolution_events (

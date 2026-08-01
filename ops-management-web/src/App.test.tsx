@@ -55,6 +55,12 @@ function workflowApi(): ManagementApi {
     getWorkflows: vi.fn().mockResolvedValue([workflow]),
     getWorkflow: vi.fn().mockResolvedValue(workflow),
     getWorkflowCatalog: vi.fn().mockResolvedValue(catalog),
+    saveWorkflowDraft: vi.fn().mockResolvedValue(workflow),
+    validateWorkflow: vi.fn().mockResolvedValue({ valid: true, validationErrors: [] }),
+    publishWorkflow: vi.fn(),
+    getWorkflowVersions: vi.fn().mockResolvedValue([]),
+    getWorkOrders: vi.fn().mockResolvedValue([]),
+    resolveWorkOrderWorkflow: vi.fn(),
   } as unknown as ManagementApi;
 }
 

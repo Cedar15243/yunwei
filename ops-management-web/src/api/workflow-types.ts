@@ -163,6 +163,7 @@ export type WorkflowVersion = {
 export type WorkflowPublishCommand = {
   reason: string;
   minAppVersionCode: number;
+  idempotencyKey: string;
 };
 
 export type WorkOrderStatus = "received" | "accepted" | "in_progress" | "completed" | "closed" | "cancelled";
@@ -190,6 +191,7 @@ export type WorkOrder = {
   status: WorkOrderStatus | null;
   bindingMode: WorkflowBindingMode | null;
   bindingStatus: "unresolved" | "resolved" | "conflict" | "unsupported" | null;
+  bindingSource: WorkflowBindingSource | null;
   boundWorkflowVersionId: string | null;
   dueAt: string | null;
   receivedAt: string | null;
@@ -250,4 +252,7 @@ export type WorkOrderWorkflowResolution = {
   mode: WorkflowBindingMode;
   workflowVersionId: string | null;
   bindingStatus: "resolved" | "conflict";
+  resolutionSource: WorkflowBindingSource | null;
+  matchedRuleId: string | null;
+  conflictRuleIds: string[];
 };

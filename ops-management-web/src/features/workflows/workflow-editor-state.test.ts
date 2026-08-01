@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorkflowDefinition, WorkflowDraft } from "../../api/workflow-types";
 import {
+  acceptSavedWorkflow,
   addWorkflowNode,
   connectWorkflowNodes,
   createWorkflowEditorState,
@@ -140,5 +141,30 @@ describe("workflow editor state", () => {
     expect(discarded.draft).toEqual(serverDraft);
     expect(discarded.dirty).toBe(false);
     expect(discarded.selectedNodeId).toBeNull();
+  });
+
+  it("accepts the authoritative saved draft as the new baseline and keeps a valid selection", () => {
+    let edited = addWorkflowNode(
+      createWorkflowEditorState(definition),
+      "instruction",
+      { x: 260, y: 120 },
+      { title: "拍摄设备铭牌" },
+    );
+    edited = { ...edited, selectedNodeId: "instruction-1" };
+    const savedWorkflow = {
+      ...definition,
+      draft_graph: structuredClone(edited.draft),
+      updated_at: "2026-08-01T04:30:00.000Z",
+    };
+
+    const saved = acceptSavedWorkflow(edited, savedWorkflow);
+    const changedAgain = updateWorkflowNodeConfig(saved, "instruction-1", {
+      title: "重新拍摄铭牌",
+    });
+    const discarded = discardWorkflowChanges(changedAgain);
+
+    expect(saved.dirty).toBe(false);
+    expect(saved.selectedNodeId).toBe("instruction-1");
+    expect(discarded.draft).toEqual(savedWorkflow.draft_graph);
   });
 });

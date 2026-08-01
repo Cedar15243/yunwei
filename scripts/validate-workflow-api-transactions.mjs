@@ -96,6 +96,13 @@ assert.match(
 
 const resolution = functionBody("apply_work_order_workflow_resolution");
 for (const contract of [
+  /'resolutionSource',\s*resolved_source/i,
+  /'matchedRuleId',\s*resolved_rule_id/i,
+  /'conflictRuleIds'/i,
+]) {
+  assert.match(resolution, contract, "workflow resolution must preserve a strict explainability result");
+}
+for (const contract of [
   /from public\.work_orders[\s\S]*?for update/i,
   /idempotency_key/i,
   /from public\.workflow_assignments[\s\S]*?for update/i,
