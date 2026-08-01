@@ -16,6 +16,38 @@ export type WorkflowAssignmentStatusCommand = {
   failureReason: string | null;
 };
 
+export type WorkflowExecutionStartCommand = {
+  assignmentId: string;
+  projectId: string;
+  taskId: string;
+  initialNodeId: string;
+  runtimeSnapshot: Record<string, unknown>;
+  idempotencyKey: string;
+};
+
+export type WorkflowStepExecutionCommand = {
+  nodeId: string;
+  attemptNumber: number;
+  status:
+    | "pending"
+    | "active"
+    | "draft_saved"
+    | "waiting_upload"
+    | "waiting_server"
+    | "completed"
+    | "skipped"
+    | "failed";
+  idempotencyKey: string;
+  inputData: Record<string, unknown>;
+  outputData: Record<string, unknown>;
+  evidenceAssetIds: string[];
+  transitionResult: Record<string, unknown>;
+  failureCode: string | null;
+  failureReason: string | null;
+  nextNodeId: string | null;
+  runtimeSnapshot: Record<string, unknown>;
+};
+
 export type WorkflowDeviceGateway = {
   authenticateDevice(token: string): Promise<DeviceSyncIdentity | null>;
   listAssignments(
@@ -36,6 +68,15 @@ export type WorkflowDeviceGateway = {
     identity: DeviceSyncIdentity,
     assignmentId: string,
     command: WorkflowAssignmentStatusCommand,
+  ): Promise<Record<string, unknown> | null>;
+  startExecution(
+    identity: DeviceSyncIdentity,
+    command: WorkflowExecutionStartCommand,
+  ): Promise<Record<string, unknown> | null>;
+  appendStep(
+    identity: DeviceSyncIdentity,
+    executionId: string,
+    command: WorkflowStepExecutionCommand,
   ): Promise<Record<string, unknown> | null>;
 };
 
@@ -63,6 +104,17 @@ const reportableStatuses = new Set([
   "ready",
   "active",
   "completed",
+  "failed",
+]);
+
+const workflowStepStatuses = new Set([
+  "pending",
+  "active",
+  "draft_saved",
+  "waiting_upload",
+  "waiting_server",
+  "completed",
+  "skipped",
   "failed",
 ]);
 
@@ -198,6 +250,44 @@ export async function routeWorkflowDevice(
         status: requiredText(item.status) ?? command.status,
       });
     }
+
+    if (
+      request.method === "POST" &&
+      path === "/device-sync/workflows/executions"
+    ) {
+      const command = executionStartCommand(await requestObject(request));
+      if (!command) {
+        return response({ ok: false, error: "invalid_execution_start" }, 400);
+      }
+      const item = await gateway.startExecution(identity, command);
+      if (!item) return response({ ok: false, error: "not_found" }, 404);
+      const execution = executionResponse(item);
+      if (!execution) {
+        throw new WorkflowDeviceError(502, "workflow_execution_invalid");
+      }
+      return response(execution, 201);
+    }
+
+    const stepRoute = path.match(
+      /^\/device-sync\/workflows\/executions\/([^/]+)\/steps$/,
+    );
+    if (request.method === "POST" && stepRoute) {
+      const command = stepExecutionCommand(await requestObject(request));
+      if (!command) {
+        return response({ ok: false, error: "invalid_step_report" }, 400);
+      }
+      const item = await gateway.appendStep(
+        identity,
+        stepRoute[1],
+        command,
+      );
+      if (!item) return response({ ok: false, error: "not_found" }, 404);
+      const step = stepExecutionResponse(item);
+      if (!step) {
+        throw new WorkflowDeviceError(502, "workflow_step_invalid_response");
+      }
+      return response(step);
+    }
   } catch (error) {
     if (error instanceof WorkflowDeviceError) {
       return response({ ok: false, error: error.code }, error.status);
@@ -281,6 +371,47 @@ export function createWorkflowDeviceGateway(
       if (error) throw workflowDatabaseError(error);
       return firstRow(data);
     },
+    async startExecution(identity, command) {
+      const { data, error } = await supabase.rpc(
+        "start_workflow_execution",
+        {
+          target_assignment_id: command.assignmentId,
+          target_project_id: command.projectId,
+          target_task_id: command.taskId,
+          initial_node_id: command.initialNodeId,
+          execution_snapshot: command.runtimeSnapshot,
+          start_idempotency_key: command.idempotencyKey,
+          target_profile_id: identity.actorProfileId,
+          target_device_id: identity.deviceId,
+        },
+      );
+      if (error) throw workflowDatabaseError(error);
+      return firstRow(data);
+    },
+    async appendStep(identity, executionId, command) {
+      const { data, error } = await supabase.rpc(
+        "append_workflow_step_execution",
+        {
+          target_execution_id: executionId,
+          step_node_id: command.nodeId,
+          step_attempt_number: command.attemptNumber,
+          new_step_status: command.status,
+          step_idempotency_key: command.idempotencyKey,
+          step_input_data: command.inputData,
+          step_output_data: command.outputData,
+          step_evidence_asset_ids: command.evidenceAssetIds,
+          step_transition_result: command.transitionResult,
+          step_failure_code: command.failureCode,
+          step_failure_reason: command.failureReason,
+          next_node_id: command.nextNodeId,
+          execution_runtime_snapshot: command.runtimeSnapshot,
+          target_profile_id: identity.actorProfileId,
+          target_device_id: identity.deviceId,
+        },
+      );
+      if (error) throw workflowDatabaseError(error);
+      return firstRow(data);
+    },
   };
 }
 
@@ -343,6 +474,135 @@ function packageResponse(value: unknown): DeviceWorkflowPackage | null {
   };
 }
 
+function executionStartCommand(
+  body: Record<string, unknown> | null,
+): WorkflowExecutionStartCommand | null {
+  const assignmentId = boundedText(body?.assignmentId, 200);
+  const projectId = boundedText(body?.projectId, 200);
+  const taskId = boundedText(body?.taskId, 200);
+  const initialNodeId = boundedText(body?.initialNodeId, 160);
+  const runtimeSnapshot = recordValue(body?.runtimeSnapshot);
+  const idempotencyKey = boundedText(body?.idempotencyKey, 200);
+  if (
+    !assignmentId || !projectId || !taskId || !initialNodeId ||
+    !runtimeSnapshot || !idempotencyKey
+  ) return null;
+  return {
+    assignmentId,
+    projectId,
+    taskId,
+    initialNodeId,
+    runtimeSnapshot,
+    idempotencyKey,
+  };
+}
+
+function executionResponse(
+  value: unknown,
+): Record<string, unknown> | null {
+  const item = recordValue(value);
+  const executionId = requiredText(item?.id);
+  const assignmentId = requiredText(item?.assignment_id);
+  const taskId = requiredText(item?.task_id);
+  const status = requiredText(item?.status);
+  const currentNodeId = requiredText(item?.current_node_id);
+  const startedAt = requiredText(item?.started_at);
+  if (
+    !executionId || !assignmentId || !taskId || !status || !currentNodeId ||
+    !startedAt
+  ) return null;
+  return {
+    executionId,
+    assignmentId,
+    taskId,
+    status,
+    currentNodeId,
+    startedAt,
+  };
+}
+
+function stepExecutionCommand(
+  body: Record<string, unknown> | null,
+): WorkflowStepExecutionCommand | null {
+  const nodeId = boundedText(body?.nodeId, 160);
+  const attemptNumber = finiteInteger(body?.attemptNumber);
+  const status = requiredText(body?.status);
+  const idempotencyKey = boundedText(body?.idempotencyKey, 200);
+  const inputData = recordValue(body?.inputData);
+  const outputData = recordValue(body?.outputData);
+  const evidenceAssetIds = evidenceIdentifiers(body?.evidenceAssetIds);
+  const transitionResult = recordValue(body?.transitionResult);
+  const failureCode = nullableBoundedText(body?.failureCode, 160);
+  const failureReason = nullableBoundedText(body?.failureReason, 1000);
+  const nextNodeId = nullableBoundedText(body?.nextNodeId, 160);
+  const runtimeSnapshot = recordValue(body?.runtimeSnapshot);
+  if (
+    !nodeId || attemptNumber === null || attemptNumber < 1 ||
+    attemptNumber > 2_147_483_647 || !status ||
+    !workflowStepStatuses.has(status) || !idempotencyKey || !inputData ||
+    !outputData || evidenceAssetIds === null || !transitionResult ||
+    failureCode === undefined || failureReason === undefined ||
+    nextNodeId === undefined || !runtimeSnapshot ||
+    (status === "failed" && !failureReason)
+  ) return null;
+  return {
+    nodeId,
+    attemptNumber,
+    status: status as WorkflowStepExecutionCommand["status"],
+    idempotencyKey,
+    inputData,
+    outputData,
+    evidenceAssetIds,
+    transitionResult,
+    failureCode,
+    failureReason,
+    nextNodeId,
+    runtimeSnapshot,
+  };
+}
+
+function stepExecutionResponse(
+  value: unknown,
+): Record<string, unknown> | null {
+  const item = recordValue(value);
+  const stepExecutionId = requiredText(item?.id);
+  const executionId = requiredText(item?.execution_id);
+  const nodeId = requiredText(item?.node_id);
+  const attemptNumber = finiteInteger(item?.attempt_number);
+  const status = requiredText(item?.status);
+  const evidenceAssetIds = evidenceIdentifiers(item?.evidence_asset_ids);
+  const updatedAt = requiredText(item?.updated_at);
+  if (
+    !stepExecutionId || !executionId || !nodeId || attemptNumber === null ||
+    attemptNumber < 1 || !status || !workflowStepStatuses.has(status) ||
+    evidenceAssetIds === null || !updatedAt
+  ) return null;
+  return {
+    stepExecutionId,
+    executionId,
+    nodeId,
+    attemptNumber,
+    status,
+    evidenceAssetIds,
+    updatedAt,
+  };
+}
+
+function evidenceIdentifiers(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > 1000) return null;
+  const identifiers = value.map((item) => requiredText(item));
+  if (
+    identifiers.some((item) => !item || !isUuid(item)) ||
+    new Set(identifiers).size !== identifiers.length
+  ) return null;
+  return identifiers as string[];
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(value);
+}
+
 function capabilityDeclaration(request: Request): DeviceCapabilities | null {
   const appVersionCode = finiteInteger(
     request.headers.get("X-App-Version-Code"),
@@ -403,8 +663,38 @@ function workflowDatabaseError(error: unknown): Error {
     return new WorkflowDeviceError(409, "workflow_transition_invalid");
   }
   if (
+    message.includes("completed or cancelled workflow execution") ||
+    message.includes("terminal workflow execution")
+  ) {
+    return new WorkflowDeviceError(409, "workflow_execution_terminal");
+  }
+  if (message.includes("invalid workflow step status transition")) {
+    return new WorkflowDeviceError(409, "workflow_step_transition_invalid");
+  }
+  if (message.includes("workflow step evidence does not belong")) {
+    return new WorkflowDeviceError(409, "workflow_evidence_invalid");
+  }
+  if (
+    message.includes("initial node is not in signed package") ||
+    message.includes("step node is not in signed package") ||
+    message.includes("step transition is not in signed package") ||
+    message.includes("step does not match current node")
+  ) {
+    return new WorkflowDeviceError(409, "workflow_package_state_invalid");
+  }
+  if (message.includes("workflow execution package is unavailable")) {
+    return new WorkflowDeviceError(409, "workflow_package_unavailable");
+  }
+  if (
+    message.includes("idempotency key was already used") ||
+    message.includes("assignment already has an execution")
+  ) {
+    return new WorkflowDeviceError(409, "workflow_idempotency_conflict");
+  }
+  if (
     message.includes("terminal workflow assignment") ||
-    message.includes("not ready for execution")
+    message.includes("not ready for execution") ||
+    message.includes("workflow-free assignment")
   ) {
     return new WorkflowDeviceError(409, "workflow_assignment_unavailable");
   }
