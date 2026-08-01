@@ -22,6 +22,8 @@ const productionNodeTypes = [
 Deno.test("accepts the production workflow node catalog", () => {
   const result = validateWorkflowDraft({
     workflowId: "workflow-a",
+    schemaVersion: 1,
+    title: "收货验收",
     nodes: productionNodeTypes.map((type, index) => ({
       nodeId: `node-${index}`,
       type,
@@ -35,6 +37,8 @@ Deno.test("accepts the production workflow node catalog", () => {
 Deno.test("rejects arbitrary http and script nodes with stable paths", () => {
   const result = validateWorkflowDraft({
     workflowId: "workflow-a",
+    schemaVersion: 1,
+    title: "不安全流程",
     nodes: [
       { nodeId: "unsafe-http", type: "http", config: {} },
       { nodeId: "unsafe-script", type: "script", config: {} },
@@ -51,6 +55,8 @@ Deno.test("rejects secret-shaped config keys recursively without leaking values"
   const secretValue = "must-not-appear-in-validation-errors";
   const result = validateWorkflowDraft({
     workflowId: "workflow-a",
+    schemaVersion: 1,
+    title: "秘密字段检查",
     nodes: [
       {
         nodeId: "safe-node-a",
@@ -66,6 +72,26 @@ Deno.test("rejects secret-shaped config keys recursively without leaking values"
         nodeId: "safe-node-c",
         type: "instruction",
         config: { url: secretValue },
+      },
+      {
+        nodeId: "safe-node-d",
+        type: "instruction",
+        config: { accessToken: secretValue },
+      },
+      {
+        nodeId: "safe-node-e",
+        type: "instruction",
+        config: { clientSecret: secretValue },
+      },
+      {
+        nodeId: "safe-node-f",
+        type: "instruction",
+        config: { baseUrl: secretValue },
+      },
+      {
+        nodeId: "safe-node-g",
+        type: "instruction",
+        config: { endpoint: secretValue },
       },
     ],
   });
@@ -83,6 +109,22 @@ Deno.test("rejects secret-shaped config keys recursively without leaking values"
       code: "forbidden_config_key",
       path: "$.nodes[2].config.url",
     },
+    {
+      code: "forbidden_config_key",
+      path: "$.nodes[3].config.accessToken",
+    },
+    {
+      code: "forbidden_config_key",
+      path: "$.nodes[4].config.clientSecret",
+    },
+    {
+      code: "forbidden_config_key",
+      path: "$.nodes[5].config.baseUrl",
+    },
+    {
+      code: "forbidden_config_key",
+      path: "$.nodes[6].config.endpoint",
+    },
   ]);
   assertEquals(JSON.stringify(result.errors).includes(secretValue), false);
 });
@@ -92,12 +134,19 @@ Deno.test("rejects malformed draft and node fields with stable errors", () => {
     { code: "invalid_draft", path: "$" },
   ]);
   assertEquals(
-    validateWorkflowDraft({ workflowId: "workflow-a", nodes: {} }).errors,
+    validateWorkflowDraft({
+      workflowId: "workflow-a",
+      schemaVersion: 1,
+      title: "流程",
+      nodes: {},
+    }).errors,
     [{ code: "nodes_required", path: "$.nodes" }],
   );
 
   const result = validateWorkflowDraft({
     workflowId: " ",
+    schemaVersion: 0,
+    title: " ",
     nodes: [
       null,
       { nodeId: "", type: "instruction", config: {} },
@@ -107,6 +156,8 @@ Deno.test("rejects malformed draft and node fields with stable errors", () => {
 
   assertEquals(result.errors, [
     { code: "workflow_id_required", path: "$.workflowId" },
+    { code: "schema_version_required", path: "$.schemaVersion" },
+    { code: "title_required", path: "$.title" },
     { code: "invalid_node", path: "$.nodes[0]" },
     { code: "node_id_required", path: "$.nodes[1].nodeId" },
     { code: "node_type_required", path: "$.nodes[2].type" },

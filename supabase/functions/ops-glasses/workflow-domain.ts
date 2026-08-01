@@ -21,6 +21,8 @@ export type WorkflowNodeType = typeof WORKFLOW_NODE_TYPES[number];
 export type WorkflowValidationErrorCode =
   | "invalid_draft"
   | "workflow_id_required"
+  | "schema_version_required"
+  | "title_required"
   | "nodes_required"
   | "invalid_node"
   | "node_id_required"
@@ -39,8 +41,26 @@ export interface WorkflowValidationResult {
 }
 
 const workflowNodeTypeSet = new Set<string>(WORKFLOW_NODE_TYPES);
-const forbiddenConfigKey =
-  /^(url|uri|script|javascript|password|passwd|token|api_?key|api_?secret|authorization)$/i;
+const forbiddenConfigKeys = new Set([
+  "url",
+  "uri",
+  "endpoint",
+  "baseurl",
+  "script",
+  "javascript",
+  "password",
+  "passwd",
+  "token",
+  "accesstoken",
+  "refreshtoken",
+  "apikey",
+  "apisecret",
+  "clientsecret",
+  "authorization",
+  "credential",
+  "credentials",
+  "bearer",
+]);
 
 export function validateWorkflowDraft(
   value: unknown,
@@ -52,6 +72,14 @@ export function validateWorkflowDraft(
   const errors: WorkflowValidationError[] = [];
   if (typeof value.workflowId !== "string" || value.workflowId.trim() === "") {
     errors.push({ code: "workflow_id_required", path: "$.workflowId" });
+  }
+  if (
+    !Number.isInteger(value.schemaVersion) || Number(value.schemaVersion) <= 0
+  ) {
+    errors.push({ code: "schema_version_required", path: "$.schemaVersion" });
+  }
+  if (typeof value.title !== "string" || value.title.trim() === "") {
+    errors.push({ code: "title_required", path: "$.title" });
   }
 
   if (!Array.isArray(value.nodes)) {
@@ -112,11 +140,15 @@ function findForbiddenConfigPath(value: unknown, path: string): string | null {
 
   for (const key of Object.keys(value).sort()) {
     const keyPath = appendPath(path, key);
-    if (forbiddenConfigKey.test(key)) return keyPath;
+    if (forbiddenConfigKeys.has(normalizeConfigKey(key))) return keyPath;
     const result = findForbiddenConfigPath(value[key], keyPath);
     if (result !== null) return result;
   }
   return null;
+}
+
+function normalizeConfigKey(key: string): string {
+  return key.replace(/[_\-.\s]/g, "").toLowerCase();
 }
 
 function appendPath(path: string, key: string): string {
