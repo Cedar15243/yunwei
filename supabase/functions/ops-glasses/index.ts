@@ -3,6 +3,11 @@ import { ensureSchema } from "./automigrate.ts";
 import { createDeviceSyncGateway, routeDeviceSync } from "./device-sync.ts";
 import { createManagementGateway, routeManagement } from "./management.ts";
 import { authorizeGlassesRequest } from "./device-auth.ts";
+import {
+  createWorkflowManagementGateway,
+  routeWorkflowManagement,
+} from "./workflow-management.ts";
+import { createEd25519WorkflowSigner } from "./workflow-signing.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
@@ -145,6 +150,8 @@ type Env = {
   REMOTE_PROBE_MODE: "mock" | "tcp" | "http";
   REMOTE_PROBE_URL?: string;
   OPS_GLASSES_API_KEY: string;
+  WORKFLOW_SIGNING_PRIVATE_KEY_PKCS8?: string;
+  WORKFLOW_SIGNING_KEY_ID?: string;
   AUTO_MIGRATE: boolean;
   SUPABASE_DB_URL: string;
 };
@@ -154,7 +161,7 @@ type Supabase = SupabaseClient<any, "public", "public", any, any>;
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-ops-glasses-key",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
 };
 
 const storageBucket = "ops-glasses-captures";
@@ -175,6 +182,7 @@ Deno.serve(async (request) => {
     const env = readEnv();
     const path = urlPath(request);
     const managementRequest = path.startsWith("/management/");
+    const workflowManagementRequest = isWorkflowManagementPath(path);
     const deviceSyncRequest = path.startsWith("/device-sync/");
     const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
@@ -193,6 +201,17 @@ Deno.serve(async (request) => {
 
     if (request.method === "GET" && path === "/health") {
       return json({ ok: true, service: "ops-glasses" });
+    }
+
+    if (workflowManagementRequest) {
+      return await routeWorkflowManagement(
+        request,
+        createWorkflowManagementGateway(supabase),
+        createEd25519WorkflowSigner({
+          privateKeyPkcs8Base64: env.WORKFLOW_SIGNING_PRIVATE_KEY_PKCS8,
+          keyId: env.WORKFLOW_SIGNING_KEY_ID,
+        }),
+      );
     }
 
     if (managementRequest) {
@@ -2546,6 +2565,10 @@ function readEnv(): Env {
     REMOTE_PROBE_MODE: normalizeProbeMode(Deno.env.get("REMOTE_PROBE_MODE")),
     REMOTE_PROBE_URL: Deno.env.get("REMOTE_PROBE_URL") ?? "",
     OPS_GLASSES_API_KEY: opsGlassesApiKey,
+    WORKFLOW_SIGNING_PRIVATE_KEY_PKCS8: Deno.env.get(
+      "WORKFLOW_SIGNING_PRIVATE_KEY_PKCS8",
+    ) ?? "",
+    WORKFLOW_SIGNING_KEY_ID: Deno.env.get("WORKFLOW_SIGNING_KEY_ID") ?? "",
     AUTO_MIGRATE: Deno.env.get("AUTO_MIGRATE") === "true",
     SUPABASE_DB_URL: Deno.env.get("SUPABASE_DB_URL") ?? Deno.env.get("OPS_DB_URL") ?? "",
   };
@@ -2582,6 +2605,15 @@ function urlPath(request: Request): string {
     .replace(/^\/functions\/v1\/ops-glasses/, "")
     .replace(/^\/ops-glasses/, "") || "/";
   return path === "/" ? path : path.replace(/\/$/, "");
+}
+
+function isWorkflowManagementPath(path: string): boolean {
+  return path === "/management/field-apps" ||
+    path.startsWith("/management/field-apps/") ||
+    path.startsWith("/management/workflows/") ||
+    path.startsWith("/management/workflow-versions/") ||
+    path.startsWith("/management/workflow-binding-rules") ||
+    /^\/management\/work-orders\/[^/]+\/resolve-workflow$/.test(path);
 }
 
 function json(body: unknown, status = 200): Response {

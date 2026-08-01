@@ -1,4 +1,9 @@
-import { validateWorkflowDraft } from "./workflow-domain.ts";
+import {
+  compileWorkflowDraft,
+  validateWorkflowDraft,
+  type WorkflowExecutionPackage,
+} from "./workflow-domain.ts";
+import type { WorkflowPackageSigner } from "./workflow-signing.ts";
 
 export type WorkflowManagementIdentity = {
   id: string;
@@ -25,6 +30,16 @@ export type WorkflowDefinitionCommand = {
   title: string;
   description: string;
   schemaVersion: number;
+};
+
+export type WorkflowPublicationCommand = {
+  executionPackage: WorkflowExecutionPackage;
+  contentSha256: string;
+  packageSignature: string;
+  signatureKeyId: string;
+  requiredCapabilities: string[];
+  minAppVersionCode: number;
+  reason: string;
 };
 
 export type WorkflowManagementGateway = {
@@ -54,6 +69,19 @@ export type WorkflowManagementGateway = {
     workflowId: string,
     draft: Record<string, unknown>,
   ): Promise<Record<string, unknown> | null>;
+  listWorkflowVersions(
+    identity: WorkflowManagementIdentity,
+    workflowId: string,
+  ): Promise<Array<Record<string, unknown>> | null>;
+  getWorkflowVersion(
+    identity: WorkflowManagementIdentity,
+    versionId: string,
+  ): Promise<Record<string, unknown> | null>;
+  publishWorkflowVersion(
+    identity: WorkflowManagementIdentity,
+    workflowId: string,
+    command: WorkflowPublicationCommand,
+  ): Promise<Record<string, unknown> | null>;
 };
 
 const headers = {
@@ -66,6 +94,7 @@ const headers = {
 export async function routeWorkflowManagement(
   request: Request,
   gateway: WorkflowManagementGateway,
+  signer: WorkflowPackageSigner | null = null,
 ): Promise<Response> {
   const token = bearerToken(request);
   if (!token) return response({ ok: false, error: "unauthorized" }, 401);
@@ -152,6 +181,87 @@ export async function routeWorkflowManagement(
       { valid, validationErrors: validation.errors },
       valid ? 200 : 422,
     );
+  }
+
+  const workflowPublication = path.match(
+    /^\/management\/workflows\/([^/]+)\/publish$/,
+  );
+  if (request.method === "POST" && workflowPublication) {
+    const body = await requestObject(request);
+    if (body?.confirmation !== "PUBLISH_WORKFLOW") {
+      return response({ ok: false, error: "confirmation_required" }, 400);
+    }
+    const reason = textValue(body.reason, 1000);
+    const minAppVersionCode = body.minAppVersionCode;
+    if (
+      !reason || !Number.isInteger(minAppVersionCode) ||
+      Number(minAppVersionCode) < 9000
+    ) return invalidRequest();
+    if (!signer) {
+      return response({ ok: false, error: "signing_unavailable" }, 503);
+    }
+    const workflow = await gateway.getWorkflow(
+      identity,
+      workflowPublication[1],
+    );
+    if (!workflow) return response({ ok: false, error: "not_found" }, 404);
+    const validation = validateWorkflowDraft(workflow.draft_graph);
+    if (validation.errors.length > 0) {
+      return response({
+        ok: false,
+        error: "workflow_invalid",
+        validationErrors: validation.errors,
+      }, 422);
+    }
+    const executionPackage = await compileWorkflowDraft(workflow.draft_graph);
+    let packageSignature: string;
+    try {
+      packageSignature = await signer.sign(executionPackage.contentSha256);
+    } catch {
+      return response({ ok: false, error: "signing_unavailable" }, 503);
+    }
+    const item = await gateway.publishWorkflowVersion(
+      identity,
+      workflowPublication[1],
+      {
+        executionPackage,
+        contentSha256: executionPackage.contentSha256,
+        packageSignature,
+        signatureKeyId: signer.keyId,
+        requiredCapabilities: executionPackage.requiredCapabilities,
+        minAppVersionCode: Number(minAppVersionCode),
+        reason,
+      },
+    );
+    return item
+      ? response(item, 201)
+      : response({ ok: false, error: "not_found" }, 404);
+  }
+
+  const workflowVersions = path.match(
+    /^\/management\/workflows\/([^/]+)\/versions$/,
+  );
+  if (request.method === "GET" && workflowVersions) {
+    const items = await gateway.listWorkflowVersions(
+      identity,
+      workflowVersions[1],
+    );
+    return items
+      ? response({ items })
+      : response({ ok: false, error: "not_found" }, 404);
+  }
+
+  const workflowVersionDetail = path.match(
+    /^\/management\/workflow-versions\/([^/]+)$/,
+  );
+  if (request.method === "GET" && workflowVersionDetail) {
+    const item = await gateway.getWorkflowVersion(
+      identity,
+      workflowVersionDetail[1],
+    );
+    return item
+      ? response(item)
+      : response({ ok: false, error: "not_found" }, 404);
   }
 
   const workflowDetail = path.match(/^\/management\/workflows\/([^/]+)$/);
@@ -288,6 +398,49 @@ export function createWorkflowManagementGateway(
       if (error) throw error;
       return data ?? null;
     },
+    async listWorkflowVersions(identity, workflowId) {
+      const workflow = await organizationWorkflowExists(
+        supabase,
+        identity.organizationId,
+        workflowId,
+      );
+      if (!workflow) return null;
+      const { data, error } = await supabase.from("workflow_versions")
+        .select(
+          "id, workflow_definition_id, version_number, status, schema_version, content_sha256, signature_key_id, required_capabilities, min_app_version_code, published_by, published_at, status_changed_at",
+        )
+        .eq("organization_id", identity.organizationId)
+        .eq("workflow_definition_id", workflowId)
+        .order("version_number", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+    async getWorkflowVersion(identity, versionId) {
+      const { data, error } = await supabase.from("workflow_versions")
+        .select(
+          "id, workflow_definition_id, version_number, status, schema_version, execution_package, content_sha256, package_signature, signature_key_id, required_capabilities, min_app_version_code, published_by, published_at, status_changed_at",
+        )
+        .eq("organization_id", identity.organizationId)
+        .eq("id", versionId)
+        .maybeSingle();
+      if (error) throw error;
+      return data ?? null;
+    },
+    async publishWorkflowVersion(identity, workflowId, command) {
+      const { data, error } = await supabase.rpc("publish_workflow_version", {
+        target_workflow_definition_id: workflowId,
+        compiled_execution_package: command.executionPackage,
+        compiled_content_sha256: command.contentSha256,
+        compiled_package_signature: command.packageSignature,
+        compiled_signature_key_id: command.signatureKeyId,
+        compiled_required_capabilities: command.requiredCapabilities,
+        required_min_app_version_code: command.minAppVersionCode,
+        actor_id: identity.id,
+        publication_reason: command.reason,
+      });
+      if (error) throw error;
+      return firstRow(data);
+    },
   };
 }
 
@@ -311,6 +464,20 @@ async function organizationFieldAppExists(
     .select("id")
     .eq("organization_id", organizationId)
     .eq("id", fieldAppId)
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
+}
+
+async function organizationWorkflowExists(
+  supabase: any,
+  organizationId: string,
+  workflowId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase.from("workflow_definitions")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("id", workflowId)
     .maybeSingle();
   if (error) throw error;
   return Boolean(data);
@@ -394,6 +561,11 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 
 function invalidRequest(): Response {
   return response({ ok: false, error: "invalid_request" }, 400);
+}
+
+function firstRow(value: unknown): Record<string, unknown> | null {
+  if (Array.isArray(value)) return recordValue(value[0]);
+  return recordValue(value);
 }
 
 function routePath(request: Request): string {

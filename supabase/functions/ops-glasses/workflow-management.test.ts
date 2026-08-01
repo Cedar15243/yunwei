@@ -3,6 +3,7 @@ import {
   routeWorkflowManagement,
   type WorkflowManagementGateway,
 } from "./workflow-management.ts";
+import type { WorkflowPackageSigner } from "./workflow-signing.ts";
 
 const adminIdentity = {
   id: "admin-a",
@@ -48,6 +49,19 @@ function gateway(
     saveWorkflowDraft: async (_identity, workflowId, draft) => ({
       id: workflowId,
       draft_graph: draft,
+    }),
+    listWorkflowVersions: async (_identity, workflowId) =>
+      workflowId === "missing"
+        ? null
+        : [{ id: "version-a", workflow_definition_id: workflowId }],
+    getWorkflowVersion: async (_identity, versionId) =>
+      versionId === "missing"
+        ? null
+        : { id: versionId, workflow_definition_id: "workflow-a" },
+    publishWorkflowVersion: async (_identity, workflowId, command) => ({
+      id: "version-published",
+      workflow_definition_id: workflowId,
+      ...command,
     }),
     ...overrides,
   };
@@ -333,3 +347,139 @@ Deno.test("validates the currently saved workflow draft on the server", async ()
   assertEquals(invalid.status, 422);
   assertEquals((await invalid.json()).valid, false);
 });
+
+Deno.test("requires explicit confirmation and a reason before publishing", async () => {
+  const signer = testSigner();
+  const missingConfirmation = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/workflows/workflow-a/publish", {
+      reason: "Approved for pilot",
+      minAppVersionCode: 9000,
+    }),
+    gateway(),
+    signer,
+  );
+  const missingReason = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/workflows/workflow-a/publish", {
+      confirmation: "PUBLISH_WORKFLOW",
+      minAppVersionCode: 9000,
+    }),
+    gateway(),
+    signer,
+  );
+
+  assertEquals(missingConfirmation.status, 400);
+  assertEquals(
+    (await missingConfirmation.json()).error,
+    "confirmation_required",
+  );
+  assertEquals(missingReason.status, 400);
+});
+
+Deno.test("refuses publication when the server signing key is unavailable", async () => {
+  let persisted = false;
+  const response = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/workflows/workflow-a/publish", {
+      confirmation: "PUBLISH_WORKFLOW",
+      reason: "Approved for pilot",
+      minAppVersionCode: 9000,
+    }),
+    gateway({
+      publishWorkflowVersion: async () => {
+        persisted = true;
+        return {};
+      },
+    }),
+    null,
+  );
+
+  assertEquals(response.status, 503);
+  assertEquals(await response.json(), {
+    ok: false,
+    error: "signing_unavailable",
+  });
+  assertEquals(persisted, false);
+});
+
+Deno.test("compiles signs and publishes one immutable workflow version", async () => {
+  let received: Record<string, unknown> | null = null;
+  const response = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/workflows/workflow-a/publish", {
+      confirmation: "PUBLISH_WORKFLOW",
+      reason: "Approved for pilot",
+      minAppVersionCode: 9002,
+    }),
+    gateway({
+      publishWorkflowVersion: async (_identity, _workflowId, command) => {
+        received = command;
+        return { id: "version-a", ...command };
+      },
+    }),
+    testSigner(),
+  );
+
+  assertEquals(response.status, 201);
+  assertEquals(received!.signatureKeyId, "workflow-key-a");
+  assertEquals(received!.minAppVersionCode, 9002);
+  assertEquals(received!.reason, "Approved for pilot");
+  assertEquals(
+    String(received!.packageSignature).startsWith("signed:"),
+    true,
+  );
+  assertEquals(String(received!.contentSha256).length, 64);
+  assertEquals(Array.isArray(received!.requiredCapabilities), true);
+});
+
+Deno.test("does not publish an invalid saved draft", async () => {
+  let persisted = false;
+  const response = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/workflows/workflow-a/publish", {
+      confirmation: "PUBLISH_WORKFLOW",
+      reason: "Approved for pilot",
+      minAppVersionCode: 9000,
+    }),
+    gateway({
+      getWorkflow: async () => ({
+        id: "workflow-a",
+        draft_graph: { workflowId: "workflow-a" },
+      }),
+      publishWorkflowVersion: async () => {
+        persisted = true;
+        return {};
+      },
+    }),
+    testSigner(),
+  );
+
+  assertEquals(response.status, 422);
+  assertEquals((await response.json()).error, "workflow_invalid");
+  assertEquals(persisted, false);
+});
+
+Deno.test("lists immutable versions and returns a version detail", async () => {
+  const list = await routeWorkflowManagement(
+    request(
+      "GET",
+      "/management/workflows/workflow-a/versions",
+      "admin-token",
+    ),
+    gateway(),
+  );
+  const detail = await routeWorkflowManagement(
+    request(
+      "GET",
+      "/management/workflow-versions/version-a",
+      "admin-token",
+    ),
+    gateway(),
+  );
+
+  assertEquals(list.status, 200);
+  assertEquals(detail.status, 200);
+});
+
+function testSigner(): WorkflowPackageSigner {
+  return {
+    keyId: "workflow-key-a",
+    sign: async (contentHash) => `signed:${contentHash}`,
+  };
+}
