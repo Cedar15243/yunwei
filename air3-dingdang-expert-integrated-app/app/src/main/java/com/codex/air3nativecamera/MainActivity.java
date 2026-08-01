@@ -3,6 +3,7 @@ package com.codex.air3nativecamera;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.RestrictionsManager;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -70,9 +71,19 @@ import com.codex.air3nativecamera.features.inspection.InspectionCatalog;
 import com.codex.air3nativecamera.features.inspection.InspectionRun;
 import com.codex.air3nativecamera.features.inspection.InspectionTaskDefinition;
 import com.codex.air3nativecamera.mode.IntegratedModeController;
+import com.codex.air3nativecamera.runtime.ManagedRuntimeConfiguration;
 import com.codex.air3nativecamera.task.MaintenanceTask;
 import com.codex.air3nativecamera.task.TaskSession;
 import com.codex.air3nativecamera.task.TaskSessionManager;
+import com.codex.air3nativecamera.sync.BackendAuthorization;
+import com.codex.air3nativecamera.sync.DeviceAccessTokenProvider;
+import com.codex.air3nativecamera.sync.DeviceSessionManager;
+import com.codex.air3nativecamera.sync.DeviceSyncConfiguration;
+import com.codex.air3nativecamera.sync.HttpDeviceSessionIssuer;
+import com.codex.air3nativecamera.sync.HttpTaskSyncTransport;
+import com.codex.air3nativecamera.sync.TaskSyncClient;
+import com.codex.air3nativecamera.sync.TaskSyncEventFactory;
+import com.codex.air3nativecamera.sync.TaskSyncReporter;
 import com.codex.air3nativecamera.skills.HoneywellTempHumiditySkill;
 import com.codex.air3nativecamera.skills.SceneReferenceGuide;
 import com.codex.air3nativecamera.skills.SceneSkillAiBridge;
@@ -187,6 +198,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final String DIRECT_ASR_API_KEY = GeneratedConfig.DIRECT_ASR_API_KEY;
     private static final String DINGDANG_BACKEND_BASE_URL = GeneratedConfig.DINGDANG_BACKEND_BASE_URL;
     private static final String DINGDANG_BACKEND_API_KEY = GeneratedConfig.DINGDANG_BACKEND_API_KEY;
+    private static final boolean SECURE_RUNTIME = GeneratedConfig.SECURE_RUNTIME;
     private static final String APP_ID = GeneratedConfig.APP_ID;
     private static final String APP_LABEL = GeneratedConfig.APP_LABEL;
     private static final boolean VOICE_PREVIEW_ENABLED = isVoicePreviewPackage(APP_ID);
@@ -400,6 +412,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private HudTaskProgress hudTaskProgress = HudTaskProgress.NONE;
     private int hudGuidanceStep = 1;
     private TaskSessionManager taskSessionManager = new TaskSessionManager();
+    private TaskSyncClient taskSyncClient;
+    private TaskSyncReporter taskSyncReporter;
+    private DeviceSyncConfiguration deviceSyncConfiguration;
+    private DeviceSessionManager deviceSessionManager;
+    private Bundle managedRestrictions;
+    private ManagedRuntimeConfiguration runtimeConfiguration;
     private final HoneywellTempHumiditySkill honeywellTempHumiditySkill = new HoneywellTempHumiditySkill();
     private MaintenanceTask.Snapshot taskSnapshotBeforeExpert;
     private String taskIdBeforeExpert = "";
@@ -463,15 +481,26 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         applyImmersiveSystemUi();
+        managedRestrictions = readManagedRestrictions();
+        runtimeConfiguration = resolveRuntimeConfiguration(managedRestrictions);
+        deviceSyncConfiguration = resolveDeviceSyncConfiguration();
+        if (SECURE_RUNTIME && deviceSyncConfiguration != null) {
+            deviceSessionManager = new DeviceSessionManager(
+                    deviceSyncConfiguration.bootstrapCredential(),
+                    new HttpDeviceSessionIssuer(deviceSyncConfiguration));
+            deviceSessionManager.prewarm();
+        }
         chatAiClient = createChatAiClient();
         directAsrClient = new DirectAsrClient(DIRECT_ASR_ENDPOINT, DIRECT_ASR_API_KEY);
         realtimeAsrClient = createRealtimeAsrClient();
         wakeWordEngine = WakeWordEngines.create(
                 getApplicationContext(),
-                OFFLINE_WAKE_ENABLED,
-                GeneratedConfig.IFLYTEK_APP_ID,
-                GeneratedConfig.IFLYTEK_API_KEY,
-                GeneratedConfig.IFLYTEK_API_SECRET);
+                OFFLINE_WAKE_ENABLED && runtimeConfiguration.hasIflytekCredentials(),
+                runtimeConfiguration.iflytekAppId(),
+                runtimeConfiguration.iflytekApiKey(),
+                runtimeConfiguration.iflytekApiSecret());
+        taskSyncClient = createManagedTaskSyncClient();
+        taskSyncReporter = taskSyncClient == null ? null : new TaskSyncReporter(taskSyncClient);
         restoreTaskSessions();
         restoreInspectionRun();
         restoreChatProjects();
@@ -532,6 +561,136 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         renderChatScreen();
         requestStartupPermissions();
         refreshCollabServiceHealth(true);
+    }
+
+    private TaskSyncClient createManagedTaskSyncClient() {
+        if (deviceSyncConfiguration == null) {
+            Log.i(KEY_LOG_TAG, "Device task sync is not provisioned");
+            return null;
+        }
+        DeviceAccessTokenProvider tokenProvider = deviceSessionManager;
+        if (tokenProvider == null) {
+            tokenProvider = new DeviceAccessTokenProvider() {
+                @Override
+                public String accessToken() {
+                    return deviceSyncConfiguration.bootstrapCredential();
+                }
+            };
+        }
+        return new TaskSyncClient(new File(getFilesDir(), "task-sync/events.json"),
+                new HttpTaskSyncTransport(deviceSyncConfiguration, tokenProvider));
+    }
+
+    private DeviceSyncConfiguration resolveDeviceSyncConfiguration() {
+        String endpoint = managedRestrictions == null
+                ? ""
+                : managedRestrictions.getString("ops_device_sync_endpoint", "");
+        if (endpoint.trim().length() == 0 && runtimeConfiguration.backendBaseUrl().length() > 0) {
+            endpoint = runtimeConfiguration.backendBaseUrl() + "/device-sync/events";
+        }
+        return DeviceSyncConfiguration.fromManagedValues(
+                endpoint,
+                runtimeConfiguration.backendCredential());
+    }
+
+    private Bundle readManagedRestrictions() {
+        RestrictionsManager manager = (RestrictionsManager) getSystemService(RESTRICTIONS_SERVICE);
+        Bundle restrictions = manager == null ? null : manager.getApplicationRestrictions();
+        return restrictions == null ? new Bundle() : restrictions;
+    }
+
+    private ManagedRuntimeConfiguration resolveRuntimeConfiguration(Bundle restrictions) {
+        Map<String, String> managed = new HashMap<>();
+        if (restrictions != null) {
+            managed.put(ManagedRuntimeConfiguration.BACKEND_BASE_URL,
+                    restrictions.getString(ManagedRuntimeConfiguration.BACKEND_BASE_URL, ""));
+            String backendToken = restrictions.getString(
+                    ManagedRuntimeConfiguration.BACKEND_DEVICE_TOKEN, "");
+            if (backendToken.trim().length() == 0) {
+                backendToken = restrictions.getString("ops_device_sync_token", "");
+            }
+            managed.put(ManagedRuntimeConfiguration.BACKEND_DEVICE_TOKEN, backendToken);
+            managed.put(ManagedRuntimeConfiguration.IFLYTEK_APP_ID,
+                    restrictions.getString(ManagedRuntimeConfiguration.IFLYTEK_APP_ID, ""));
+            managed.put(ManagedRuntimeConfiguration.IFLYTEK_API_KEY,
+                    restrictions.getString(ManagedRuntimeConfiguration.IFLYTEK_API_KEY, ""));
+            managed.put(ManagedRuntimeConfiguration.IFLYTEK_API_SECRET,
+                    restrictions.getString(ManagedRuntimeConfiguration.IFLYTEK_API_SECRET, ""));
+        }
+        ManagedRuntimeConfiguration configuration = ManagedRuntimeConfiguration.resolve(
+                SECURE_RUNTIME,
+                DINGDANG_BACKEND_BASE_URL,
+                DINGDANG_BACKEND_API_KEY,
+                GeneratedConfig.IFLYTEK_APP_ID,
+                GeneratedConfig.IFLYTEK_API_KEY,
+                GeneratedConfig.IFLYTEK_API_SECRET,
+                managed);
+        if (SECURE_RUNTIME && !configuration.isBackendProvisioned()) {
+            Log.w(KEY_LOG_TAG, "Secure runtime backend credential is not provisioned");
+        }
+        if (SECURE_RUNTIME && OFFLINE_WAKE_ENABLED && !configuration.hasIflytekCredentials()) {
+            Log.w(KEY_LOG_TAG, "Secure runtime offline wake authorization is not provisioned");
+        }
+        return configuration;
+    }
+
+    private TaskSession startNewTaskForActiveProject(String problem) {
+        ChatProject project = activeProject();
+        if (project == null) return null;
+        TaskSession session = taskSessionManager.startNew(project.id, problem);
+        persistChatProjects();
+        recordTaskSyncEvent(session, "task_started",
+                taskSyncPayload("problem", session.maintenanceTask().initialProblem()),
+                session.id() + ":task_started");
+        return session;
+    }
+
+    private void recordTaskSyncEvent(TaskSession session, String eventType,
+            JSONObject payload, String idempotencyKey) {
+        if (taskSyncReporter == null || session == null) return;
+        String projectTitle = "";
+        for (ChatProject project : chatProjects) {
+            if (session.projectId().equals(project.id)) {
+                projectTitle = project.title;
+                break;
+            }
+        }
+        taskSyncReporter.record(TaskSyncEventFactory.create(
+                session,
+                projectTitle,
+                eventType,
+                payload,
+                System.currentTimeMillis(),
+                idempotencyKey));
+    }
+
+    private void recordCurrentTaskSyncEvent(String eventType, JSONObject payload, String suffix) {
+        TaskSession session = taskSessionManager.active();
+        if (session == null) return;
+        String safeSuffix = suffix == null || suffix.trim().length() == 0
+                ? UUID.randomUUID().toString()
+                : suffix.trim();
+        recordTaskSyncEvent(session, eventType, payload,
+                session.id() + ":" + eventType + ":" + safeSuffix);
+    }
+
+    private static JSONObject taskSyncPayload(Object... values) {
+        JSONObject payload = new JSONObject();
+        if (values == null) return payload;
+        try {
+            for (int index = 0; index + 1 < values.length; index += 2) {
+                payload.put(String.valueOf(values[index]), values[index + 1]);
+            }
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
+        return payload;
+    }
+
+    private void persistAndRecordUserTurn(String text, boolean hasPhoto) {
+        persistChatProjects();
+        recordCurrentTaskSyncEvent("user_message",
+                taskSyncPayload("text", text, "hasPhoto", hasPhoto), "");
     }
 
     @Override
@@ -626,6 +785,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     @Override
     protected void onDestroy() {
         releaseExpertCoordinator();
+        if (taskSyncReporter != null) {
+            taskSyncReporter.close();
+            taskSyncReporter = null;
+        }
+        if (deviceSessionManager != null) {
+            deviceSessionManager.close();
+            deviceSessionManager = null;
+        }
         if (hudPresentation != null) {
             hudPresentation.destroy();
             hudPresentation = null;
@@ -2540,12 +2707,29 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 hudTaskProgress = HudTaskProgress.COMPLETED;
                 if (task != null) {
                     task.complete();
+                    taskSessionManager.completeActive();
                 }
                 hudPresentation.showState("complete");
                 setChatStatus("本次维修指导完成");
             }
             if (task != null) {
                 persistChatProjects();
+                TaskSession session = taskSessionManager.active();
+                if (advanced) {
+                    recordTaskSyncEvent(session, "step_changed",
+                            taskSyncPayload(
+                                    "stepNumber", task.currentRepairStepNumber(),
+                                    "stepCount", task.repairStepCount(),
+                                    "phase", task.phase().name()),
+                            session.id() + ":step_changed:" + task.currentRepairStepNumber());
+                } else {
+                    recordTaskSyncEvent(session, "task_completed",
+                            taskSyncPayload(
+                                    "stepNumber", task.currentRepairStepNumber(),
+                                    "stepCount", task.repairStepCount(),
+                                    "phase", task.phase().name()),
+                            session.id() + ":task_completed");
+                }
             }
             return true;
         }
@@ -2553,7 +2737,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             hudTaskProgress = HudTaskProgress.COMPLETED;
             if (task != null) {
                 task.complete();
+                taskSessionManager.completeActive();
                 persistChatProjects();
+                TaskSession session = taskSessionManager.active();
+                recordTaskSyncEvent(session, "task_completed",
+                        taskSyncPayload(
+                                "stepNumber", task.currentRepairStepNumber(),
+                                "stepCount", task.repairStepCount(),
+                                "phase", task.phase().name()),
+                        session.id() + ":task_completed");
             }
             hudPresentation.showState("complete");
             setChatStatus("本次维修指导完成");
@@ -2723,7 +2915,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         createNewProjectChat();
         ChatProject project = activeProject();
         if (project != null) {
-            taskSessionManager.startNew(project.id, "等待现场问题");
+            startNewTaskForActiveProject("等待现场问题");
             requireNewTaskOnNextInput = false;
         }
         clearHudTaskProgress();
@@ -2763,9 +2955,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             hudTaskMessageStartIndex = taskMessageStartIndexAfterProjectReset(
                     hudTaskWorkspaceActive, chatMessages.size());
         }
-        MaintenanceTask task = taskSessionManager.startNew(project.id, problem).maintenanceTask();
+        TaskSession session = startNewTaskForActiveProject(problem);
         requireNewTaskOnNextInput = false;
-        return task;
+        return session == null ? null : session.maintenanceTask();
     }
 
     private void restoreActiveTaskWorkspace() {
@@ -4289,8 +4481,34 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         composerImageUploadFailed = false;
         MaintenanceTask task = ensureMaintenanceTask("请结合现场照片分析设备异常");
         activateHudTaskWorkspace();
-        if (task != null) {
-            task.addEvidence("现场照片 " + (task.evidenceReferences().size() + 1), "local-photo");
+        TaskSession session = taskSessionManager.active();
+        File localPhoto;
+        try {
+            String reference = (session == null ? "task" : session.id())
+                    + "-photo-" + System.currentTimeMillis();
+            localPhoto = writeEvidenceFile(new File(getFilesDir(), "task-evidence"),
+                    reference, jpegBytes);
+        } catch (IOException exception) {
+            Log.w(KEY_LOG_TAG, "Unable to persist task photo", exception);
+            clearComposerImage();
+            closeCamera();
+            stopCameraThread();
+            voiceStreamState = VoiceStreamState.IDLE;
+            setChatStatus("照片保存失败，请重新拍摄");
+            renderChatScreen();
+            scheduleForegroundVoiceListening("photo-persist-failed");
+            return;
+        }
+        if (task != null && session != null) {
+            task.addEvidence("现场照片 " + (task.evidenceReferences().size() + 1),
+                    "local-photo:" + localPhoto.getName());
+            persistChatProjects();
+            recordTaskSyncEvent(session, "photo_captured",
+                    taskSyncPayload(
+                            "localFileName", localPhoto.getName(),
+                            "byteCount", localPhoto.length(),
+                            "storageState", "local_saved"),
+                    session.id() + ":photo_captured:" + localPhoto.getName());
         }
         showComposerAttachment("待发送 · " + photoDescriptionPrompt());
         // The evidence is already in memory. Release Camera2 before returning to the HUD so the
@@ -5571,6 +5789,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         streamingAssistantIndex = -1;
         setChatStatus("在线");
         persistChatProjects();
+        recordCurrentTaskSyncEvent("ai_response",
+                taskSyncPayload("text", completedResponse), "");
         scrollChatToBottom = true;
         cancelPendingChatStreamRender();
         renderChatStreamMessagesOnly();
@@ -5702,6 +5922,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             } else {
                 appendUserTranscriptMessage(prompt);
             }
+            persistAndRecordUserTurn(prompt, image != null && image.length > 0);
             composerTranscript = "";
             renderComposer();
             completeLocalAssistantTurn(task, prompt, localReply);
@@ -5718,6 +5939,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         } else {
             appendUserTranscriptMessage(prompt);
         }
+        persistAndRecordUserTurn(prompt, image != null && image.length > 0);
         composerTranscript = "";
         composerImageBytes = null;
         composerImageId = "";
@@ -6117,6 +6339,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         voiceStreamState = VoiceStreamState.IDLE;
         setChatStatus("在线");
         persistChatProjects();
+        recordCurrentTaskSyncEvent("ai_response",
+                taskSyncPayload("text", response), "");
         renderChatScreen();
         syncHudPresentation();
         scheduleForegroundVoiceListening("local-answer-complete");
@@ -6185,7 +6409,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private ChatAiClient createChatAiClient() {
-            backendChatClient = new BackendChatClient(DINGDANG_BACKEND_BASE_URL, DINGDANG_BACKEND_API_KEY);
+        if (SECURE_RUNTIME) {
+            backendChatClient = new BackendChatClient(
+                    runtimeConfiguration.backendBaseUrl(),
+                    deviceSessionManager);
+        } else {
+            backendChatClient = new BackendChatClient(
+                    runtimeConfiguration.backendBaseUrl(),
+                    runtimeConfiguration.backendCredential());
+        }
             if (DIRECT_GPT_ENABLED) {
             return new DirectGptClient(DIRECT_GPT_BASE_URL, DIRECT_GPT_MODEL, DIRECT_GPT_REASONING_EFFORT, DIRECT_GPT_API_KEY);
             }
@@ -7973,9 +8205,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         releaseSceneVideoRecorder();
         if (retainCompletedSceneVideo(completedVideo)) {
             MaintenanceTask task = ensureMaintenanceTask("请结合现场短视频和语音描述继续分析设备异常");
-            if (task != null) {
+            TaskSession session = taskSessionManager.active();
+            if (task != null && session != null) {
                 task.addEvidence("现场短视频 " + (task.evidenceReferences().size() + 1),
                         "local-video:" + completedVideo.getName());
+                persistChatProjects();
+                recordTaskSyncEvent(session, "video_recorded",
+                        taskSyncPayload(
+                                "localFileName", completedVideo.getName(),
+                                "byteCount", completedVideo.length(),
+                                "storageState", "local_saved"),
+                        session.id() + ":video_recorded:" + completedVideo.getName());
             }
             completionMessage = "短视频已保存；AI 分析当前支持照片和语音描述";
         } else if (wasRecording) {
@@ -8830,15 +9070,23 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
 
         private final String baseUrl;
-        private final String apiKey;
+        private final BackendAuthorization backendAuthorization;
         private SessionProvider sessionProvider;
         private WebSocketRealtimeAsrSession websocketSession;
 
         BackendChatClient(String baseUrl, String apiKey) {
+            this(baseUrl, BackendAuthorization.legacy(apiKey));
+        }
+
+        BackendChatClient(String baseUrl, DeviceAccessTokenProvider accessTokenProvider) {
+            this(baseUrl, BackendAuthorization.session(accessTokenProvider));
+        }
+
+        private BackendChatClient(String baseUrl, BackendAuthorization backendAuthorization) {
             this.baseUrl = trimSlash(baseUrl == null || baseUrl.length() == 0
                     ? "https://zasgzaatthvfglhbxpgo.supabase.co/functions/v1/ops-glasses"
                     : baseUrl);
-            this.apiKey = apiKey == null ? "" : apiKey;
+            this.backendAuthorization = backendAuthorization;
         }
 
         BackendChatClient withSessionProvider(SessionProvider provider) {
@@ -8859,6 +9107,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     HttpURLConnection connection = null;
                     OutputStream output = null;
                     try {
+                        requireProvisionedBackend();
                         if (baseUrl.length() == 0) {
                             throw new IllegalStateException("DINGDANG_BACKEND_BASE_URL missing");
                         }
@@ -8902,6 +9151,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     HttpURLConnection connection = null;
                     OutputStream output = null;
                     try {
+                        requireProvisionedBackend();
                         if (baseUrl.length() == 0) {
                             throw new IllegalStateException("DINGDANG_BACKEND_BASE_URL missing");
                         }
@@ -8936,8 +9186,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
         @Override
         public synchronized void start(RealtimeAsrCallback callback) {
+            if (!backendAuthorization.isProvisioned()) {
+                callback.onError(new IllegalStateException("managed_backend_credential_missing"));
+                return;
+            }
             String sessionId = sessionProvider == null ? "" : sessionProvider.sessionId();
-            websocketSession = new WebSocketRealtimeAsrSession(backendAsrUrl(sessionId), apiKey, "fun-asr-realtime", new BackendRealtimeAsrCallback(callback), true);
+            websocketSession = new WebSocketRealtimeAsrSession(backendAsrUrl(sessionId), backendAuthorization, "fun-asr-realtime", new BackendRealtimeAsrCallback(callback), true);
             websocketSession.start();
         }
 
@@ -8971,11 +9225,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             connection.setReadTimeout(90000);
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", contentType);
-            if (apiKey.length() > 0) {
-                connection.setRequestProperty("x-ops-glasses-key", apiKey);
-                connection.setRequestProperty("Authorization", "Bearer " + apiKey);
-            }
+            backendAuthorization.apply(connection);
             return connection;
+        }
+
+        private void requireProvisionedBackend() {
+            if (!backendAuthorization.isProvisioned()) {
+                throw new IllegalStateException("managed_backend_credential_missing");
+            }
         }
 
         private String backendImagesUrl(String sessionId) {
@@ -9488,6 +9745,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final class WebSocketRealtimeAsrSession {
         private final String endpoint;
         private final String apiKey;
+        private final BackendAuthorization backendAuthorization;
         private final String model;
         private final RealtimeAsrCallback callback;
         private final boolean backendMode;
@@ -9512,6 +9770,21 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         WebSocketRealtimeAsrSession(String endpoint, String apiKey, String model, RealtimeAsrCallback callback, boolean backendMode) {
             this.endpoint = endpoint;
             this.apiKey = apiKey == null ? "" : apiKey;
+            this.backendAuthorization = null;
+            this.model = model == null || model.length() == 0 ? "fun-asr-realtime" : model;
+            this.callback = callback;
+            this.backendMode = backendMode;
+        }
+
+        WebSocketRealtimeAsrSession(
+                String endpoint,
+                BackendAuthorization backendAuthorization,
+                String model,
+                RealtimeAsrCallback callback,
+                boolean backendMode) {
+            this.endpoint = endpoint;
+            this.apiKey = "";
+            this.backendAuthorization = backendAuthorization;
             this.model = model == null || model.length() == 0 ? "fun-asr-realtime" : model;
             this.callback = callback;
             this.backendMode = backendMode;
@@ -9633,7 +9906,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             request.append("Connection: Upgrade\r\n");
             request.append("Sec-WebSocket-Version: 13\r\n");
             request.append("Sec-WebSocket-Key: ").append(key).append("\r\n");
-            if (apiKey.length() > 0) {
+            if (backendAuthorization != null) {
+                request.append("Authorization: Bearer ").append(backendAuthorization.bearerToken()).append("\r\n");
+            } else if (apiKey.length() > 0) {
                 request.append("Authorization: Bearer ").append(apiKey).append("\r\n");
             }
             request.append("\r\n");

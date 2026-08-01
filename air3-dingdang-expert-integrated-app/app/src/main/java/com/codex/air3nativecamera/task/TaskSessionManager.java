@@ -47,6 +47,13 @@ public final class TaskSessionManager {
         activeTaskId = "";
     }
 
+    public boolean completeActive() {
+        TaskSession active = active();
+        if (active == null) return false;
+        active.setStatus(TaskSession.Status.COMPLETED);
+        return true;
+    }
+
     public boolean resume(String taskId) {
         TaskSession session = find(taskId);
         if (session == null || session.status() == TaskSession.Status.COMPLETED) {

@@ -49,6 +49,20 @@ public final class TaskSessionManagerTest {
     }
 
     @Test
+    public void completedTaskRemainsVisibleButCannotBeResumed() {
+        TaskSessionManager manager = new TaskSessionManager();
+        TaskSession task = manager.startNew("project-1", "服务器无法启动");
+
+        manager.completeActive();
+
+        assertEquals(task.id(), manager.active().id());
+        assertEquals(TaskSession.Status.COMPLETED, manager.active().status());
+        manager.pauseActive();
+        assertNull(manager.active());
+        assertFalse(manager.resume(task.id()));
+    }
+
+    @Test
     public void selectingAProjectExplicitlyResumesItsPausedTask() {
         TaskSessionManager manager = new TaskSessionManager();
         TaskSession first = manager.startNew("project-1", "服务器无法启动");

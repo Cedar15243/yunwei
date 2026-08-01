@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<restrictions xmlns:android="http://schemas.android.com/apk/res/android">
+    <restriction
+        android:key="dingdang_backend_base_url"
+        android:title="叮当后端服务地址"
+        android:restrictionType="string"
+        android:defaultValue="" />
+    <restriction
+        android:key="dingdang_backend_device_token"
+        android:title="设备短期凭据"
+        android:restrictionType="string"
+        android:defaultValue="" />
+    <restriction
+        android:key="ops_device_sync_endpoint"
+        android:title="任务同步地址"
+        android:restrictionType="string"
+        android:defaultValue="" />
+    <restriction
+        android:key="ops_device_sync_token"
+        android:title="任务同步凭据"
+        android:restrictionType="string"
+        android:defaultValue="" />
+    <restriction
+        android:key="iflytek_app_id"
+        android:title="讯飞应用标识"
+        android:restrictionType="string"
+        android:defaultValue="" />
+    <restriction
+        android:key="iflytek_api_key"
+        android:title="讯飞应用密钥"
+        android:restrictionType="string"
+        android:defaultValue="" />
+    <restriction
+        android:key="iflytek_api_secret"
+        android:title="讯飞应用密钥凭据"
+        android:restrictionType="string"
+        android:defaultValue="" />
+</restrictions>

@@ -9,7 +9,9 @@ def previewVersionCode = (project.findProperty("previewVersionCode") ?: "627") a
 def previewVersionName = project.findProperty("previewVersionName") ?: "6.2.7-expert-preview"
 def previewAppLabel = project.findProperty("previewAppLabel") ?: "叮当AI运维专家·协同测试"
 def generatedConfigDir = layout.buildDirectory.dir("generated/source/dingdang")
-def directGptEnabled = System.getenv("AIR3_APK_DIRECT_GPT")?.trim() == "1"
+def secureRuntime = (project.findProperty("secureRuntime")?.toString()?.trim()?.toBoolean() ?: false) ||
+        System.getenv("AIR3_APK_SECURE_RUNTIME")?.trim() == "1"
+def directGptEnabled = !secureRuntime && System.getenv("AIR3_APK_DIRECT_GPT")?.trim() == "1"
 def iflytekOfflineWakeEnabled = System.getenv("AIR3_APK_IFLYTEK_OFFLINE_WAKE")?.trim() == "1"
 def iflytekAikitRoot = System.getenv("IFLYTEK_AIKIT_ROOT")?.trim()
 def localAsrFallbackEnabled = System.getenv("AIR3_APK_LOCAL_ASR_FALLBACK")?.trim() == "1"
@@ -44,7 +46,10 @@ android {
         versionCode previewVersionCode
         versionName previewVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        manifestPlaceholders = [appLabel: previewAppLabel]
+        manifestPlaceholders = [
+                appLabel: previewAppLabel,
+                cleartextTraffic: secureRuntime ? "false" : "true"
+        ]
         buildConfigField "String", "COLLAB_SERVER_URL", "\"${collabServerUrl}\""
     }
 
@@ -90,33 +95,35 @@ tasks.register("generateDingdangConfig") {
     inputs.property("previewApplicationId", previewApplicationId)
     inputs.property("previewAppLabel", previewAppLabel)
     inputs.property("directGptEnabled", directGptEnabled)
+    inputs.property("secureRuntime", secureRuntime)
     inputs.property("iflytekOfflineWakeEnabled", iflytekOfflineWakeEnabled)
     inputs.property("localAsrFallbackEnabled", localAsrFallbackEnabled)
     outputs.dir generatedConfigDir
+    outputs.upToDateWhen { false }
     doLast {
         // Direct AI builds do not route requests through the legacy Supabase gateway.
         // Keep its generated field non-empty without requiring an unrelated production secret.
-        def opsKey = directGptEnabled
+        def opsKey = secureRuntime ? "" : (directGptEnabled
                 ? optionalEnvironment("OPS_GLASSES_API_KEY", "direct-ai-local-build")
-                : requiredEnvironment("OPS_GLASSES_API_KEY")
-        def directGptApiKey = directGptEnabled
+                : requiredEnvironment("OPS_GLASSES_API_KEY"))
+        def directGptApiKey = secureRuntime ? "" : (directGptEnabled
                 ? requiredEnvironment("DIRECT_GPT_API_KEY")
-                : optionalEnvironment("DIRECT_GPT_API_KEY", "")
-        def directAsrEndpoint = directGptEnabled
+                : optionalEnvironment("DIRECT_GPT_API_KEY", ""))
+        def directAsrEndpoint = secureRuntime ? "" : (directGptEnabled
                 ? requiredEnvironment("DIRECT_ASR_ENDPOINT")
-                : optionalEnvironment("DIRECT_ASR_ENDPOINT", "")
-        def directAsrApiKey = directGptEnabled
+                : optionalEnvironment("DIRECT_ASR_ENDPOINT", ""))
+        def directAsrApiKey = secureRuntime ? "" : (directGptEnabled
                 ? requiredEnvironment("DIRECT_ASR_API_KEY")
-                : optionalEnvironment("DIRECT_ASR_API_KEY", "")
-        def iflytekAppId = iflytekOfflineWakeEnabled
+                : optionalEnvironment("DIRECT_ASR_API_KEY", ""))
+        def iflytekAppId = secureRuntime ? "" : (iflytekOfflineWakeEnabled
                 ? requiredEnvironment("IFLYTEK_APP_ID")
-                : optionalEnvironment("IFLYTEK_APP_ID", "")
-        def iflytekApiKey = iflytekOfflineWakeEnabled
+                : optionalEnvironment("IFLYTEK_APP_ID", ""))
+        def iflytekApiKey = secureRuntime ? "" : (iflytekOfflineWakeEnabled
                 ? requiredEnvironment("IFLYTEK_API_KEY")
-                : optionalEnvironment("IFLYTEK_API_KEY", "")
-        def iflytekApiSecret = iflytekOfflineWakeEnabled
+                : optionalEnvironment("IFLYTEK_API_KEY", ""))
+        def iflytekApiSecret = secureRuntime ? "" : (iflytekOfflineWakeEnabled
                 ? requiredEnvironment("IFLYTEK_API_SECRET")
-                : optionalEnvironment("IFLYTEK_API_SECRET", "")
+                : optionalEnvironment("IFLYTEK_API_SECRET", ""))
         def eventsEndpoint = optionalEnvironment(
                 "OPS_GLASSES_EVENTS_ENDPOINT",
                 "https://zasgzaatthvfglhbxpgo.supabase.co/functions/v1/ops-glasses/sessions/events")
@@ -134,6 +141,7 @@ final class GeneratedConfig {
     static final String OPS_GLASSES_API_KEY = "${javaString(opsKey)}";
     static final String DINGDANG_BACKEND_BASE_URL = "${javaString(backendBaseUrl)}";
     static final String DINGDANG_BACKEND_API_KEY = "${javaString(opsKey)}";
+    static final boolean SECURE_RUNTIME = ${secureRuntime};
     static final boolean FAST_UPLOAD = false;
     static final boolean DIRECT_GPT_ENABLED = ${directGptEnabled};
     static final String DIRECT_GPT_BASE_URL = "${javaString(optionalEnvironment("DIRECT_GPT_BASE_URL", "https://api.openai.com/v1"))}";
@@ -151,7 +159,7 @@ final class GeneratedConfig {
     private GeneratedConfig() {}
 }
 """, "UTF-8")
-        logger.lifecycle("Generated Dingdang config from OPS_GLASSES_API_KEY environment variable")
+        logger.lifecycle("Generated Dingdang config secureRuntime=${secureRuntime}")
     }
 }
 
