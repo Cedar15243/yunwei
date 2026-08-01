@@ -132,6 +132,31 @@ public final class TaskSyncEvent {
         );
     }
 
+    static TaskSyncEvent fromJsonStrict(JSONObject json) {
+        if (json == null
+                || !validRequiredText(json.optString("event_type", ""), 160)
+                || !validRequiredText(json.optString("idempotency_key", ""), 240)
+                || !(json.opt("created_at") instanceof Number)
+                || json.optLong("created_at", -1L) < 0L
+                || !(json.opt("failure_count") instanceof Number)
+                || json.optInt("failure_count", -1) < 0
+                || !(json.opt("next_attempt_at") instanceof Number)
+                || json.optLong("next_attempt_at", -1L) < 0L
+                || json.optString("last_failure", "").length() > 1000) {
+            throw new IllegalArgumentException("task sync event snapshot is invalid");
+        }
+        String payload = json.optString("payload", "");
+        try {
+            if (payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 262_144) {
+                throw new IllegalArgumentException("task sync event payload is too large");
+            }
+            new JSONObject(payload);
+        } catch (JSONException exception) {
+            throw new IllegalArgumentException("task sync event payload is invalid", exception);
+        }
+        return fromJson(json);
+    }
+
     private static long retryDelayMillis(int failureCount) {
         // Allow one immediate retry, then back off without ever exceeding one minute.
         if (failureCount <= 1) return 0L;
@@ -141,5 +166,14 @@ public final class TaskSyncEvent {
 
     private static String value(String input) {
         return input == null ? "" : input.trim();
+    }
+
+    private static boolean validRequiredText(String input, int maxLength) {
+        String text = value(input);
+        if (text.isEmpty() || text.length() > maxLength) return false;
+        for (int index = 0; index < text.length(); index += 1) {
+            if (Character.isISOControl(text.charAt(index))) return false;
+        }
+        return true;
     }
 }

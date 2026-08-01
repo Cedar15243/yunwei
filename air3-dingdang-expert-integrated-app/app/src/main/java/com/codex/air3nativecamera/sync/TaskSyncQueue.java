@@ -2,6 +2,7 @@ package com.codex.air3nativecamera.sync;
 
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,6 +58,25 @@ public final class TaskSyncQueue {
                 if (values.optJSONObject(index) != null) queue.enqueue(TaskSyncEvent.fromJson(values.getJSONObject(index)));
             } catch (JSONException ignored) {
                 // One corrupt event must not prevent the remaining evidence from being synchronized.
+            }
+        }
+        return queue;
+    }
+
+    public static TaskSyncQueue fromJsonStrict(JSONArray values) {
+        TaskSyncQueue queue = new TaskSyncQueue();
+        if (values == null) return queue;
+        if (values.length() > 2000) {
+            throw new IllegalArgumentException("task sync queue snapshot is too large");
+        }
+        for (int index = 0; index < values.length(); index += 1) {
+            JSONObject item = values.optJSONObject(index);
+            if (item == null) {
+                throw new IllegalArgumentException("task sync queue snapshot is invalid");
+            }
+            TaskSyncEvent event = TaskSyncEvent.fromJsonStrict(item);
+            if (!queue.enqueue(event)) {
+                throw new IllegalArgumentException("task sync queue snapshot is duplicated");
             }
         }
         return queue;

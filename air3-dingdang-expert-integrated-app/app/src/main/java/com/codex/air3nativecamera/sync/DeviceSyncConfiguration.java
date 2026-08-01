@@ -6,11 +6,13 @@ import java.net.URI;
 public final class DeviceSyncConfiguration {
     private final String endpoint;
     private final String sessionEndpoint;
+    private final String workflowEndpoint;
     private final String bootstrapCredential;
 
     private DeviceSyncConfiguration(String endpoint, String sessionEndpoint, String bootstrapCredential) {
         this.endpoint = endpoint;
         this.sessionEndpoint = sessionEndpoint;
+        this.workflowEndpoint = siblingWorkflowEndpoint(endpoint);
         this.bootstrapCredential = bootstrapCredential;
     }
 
@@ -20,6 +22,10 @@ public final class DeviceSyncConfiguration {
 
     public String sessionEndpoint() {
         return sessionEndpoint;
+    }
+
+    public String workflowEndpoint() {
+        return workflowEndpoint;
     }
 
     public String bootstrapCredential() {
@@ -43,6 +49,12 @@ public final class DeviceSyncConfiguration {
         return endpoint.endsWith("/events")
                 ? endpoint.substring(0, endpoint.length() - "/events".length()) + "/session"
                 : endpoint + "/session";
+    }
+
+    private static String siblingWorkflowEndpoint(String endpoint) {
+        return endpoint.endsWith("/events")
+                ? endpoint.substring(0, endpoint.length() - "/events".length()) + "/workflows"
+                : endpoint + "/workflows";
     }
 
     private static String trimTrailingSlash(String value) {

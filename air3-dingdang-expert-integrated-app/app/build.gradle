@@ -109,6 +109,12 @@ tasks.register("generateDingdangConfig") {
         def directGptApiKey = secureRuntime ? "" : (directGptEnabled
                 ? requiredEnvironment("DIRECT_GPT_API_KEY")
                 : optionalEnvironment("DIRECT_GPT_API_KEY", ""))
+        def directGptBaseUrl = secureRuntime ? ""
+                : optionalEnvironment("DIRECT_GPT_BASE_URL", "https://api.openai.com/v1")
+        def directGptModel = secureRuntime ? ""
+                : optionalEnvironment("DIRECT_GPT_MODEL", "gpt-4.1-mini")
+        def directGptReasoningEffort = secureRuntime ? ""
+                : optionalEnvironment("DIRECT_GPT_REASONING_EFFORT", "")
         def directAsrEndpoint = secureRuntime ? "" : (directGptEnabled
                 ? requiredEnvironment("DIRECT_ASR_ENDPOINT")
                 : optionalEnvironment("DIRECT_ASR_ENDPOINT", ""))
@@ -144,9 +150,9 @@ final class GeneratedConfig {
     static final boolean SECURE_RUNTIME = ${secureRuntime};
     static final boolean FAST_UPLOAD = false;
     static final boolean DIRECT_GPT_ENABLED = ${directGptEnabled};
-    static final String DIRECT_GPT_BASE_URL = "${javaString(optionalEnvironment("DIRECT_GPT_BASE_URL", "https://api.openai.com/v1"))}";
-    static final String DIRECT_GPT_MODEL = "${javaString(optionalEnvironment("DIRECT_GPT_MODEL", "gpt-4.1-mini"))}";
-    static final String DIRECT_GPT_REASONING_EFFORT = "${javaString(optionalEnvironment("DIRECT_GPT_REASONING_EFFORT", ""))}";
+    static final String DIRECT_GPT_BASE_URL = "${javaString(directGptBaseUrl)}";
+    static final String DIRECT_GPT_MODEL = "${javaString(directGptModel)}";
+    static final String DIRECT_GPT_REASONING_EFFORT = "${javaString(directGptReasoningEffort)}";
     static final String DIRECT_GPT_API_KEY = "${javaString(directGptApiKey)}";
     static final String DIRECT_ASR_ENDPOINT = "${javaString(directAsrEndpoint)}";
     static final String DIRECT_ASR_API_KEY = "${javaString(directAsrApiKey)}";
