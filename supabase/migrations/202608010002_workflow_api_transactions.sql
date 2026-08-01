@@ -114,6 +114,7 @@ create or replace function public.publish_workflow_version(
   compiled_signature_key_id text,
   compiled_required_capabilities text[],
   required_min_app_version_code integer,
+  publication_idempotency_key text,
   actor_id uuid,
   publication_reason text
 )
@@ -125,10 +126,14 @@ as $$
 declare
   definition public.workflow_definitions;
   published_version public.workflow_versions;
+  previous_publication public.workflow_versions;
   next_version_number integer;
 begin
   if char_length(btrim(coalesce(publication_reason, ''))) < 3 then
     raise exception 'workflow publication reason is required';
+  end if;
+  if char_length(btrim(coalesce(publication_idempotency_key, ''))) not between 1 and 200 then
+    raise exception 'workflow publication idempotency key is required';
   end if;
   if jsonb_typeof(compiled_execution_package) <> 'object'
      or jsonb_typeof(compiled_execution_package -> 'nodes') <> 'array'
@@ -181,6 +186,29 @@ begin
     raise exception 'workflow publication is not authorized';
   end if;
 
+  select version.* into previous_publication
+  from public.workflow_versions version
+  where version.organization_id = definition.organization_id
+    and version.publication_idempotency_key = btrim(publication_idempotency_key);
+  if previous_publication.id is not null then
+    if previous_publication.workflow_definition_id <> definition.id
+       or previous_publication.content_sha256 <> compiled_content_sha256
+       or previous_publication.min_app_version_code <> required_min_app_version_code
+       or previous_publication.published_by <> actor_id
+       or not exists (
+         select 1
+         from public.audit_events event
+         where event.organization_id = definition.organization_id
+           and event.action = 'workflow_version.published'
+           and event.target_type = 'workflow_version'
+           and event.target_id = previous_publication.id::text
+           and event.metadata ->> 'reason' = btrim(publication_reason)
+       ) then
+      raise exception 'workflow publication idempotency key was already used';
+    end if;
+    return previous_publication;
+  end if;
+
   next_version_number := definition.latest_version_number + 1;
   insert into public.workflow_versions (
     organization_id,
@@ -193,6 +221,7 @@ begin
     signature_key_id,
     required_capabilities,
     min_app_version_code,
+    publication_idempotency_key,
     published_by
   ) values (
     definition.organization_id,
@@ -205,6 +234,7 @@ begin
     btrim(compiled_signature_key_id),
     compiled_required_capabilities,
     required_min_app_version_code,
+    btrim(publication_idempotency_key),
     actor_id
   ) returning * into published_version;
 
@@ -1387,14 +1417,14 @@ grant all on table public.workflow_resolution_events to service_role;
 grant all on table public.workflow_assignment_status_events to service_role;
 grant all on table public.workflow_step_status_events to service_role;
 
-revoke all on function public.publish_workflow_version(uuid, jsonb, text, text, text, text[], integer, uuid, text) from public, anon, authenticated;
+revoke all on function public.publish_workflow_version(uuid, jsonb, text, text, text, text[], integer, text, uuid, text) from public, anon, authenticated;
 revoke all on function public.apply_work_order_workflow_resolution(uuid, text, text, uuid, uuid, text, jsonb, uuid, uuid, text, uuid, text) from public, anon, authenticated;
 revoke all on function public.claim_workflow_assignment(uuid, uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public.report_workflow_assignment_status(uuid, uuid, uuid, text, text, text, text) from public, anon, authenticated;
 revoke all on function public.start_workflow_execution(uuid, uuid, uuid, text, jsonb, text, uuid, uuid) from public, anon, authenticated;
 revoke all on function public.append_workflow_step_execution(uuid, text, integer, text, text, jsonb, jsonb, uuid[], jsonb, text, text, text, jsonb, uuid, uuid) from public, anon, authenticated;
 
-grant execute on function public.publish_workflow_version(uuid, jsonb, text, text, text, text[], integer, uuid, text) to service_role;
+grant execute on function public.publish_workflow_version(uuid, jsonb, text, text, text, text[], integer, text, uuid, text) to service_role;
 grant execute on function public.apply_work_order_workflow_resolution(uuid, text, text, uuid, uuid, text, jsonb, uuid, uuid, text, uuid, text) to service_role;
 grant execute on function public.claim_workflow_assignment(uuid, uuid, uuid, text) to service_role;
 grant execute on function public.report_workflow_assignment_status(uuid, uuid, uuid, text, text, text, text) to service_role;

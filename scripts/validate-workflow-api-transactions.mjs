@@ -78,11 +78,21 @@ for (const contract of [
   /from public\.workflow_definitions[\s\S]*?for update/i,
   /latest_version_number\s*\+\s*1/i,
   /insert into public\.workflow_versions/i,
+  /publication_idempotency_key/i,
+  /return previous_publication/i,
   /profile\.role in \('super_admin', 'ops_admin'\)/i,
   /profile\.organization_id\s*=\s*definition\.organization_id/i,
 ]) {
   assert.match(publish, contract, "workflow publication must be atomic and authorized");
 }
+assert.match(
+  readFileSync(
+    new URL("../supabase/migrations/202608010001_configurable_field_workflows.sql", import.meta.url),
+    "utf8",
+  ),
+  /create unique index workflow_versions_publication_idempotency_idx[\s\S]*?organization_id, publication_idempotency_key/i,
+  "workflow publication idempotency must be organization scoped",
+);
 
 const resolution = functionBody("apply_work_order_workflow_resolution");
 for (const contract of [

@@ -95,6 +95,8 @@ create table public.workflow_versions (
   signature_key_id text not null check (char_length(btrim(signature_key_id)) between 1 and 160),
   required_capabilities text[] not null default '{}'::text[],
   min_app_version_code integer not null default 9000 check (min_app_version_code > 0),
+  publication_idempotency_key text
+    check (publication_idempotency_key is null or char_length(btrim(publication_idempotency_key)) between 1 and 200),
   published_by uuid not null,
   published_at timestamptz not null default now(),
   status_changed_at timestamptz not null default now(),
@@ -107,6 +109,10 @@ create table public.workflow_versions (
     foreign key (organization_id, published_by)
     references public.ops_profiles(organization_id, id) on delete restrict
 );
+
+create unique index workflow_versions_publication_idempotency_idx
+on public.workflow_versions(organization_id, publication_idempotency_key)
+where publication_idempotency_key is not null;
 
 create table public.workflow_binding_rules (
   id uuid primary key default gen_random_uuid(),

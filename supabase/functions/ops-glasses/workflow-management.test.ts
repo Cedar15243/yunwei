@@ -385,6 +385,7 @@ Deno.test("requires explicit confirmation and a reason before publishing", async
   const signer = testSigner();
   const missingConfirmation = await routeWorkflowManagement(
     jsonRequest("POST", "/management/workflows/workflow-a/publish", {
+      idempotencyKey: "publish-workflow-a-v1",
       reason: "Approved for pilot",
       minAppVersionCode: 9000,
     }),
@@ -394,6 +395,16 @@ Deno.test("requires explicit confirmation and a reason before publishing", async
   const missingReason = await routeWorkflowManagement(
     jsonRequest("POST", "/management/workflows/workflow-a/publish", {
       confirmation: "PUBLISH_WORKFLOW",
+      idempotencyKey: "publish-workflow-a-v1",
+      minAppVersionCode: 9000,
+    }),
+    gateway(),
+    signer,
+  );
+  const missingIdempotency = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/workflows/workflow-a/publish", {
+      confirmation: "PUBLISH_WORKFLOW",
+      reason: "Approved for pilot",
       minAppVersionCode: 9000,
     }),
     gateway(),
@@ -406,6 +417,7 @@ Deno.test("requires explicit confirmation and a reason before publishing", async
     "confirmation_required",
   );
   assertEquals(missingReason.status, 400);
+  assertEquals(missingIdempotency.status, 400);
 });
 
 Deno.test("refuses publication when the server signing key is unavailable", async () => {
@@ -413,6 +425,7 @@ Deno.test("refuses publication when the server signing key is unavailable", asyn
   const response = await routeWorkflowManagement(
     jsonRequest("POST", "/management/workflows/workflow-a/publish", {
       confirmation: "PUBLISH_WORKFLOW",
+      idempotencyKey: "publish-workflow-a-v1",
       reason: "Approved for pilot",
       minAppVersionCode: 9000,
     }),
@@ -438,6 +451,7 @@ Deno.test("compiles signs and publishes one immutable workflow version", async (
   const response = await routeWorkflowManagement(
     jsonRequest("POST", "/management/workflows/workflow-a/publish", {
       confirmation: "PUBLISH_WORKFLOW",
+      idempotencyKey: "publish-workflow-a-v1",
       reason: "Approved for pilot",
       minAppVersionCode: 9002,
     }),
@@ -454,6 +468,7 @@ Deno.test("compiles signs and publishes one immutable workflow version", async (
   assertEquals(received!.signatureKeyId, "workflow-key-a");
   assertEquals(received!.minAppVersionCode, 9002);
   assertEquals(received!.reason, "Approved for pilot");
+  assertEquals(received!.idempotencyKey, "publish-workflow-a-v1");
   assertEquals(
     String(received!.packageSignature).startsWith("signed:"),
     true,
@@ -467,6 +482,7 @@ Deno.test("does not publish an invalid saved draft", async () => {
   const response = await routeWorkflowManagement(
     jsonRequest("POST", "/management/workflows/workflow-a/publish", {
       confirmation: "PUBLISH_WORKFLOW",
+      idempotencyKey: "publish-workflow-a-v1",
       reason: "Approved for pilot",
       minAppVersionCode: 9000,
     }),

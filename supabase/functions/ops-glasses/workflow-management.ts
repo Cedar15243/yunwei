@@ -46,6 +46,7 @@ export type WorkflowPublicationCommand = {
   signatureKeyId: string;
   requiredCapabilities: string[];
   minAppVersionCode: number;
+  idempotencyKey: string;
   reason: string;
 };
 
@@ -444,9 +445,10 @@ export async function routeWorkflowManagement(
       return response({ ok: false, error: "confirmation_required" }, 400);
     }
     const reason = textValue(body.reason, 1000);
+    const idempotencyKey = textValue(body.idempotencyKey, 200);
     const minAppVersionCode = body.minAppVersionCode;
     if (
-      !reason || !Number.isInteger(minAppVersionCode) ||
+      !reason || !idempotencyKey || !Number.isInteger(minAppVersionCode) ||
       Number(minAppVersionCode) < 9000
     ) return invalidRequest();
     if (!signer) {
@@ -482,6 +484,7 @@ export async function routeWorkflowManagement(
         signatureKeyId: signer.keyId,
         requiredCapabilities: executionPackage.requiredCapabilities,
         minAppVersionCode: Number(minAppVersionCode),
+        idempotencyKey,
         reason,
       },
     );
@@ -687,6 +690,7 @@ export function createWorkflowManagementGateway(
         compiled_signature_key_id: command.signatureKeyId,
         compiled_required_capabilities: command.requiredCapabilities,
         required_min_app_version_code: command.minAppVersionCode,
+        publication_idempotency_key: command.idempotencyKey,
         actor_id: identity.id,
         publication_reason: command.reason,
       });
