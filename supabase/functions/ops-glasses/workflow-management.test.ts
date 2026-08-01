@@ -63,6 +63,13 @@ function gateway(
       workflow_definition_id: workflowId,
       ...command,
     }),
+    getWorkOrder: async () => workOrder(),
+    listWorkflowBindingRules: async () => [],
+    applyWorkOrderWorkflowResolution: async (
+      _identity,
+      _order,
+      resolution,
+    ) => ({ kind: resolution.kind }),
     ...overrides,
   };
 }
@@ -476,6 +483,270 @@ Deno.test("lists immutable versions and returns a version detail", async () => {
   assertEquals(list.status, 200);
   assertEquals(detail.status, 200);
 });
+
+Deno.test("requires confirmation reason and idempotency before resolving a work order workflow", async () => {
+  const missingConfirmation = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/work-orders/order-a/resolve-workflow", {
+      reason: "Assign the approved receiving flow",
+      idempotencyKey: "resolution-a",
+    }),
+    resolutionGateway(),
+  );
+  const missingReason = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/work-orders/order-a/resolve-workflow", {
+      confirmation: "RESOLVE_WORKFLOW",
+      idempotencyKey: "resolution-a",
+    }),
+    resolutionGateway(),
+  );
+  const missingIdempotency = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/work-orders/order-a/resolve-workflow", {
+      confirmation: "RESOLVE_WORKFLOW",
+      reason: "Assign the approved receiving flow",
+    }),
+    resolutionGateway(),
+  );
+
+  assertEquals(missingConfirmation.status, 400);
+  assertEquals(
+    (await missingConfirmation.json()).error,
+    "confirmation_required",
+  );
+  assertEquals(missingReason.status, 400);
+  assertEquals(missingIdempotency.status, 400);
+});
+
+Deno.test("resolves an organization work order from published server rules and persists the selected version", async () => {
+  let persisted: Record<string, unknown> | null = null;
+  const response = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/work-orders/order-a/resolve-workflow", {
+      confirmation: "RESOLVE_WORKFLOW",
+      reason: "Assign the approved receiving flow",
+      idempotencyKey: "resolution-a",
+      assignedDeviceId: "44444444-4444-4444-8444-444444444444",
+      assignedProfileId: "forged-client-profile",
+      workflowVersionId: "forged-client-version",
+      organizationId: "forged-client-organization",
+    }),
+    resolutionGateway({
+      listWorkflowBindingRules: async () => [{
+        id: "rule-project",
+        organization_id: "org-a",
+        source: "project",
+        mode: "required",
+        workflow_version_id: "version-approved",
+        match_conditions: [{
+          field: "projectId",
+          operator: "eq",
+          value: "22222222-2222-4222-8222-222222222222",
+        }],
+        enabled: true,
+        active_from: null,
+        active_until: null,
+        workflow_versions: { status: "published" },
+      }],
+      applyWorkOrderWorkflowResolution: async (
+        _identity: unknown,
+        _order: unknown,
+        resolution: Record<string, unknown>,
+        command: Record<string, unknown>,
+      ) => {
+        persisted = { resolution, command };
+        return { kind: "assigned", assignmentId: "assignment-a" };
+      },
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), {
+    kind: "assigned",
+    assignmentId: "assignment-a",
+  });
+  assertEquals(persisted, {
+    resolution: {
+      kind: "assigned",
+      source: "project",
+      mode: "required",
+      workflowVersionId: "version-approved",
+      candidateId: "rule-project",
+    },
+    command: {
+      reason: "Assign the approved receiving flow",
+      idempotencyKey: "resolution-a",
+      assignedProfileId: "33333333-3333-4333-8333-333333333333",
+      assignedDeviceId: "44444444-4444-4444-8444-444444444444",
+    },
+  });
+});
+
+Deno.test("persists explicit none and deterministic conflict outcomes", async () => {
+  const outcomes: string[] = [];
+  const apply = async (
+    _identity: unknown,
+    _order: unknown,
+    resolution: Record<string, unknown>,
+  ) => {
+    outcomes.push(String(resolution.kind));
+    return { kind: resolution.kind };
+  };
+  const explicitNone = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/work-orders/order-a/resolve-workflow", {
+      confirmation: "RESOLVE_WORKFLOW",
+      reason: "Use the ordinary V9 task path",
+      idempotencyKey: "resolution-none",
+    }),
+    resolutionGateway({
+      listWorkflowBindingRules: async () => [{
+        id: "rule-none",
+        organization_id: "org-a",
+        source: "organization_default",
+        mode: "none",
+        workflow_version_id: null,
+        match_conditions: [],
+        enabled: true,
+        workflow_versions: null,
+      }],
+      applyWorkOrderWorkflowResolution: apply,
+    }),
+  );
+  const conflict = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/work-orders/order-a/resolve-workflow", {
+      confirmation: "RESOLVE_WORKFLOW",
+      reason: "Record conflicting customer rules for review",
+      idempotencyKey: "resolution-conflict",
+    }),
+    resolutionGateway({
+      listWorkflowBindingRules: async () => [
+        bindingRule("rule-a", "required", "version-a"),
+        bindingRule("rule-b", "optional", "version-b"),
+      ],
+      applyWorkOrderWorkflowResolution: apply,
+    }),
+  );
+
+  assertEquals(explicitNone.status, 200);
+  assertEquals(conflict.status, 200);
+  assertEquals(outcomes, ["none", "conflict"]);
+});
+
+Deno.test("ignores malformed cross-organization and unpublished workflow rules", async () => {
+  let kind = "";
+  const response = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/work-orders/order-a/resolve-workflow", {
+      confirmation: "RESOLVE_WORKFLOW",
+      reason: "Resolve only from eligible published rules",
+      idempotencyKey: "resolution-filtered",
+    }),
+    resolutionGateway({
+      listWorkflowBindingRules: async () => [
+        {
+          ...bindingRule("cross-org", "required", "version-a"),
+          organization_id: "org-b",
+        },
+        {
+          ...bindingRule("unpublished", "required", "version-b"),
+          workflow_versions: { status: "deprecated" },
+        },
+        {
+          id: "malformed",
+          organization_id: "org-a",
+          match_conditions: "not-an-array",
+        },
+      ],
+      applyWorkOrderWorkflowResolution: async (
+        _identity: unknown,
+        _order: unknown,
+        resolution: Record<string, unknown>,
+      ) => {
+        kind = String(resolution.kind);
+        return { kind };
+      },
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  assertEquals(kind, "none");
+});
+
+Deno.test("refuses to rebind a work order that has already started", async () => {
+  let persisted = false;
+  const response = await routeWorkflowManagement(
+    jsonRequest("POST", "/management/work-orders/order-a/resolve-workflow", {
+      confirmation: "RESOLVE_WORKFLOW",
+      reason: "Attempt to replace an active workflow",
+      idempotencyKey: "resolution-started",
+    }),
+    resolutionGateway({
+      getWorkOrder: async () => ({ ...workOrder(), status: "in_progress" }),
+      applyWorkOrderWorkflowResolution: async () => {
+        persisted = true;
+        return {};
+      },
+    }),
+  );
+
+  assertEquals(response.status, 409);
+  assertEquals((await response.json()).error, "workflow_already_started");
+  assertEquals(persisted, false);
+});
+
+function resolutionGateway(
+  overrides: Record<string, unknown> = {},
+): WorkflowManagementGateway {
+  return Object.assign(gateway(), {
+    getWorkOrder: async () => workOrder(),
+    listWorkflowBindingRules: async () => [],
+    applyWorkOrderWorkflowResolution: async (
+      _identity: unknown,
+      _order: unknown,
+      resolution: Record<string, unknown>,
+    ) => ({ kind: resolution.kind }),
+  }, overrides) as WorkflowManagementGateway;
+}
+
+function workOrder(): Record<string, unknown> {
+  return {
+    id: "order-a",
+    organization_id: "org-a",
+    source_system: "mvs",
+    external_workflow_code: null,
+    customer_id: "customer-a",
+    project_id: "22222222-2222-4222-8222-222222222222",
+    assigned_profile_id: "33333333-3333-4333-8333-333333333333",
+    work_order_type: "receiving",
+    asset_category: "controller",
+    asset_brand: "Honeywell",
+    asset_model: "DDC-01",
+    fault_type: null,
+    priority: "normal",
+    risk_level: "low",
+    tags: ["pilot"],
+    status: "received",
+  };
+}
+
+function bindingRule(
+  id: string,
+  mode: "required" | "optional",
+  versionId: string,
+): Record<string, unknown> {
+  return {
+    id,
+    organization_id: "org-a",
+    source: "project",
+    mode,
+    workflow_version_id: versionId,
+    match_conditions: [{
+      field: "projectId",
+      operator: "eq",
+      value: "22222222-2222-4222-8222-222222222222",
+    }],
+    enabled: true,
+    active_from: null,
+    active_until: null,
+    workflow_versions: { status: "published" },
+  };
+}
 
 function testSigner(): WorkflowPackageSigner {
   return {

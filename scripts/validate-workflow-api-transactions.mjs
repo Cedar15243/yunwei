@@ -12,6 +12,11 @@ assert.ok(
 );
 
 const sql = readFileSync(migrationPath, "utf8");
+assert.match(
+  sql,
+  /alter table public\.work_orders[\s\S]*?add column external_workflow_code text/i,
+  "trusted external workflow mapping requires a structured work-order field",
+);
 const functionNames = [
   "publish_workflow_version",
   "apply_work_order_workflow_resolution",

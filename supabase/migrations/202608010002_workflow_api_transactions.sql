@@ -1,3 +1,14 @@
+alter table public.work_orders
+add column external_workflow_code text
+  check (
+    external_workflow_code is null
+    or char_length(btrim(external_workflow_code)) between 1 and 160
+  );
+
+create index work_orders_external_workflow_code_idx
+on public.work_orders(organization_id, source_system, external_workflow_code)
+where external_workflow_code is not null;
+
 create table public.workflow_resolution_events (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,

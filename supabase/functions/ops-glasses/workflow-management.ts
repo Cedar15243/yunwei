@@ -3,6 +3,12 @@ import {
   validateWorkflowDraft,
   type WorkflowExecutionPackage,
 } from "./workflow-domain.ts";
+import {
+  type BindingCandidate,
+  type BindingResolution,
+  resolveWorkflowBinding,
+  type WorkOrderFacts,
+} from "./workflow-binding.ts";
 import type { WorkflowPackageSigner } from "./workflow-signing.ts";
 
 export type WorkflowManagementIdentity = {
@@ -40,6 +46,13 @@ export type WorkflowPublicationCommand = {
   requiredCapabilities: string[];
   minAppVersionCode: number;
   reason: string;
+};
+
+export type WorkOrderWorkflowResolutionCommand = {
+  reason: string;
+  idempotencyKey: string;
+  assignedProfileId: string | null;
+  assignedDeviceId: string | null;
 };
 
 export type WorkflowManagementGateway = {
@@ -82,6 +95,19 @@ export type WorkflowManagementGateway = {
     workflowId: string,
     command: WorkflowPublicationCommand,
   ): Promise<Record<string, unknown> | null>;
+  getWorkOrder(
+    identity: WorkflowManagementIdentity,
+    workOrderId: string,
+  ): Promise<Record<string, unknown> | null>;
+  listWorkflowBindingRules(
+    identity: WorkflowManagementIdentity,
+  ): Promise<Array<Record<string, unknown>>>;
+  applyWorkOrderWorkflowResolution(
+    identity: WorkflowManagementIdentity,
+    order: Record<string, unknown>,
+    resolution: BindingResolution,
+    command: WorkOrderWorkflowResolutionCommand,
+  ): Promise<Record<string, unknown> | null>;
 };
 
 const headers = {
@@ -105,6 +131,60 @@ export async function routeWorkflowManagement(
   }
 
   const path = routePath(request);
+  const workOrderResolution = path.match(
+    /^\/management\/work-orders\/([^/]+)\/resolve-workflow$/,
+  );
+  if (request.method === "POST" && workOrderResolution) {
+    const body = await requestObject(request);
+    if (body?.confirmation !== "RESOLVE_WORKFLOW") {
+      return response({ ok: false, error: "confirmation_required" }, 400);
+    }
+    const reason = textValue(body.reason, 1000);
+    const idempotencyKey = textValue(body.idempotencyKey, 200);
+    const assignedDeviceId = optionalUuidValue(body.assignedDeviceId);
+    if (!reason || !idempotencyKey || assignedDeviceId === undefined) {
+      return invalidRequest();
+    }
+
+    const order = await gateway.getWorkOrder(
+      identity,
+      workOrderResolution[1],
+    );
+    if (!order) return response({ ok: false, error: "not_found" }, 404);
+    const facts = workOrderFacts(identity, order);
+    if (!facts) {
+      return response({ ok: false, error: "work_order_invalid" }, 409);
+    }
+    if (["in_progress", "completed", "closed"].includes(String(order.status))) {
+      return response({ ok: false, error: "workflow_already_started" }, 409);
+    }
+    if (String(order.status) === "cancelled") {
+      return response({ ok: false, error: "work_order_not_resolvable" }, 409);
+    }
+
+    const candidates = (await gateway.listWorkflowBindingRules(identity)).map(
+      bindingCandidate,
+    );
+    const resolution = resolveWorkflowBinding(facts, candidates);
+    const assignedProfileId = nullableIdentifier(order.assigned_profile_id);
+    if (resolution.kind === "assigned" && !assignedProfileId) {
+      return response({ ok: false, error: "work_order_unassigned" }, 409);
+    }
+    if (resolution.kind === "assigned" && !facts.projectId) {
+      return response({ ok: false, error: "work_order_project_required" }, 409);
+    }
+
+    const item = await gateway.applyWorkOrderWorkflowResolution(
+      identity,
+      order,
+      resolution,
+      { reason, idempotencyKey, assignedProfileId, assignedDeviceId },
+    );
+    return item
+      ? response(item)
+      : response({ ok: false, error: "not_found" }, 404);
+  }
+
   if (request.method === "GET" && path === "/management/field-apps") {
     return response({ items: await gateway.listFieldApps(identity) });
   }
@@ -441,6 +521,70 @@ export function createWorkflowManagementGateway(
       if (error) throw error;
       return firstRow(data);
     },
+    async getWorkOrder(identity, workOrderId) {
+      const { data, error } = await supabase.from("work_orders")
+        .select(
+          "id, organization_id, source_system, external_work_order_id, external_workflow_code, project_id, assigned_profile_id, customer_id, work_order_type, asset_category, asset_brand, asset_model, fault_type, priority, risk_level, tags, status, binding_status",
+        )
+        .eq("organization_id", identity.organizationId)
+        .eq("id", workOrderId)
+        .maybeSingle();
+      if (error) throw error;
+      return data ?? null;
+    },
+    async listWorkflowBindingRules(identity) {
+      const { data, error } = await supabase.from("workflow_binding_rules")
+        .select(
+          "id, organization_id, source, mode, workflow_version_id, match_conditions, enabled, active_from, active_until, workflow_versions(status)",
+        )
+        .eq("organization_id", identity.organizationId)
+        .eq("enabled", true);
+      if (error) throw error;
+      return data ?? [];
+    },
+    async applyWorkOrderWorkflowResolution(
+      identity,
+      order,
+      resolution,
+      command,
+    ) {
+      const source = resolution.kind === "conflict"
+        ? null
+        : resolution.source ?? null;
+      const candidateId = resolution.kind === "conflict"
+        ? null
+        : resolution.candidateId ?? null;
+      const workflowVersionId = resolution.kind === "assigned"
+        ? resolution.workflowVersionId
+        : null;
+      const mode = resolution.kind === "assigned" ? resolution.mode : "none";
+      const evidence = resolution.kind === "conflict"
+        ? { candidateIds: resolution.candidateIds, resolver: "v9-binding-v1" }
+        : {
+          candidateId,
+          resolver: "v9-binding-v1",
+          workflowVersionId,
+        };
+      const { data, error } = await supabase.rpc(
+        "apply_work_order_workflow_resolution",
+        {
+          target_work_order_id: order.id,
+          resolution_kind: resolution.kind,
+          resolved_mode: mode,
+          resolved_workflow_version_id: workflowVersionId,
+          resolved_rule_id: candidateId,
+          resolved_source: source,
+          resolved_evidence: evidence,
+          target_assigned_profile_id: command.assignedProfileId,
+          target_assigned_device_id: command.assignedDeviceId,
+          resolution_idempotency_key: command.idempotencyKey,
+          actor_id: identity.id,
+          resolution_reason: command.reason,
+        },
+      );
+      if (error) throw error;
+      return firstRow(data);
+    },
   };
 }
 
@@ -551,6 +695,80 @@ function nullableTextValue(
 ): string | null | undefined {
   if (value === undefined || value === null || value === "") return null;
   return textValue(value, maxLength) ?? undefined;
+}
+
+function optionalUuidValue(value: unknown): string | null | undefined {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+      .test(
+        normalized,
+      )
+    ? normalized
+    : undefined;
+}
+
+function nullableIdentifier(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function workOrderFacts(
+  identity: WorkflowManagementIdentity,
+  row: Record<string, unknown>,
+): WorkOrderFacts | null {
+  const organizationId = nullableIdentifier(row.organization_id);
+  const workOrderId = nullableIdentifier(row.id);
+  if (
+    !organizationId || organizationId !== identity.organizationId ||
+    !workOrderId
+  ) {
+    return null;
+  }
+  const tags =
+    Array.isArray(row.tags) && row.tags.every((tag) => typeof tag === "string")
+      ? row.tags as string[]
+      : undefined;
+  return {
+    organizationId,
+    workOrderId,
+    externalSystem: nullableIdentifier(row.source_system) ?? undefined,
+    externalWorkflowCode: nullableIdentifier(row.external_workflow_code) ??
+      undefined,
+    customerId: nullableIdentifier(row.customer_id) ?? undefined,
+    projectId: nullableIdentifier(row.project_id) ?? undefined,
+    workOrderType: nullableIdentifier(row.work_order_type) ?? undefined,
+    assetCategory: nullableIdentifier(row.asset_category) ?? undefined,
+    assetBrand: nullableIdentifier(row.asset_brand) ?? undefined,
+    assetModel: nullableIdentifier(row.asset_model) ?? undefined,
+    faultType: nullableIdentifier(row.fault_type) ?? undefined,
+    priority: nullableIdentifier(row.priority) ?? undefined,
+    riskLevel: nullableIdentifier(row.risk_level) ?? undefined,
+    tags,
+  };
+}
+
+function bindingCandidate(row: Record<string, unknown>): BindingCandidate {
+  const joinedVersion = Array.isArray(row.workflow_versions)
+    ? recordValue(row.workflow_versions[0])
+    : recordValue(row.workflow_versions);
+  const mode = row.mode;
+  const versionStatus = mode === "none" && row.workflow_version_id == null
+    ? "published"
+    : joinedVersion?.status;
+  return {
+    candidateId: nullableIdentifier(row.id) ?? "",
+    organizationId: nullableIdentifier(row.organization_id) ?? "",
+    source: row.source as BindingCandidate["source"],
+    mode: mode as BindingCandidate["mode"],
+    workflowVersionId: nullableIdentifier(row.workflow_version_id) ?? undefined,
+    workflowVersionStatus:
+      versionStatus as BindingCandidate["workflowVersionStatus"],
+    enabled: row.enabled === true,
+    conditions: row.match_conditions as BindingCandidate["conditions"],
+    activeFrom: nullableIdentifier(row.active_from) ?? undefined,
+    activeUntil: nullableIdentifier(row.active_until) ?? undefined,
+  };
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
