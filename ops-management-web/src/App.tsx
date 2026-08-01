@@ -1,15 +1,16 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Activity, Camera, ClipboardList, MonitorSmartphone, Users } from "lucide-react";
+import { Activity, Camera, ClipboardList, MonitorSmartphone, Users, Workflow } from "lucide-react";
 import type { ManagementApi } from "./api/management-api";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { DevicesPage } from "./features/devices/DevicesPage";
 import { MediaCenterPage } from "./features/media/MediaCenterPage";
 import { TaskListPage } from "./features/tasks/TaskListPage";
 import { TaskTimelinePage } from "./features/tasks/TaskTimelinePage";
+import { FieldAppsPage } from "./features/workflows/FieldAppsPage";
 import "./styles/app.css";
 
-type Section = "工作台" | "项目与任务" | "媒体中心" | "人员与设备";
-const navigation: Array<{ label: Section; icon: typeof Activity }> = [{ label: "工作台", icon: Activity }, { label: "项目与任务", icon: ClipboardList }, { label: "媒体中心", icon: Camera }, { label: "人员与设备", icon: Users }];
+type Section = "工作台" | "项目与任务" | "现场应用" | "媒体中心" | "人员与设备";
+const navigation: Array<{ label: Section; icon: typeof Activity }> = [{ label: "工作台", icon: Activity }, { label: "项目与任务", icon: ClipboardList }, { label: "现场应用", icon: Workflow }, { label: "媒体中心", icon: Camera }, { label: "人员与设备", icon: Users }];
 
 export type WebAuth = { restoreSession: () => Promise<boolean>; signIn: (email: string, password: string) => Promise<void> };
 
@@ -21,4 +22,4 @@ export function App({ initialAuthenticated = false, api, auth }: { initialAuthen
   return <div className="shell"><aside className="nav"><div className="nav-brand"><span className="brand-mark"><MonitorSmartphone size={18} /> D</span><strong>叮当运维</strong></div><nav aria-label="主导航">{navigation.map(({ label, icon: Icon }) => <a key={label} href={`#${label}`} className={section === label ? "active" : ""} onClick={(event) => { event.preventDefault(); setSection(label); setTaskId(""); }}><Icon size={18} />{label}</a>)}</nav><div className="nav-foot"><span className="presence" />云端管理服务</div></aside><main className="workspace"><header className="command-bar"><div><span className="eyebrow">现场运维工作台</span><h1>{taskId ? "任务时间线" : section}</h1></div><div className="operator"><span className="presence" />已授权访问</div></header><section className="content">{api ? taskId ? <TaskTimelinePage taskId={taskId} api={api} onBack={() => setTaskId("")} /> : <Page section={section} api={api} onOpenTask={setTaskId} /> : <section className="notice error">管理服务尚未完成授权配置，无法读取任务数据。</section>}</section></main></div>;
 }
 
-function Page({ section, api, onOpenTask }: { section: Section; api: ManagementApi; onOpenTask: (taskId: string) => void }) { if (section === "工作台") return <DashboardPage api={api} onOpenTask={onOpenTask} />; if (section === "项目与任务") return <TaskListPage api={api} onOpenTask={onOpenTask} />; if (section === "媒体中心") return <MediaCenterPage api={api} />; return <DevicesPage api={api} />; }
+function Page({ section, api, onOpenTask }: { section: Section; api: ManagementApi; onOpenTask: (taskId: string) => void }) { if (section === "工作台") return <DashboardPage api={api} onOpenTask={onOpenTask} />; if (section === "项目与任务") return <TaskListPage api={api} onOpenTask={onOpenTask} />; if (section === "现场应用") return <FieldAppsPage api={api} onOpenWorkflow={() => undefined} />; if (section === "媒体中心") return <MediaCenterPage api={api} />; return <DevicesPage api={api} />; }

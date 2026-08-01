@@ -17,4 +17,14 @@ describe("App", () => {
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "项目与任务", level: 1 })).toBeVisible();
   });
+
+  it("exposes the field application workspace in the existing navigation", async () => {
+    const user = userEvent.setup();
+    render(<App initialAuthenticated />);
+
+    await user.click(screen.getByRole("link", { name: "现场应用" }));
+
+    expect(screen.getByRole("heading", { name: "现场应用", level: 1 })).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
+  });
 });
