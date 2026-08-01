@@ -31,7 +31,15 @@ public final class WorkflowDeviceHttpClientTest {
                 + "\"workOrderId\":\"order-a\",\"projectId\":\"project-a\","
                 + "\"workflowVersionId\":\"version-a\",\"mode\":\"required\","
                 + "\"status\":\"queued\",\"deliverySequence\":7,"
-                + "\"assignedAt\":\"2026-08-01T00:00:00Z\"}],\"nextSequence\":7}");
+                + "\"assignedAt\":\"2026-08-01T00:00:00Z\","
+                + "\"workOrder\":{\"externalWorkOrderId\":\"MVS-20260801-001\","
+                + "\"title\":\"冷水机组控制器故障\",\"description\":\"控制器报警\","
+                + "\"customerId\":\"customer-a\",\"workOrderType\":\"repair\","
+                + "\"assetId\":\"asset-a\",\"assetCategory\":\"hvac\","
+                + "\"assetBrand\":\"Huafang\",\"assetModel\":\"HF-CH-01\","
+                + "\"priority\":\"high\",\"riskLevel\":\"medium\","
+                + "\"status\":\"received\",\"dueAt\":\"2026-08-02T01:00:00Z\","
+                + "\"receivedAt\":\"2026-08-01T00:30:00Z\"}}],\"nextSequence\":7}");
         connections.enqueue(200, "{\"assignmentId\":\"assignment-a\","
                 + "\"workflowVersionId\":\"version-a\",\"schemaVersion\":1,"
                 + "\"executionPackage\":{},\"contentSha256\":\""
@@ -46,6 +54,7 @@ public final class WorkflowDeviceHttpClientTest {
         assertEquals(1, page.items().size());
         assertEquals(7L, page.nextSequence());
         assertEquals("required", page.items().get(0).mode());
+        assertWorkOrderSummary(page.items().get(0));
         assertEquals("version-a", envelope.getString("workflowVersionId"));
         assertEquals(configuration.workflowEndpoint()
                 + "/assignments?afterSequence=3&limit=50", connections.opened.get(0));
@@ -181,6 +190,17 @@ public final class WorkflowDeviceHttpClientTest {
         char[] values = new char[count];
         Arrays.fill(values, value);
         return new String(values);
+    }
+
+    private static void assertWorkOrderSummary(WorkflowDeviceHttpClient.Assignment assignment)
+            throws Exception {
+        Object summary = assignment.getClass().getMethod("workOrder").invoke(assignment);
+        assertEquals("MVS-20260801-001",
+                summary.getClass().getMethod("externalWorkOrderId").invoke(summary));
+        assertEquals("冷水机组控制器故障",
+                summary.getClass().getMethod("title").invoke(summary));
+        assertEquals("HF-CH-01", summary.getClass().getMethod("assetModel").invoke(summary));
+        assertEquals("high", summary.getClass().getMethod("priority").invoke(summary));
     }
 
     private static final class QueueConnectionFactory implements HttpConnectionFactory {

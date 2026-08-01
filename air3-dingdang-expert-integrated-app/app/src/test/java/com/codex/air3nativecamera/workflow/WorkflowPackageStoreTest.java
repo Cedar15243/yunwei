@@ -6,6 +6,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import com.codex.air3nativecamera.sync.VerifiedWorkflowPackageCache;
+import com.codex.air3nativecamera.sync.WorkflowPackageSnapshotAccess;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -85,6 +88,38 @@ public final class WorkflowPackageStoreTest {
                 new JSONObject());
         WorkflowStoreResult rejected = store.save(fixture.envelope, wrongVersion);
         assertEquals(WorkflowStoreResult.Code.STATE_INVALID, rejected.code());
+    }
+
+    @Test
+    public void exposesTheVerifiedAtomicStoreToTheExecutionCoordinator() throws Exception {
+        Fixture fixture = fixture();
+        MemoryStorage storage = new MemoryStorage();
+        WorkflowPackageStore store = new WorkflowPackageStore(storage, fixture.verifier);
+        WorkflowPackage workflowPackage = fixture.verifier.verify(fixture.envelope)
+                .workflowPackage();
+        WorkflowRuntimeState initial = new WorkflowStateMachine(workflowPackage).start();
+        assertTrue(store.save(fixture.envelope, initial).succeeded());
+        WorkflowPackageSnapshotAccess access = new WorkflowPackageSnapshotAccess(
+                new VerifiedWorkflowPackageCache.StoreProvider() {
+                    @Override
+                    public WorkflowPackageStore storeFor(String assignmentId) {
+                        return store;
+                    }
+
+                    @Override
+                    public boolean invalidate(String assignmentId) {
+                        return false;
+                    }
+                });
+
+        WorkflowSnapshot loaded = access.load(workflowPackage.assignmentId());
+        WorkflowRuntimeState started = loaded.runtimeState().withExecutionId(
+                "11111111-1111-4111-8111-111111111111");
+
+        assertTrue(access.save(
+                workflowPackage.assignmentId(), loaded.envelope(), started));
+        assertEquals("11111111-1111-4111-8111-111111111111",
+                access.load(workflowPackage.assignmentId()).runtimeState().executionId());
     }
 
     private Fixture fixture() throws Exception {

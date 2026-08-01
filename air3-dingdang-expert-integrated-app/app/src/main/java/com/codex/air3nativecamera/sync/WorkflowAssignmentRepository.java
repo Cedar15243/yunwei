@@ -48,6 +48,7 @@ public final class WorkflowAssignmentRepository {
         private final long deliverySequence;
         private final String assignedAt;
         private final boolean packageCached;
+        private final WorkflowDeviceHttpClient.WorkOrderSummary workOrder;
 
         private CachedAssignment(
                 String assignmentId,
@@ -58,7 +59,8 @@ public final class WorkflowAssignmentRepository {
                 String status,
                 long deliverySequence,
                 String assignedAt,
-                boolean packageCached
+                boolean packageCached,
+                WorkflowDeviceHttpClient.WorkOrderSummary workOrder
         ) {
             this.assignmentId = clean(assignmentId);
             this.workOrderId = clean(workOrderId);
@@ -69,6 +71,7 @@ public final class WorkflowAssignmentRepository {
             this.deliverySequence = deliverySequence;
             this.assignedAt = clean(assignedAt);
             this.packageCached = packageCached;
+            this.workOrder = workOrder;
             if (!validIdentifier(this.assignmentId)
                     || !validIdentifier(this.workOrderId)
                     || (!this.projectId.isEmpty() && !validIdentifier(this.projectId))
@@ -77,6 +80,7 @@ public final class WorkflowAssignmentRepository {
                     || !STATUSES.contains(this.status)
                     || deliverySequence < 1L || deliverySequence > MAX_SAFE_INTEGER
                     || this.assignedAt.isEmpty() || this.assignedAt.length() > 100
+                    || this.workOrder == null
                     || ("none".equals(this.mode) && !this.workflowVersionId.isEmpty())
                     || (!"none".equals(this.mode) && this.workflowVersionId.isEmpty())
                     || (packageCached && invalidatesPackage(this.mode, this.status))) {
@@ -94,7 +98,8 @@ public final class WorkflowAssignmentRepository {
                     value.status(),
                     value.deliverySequence(),
                     value.assignedAt(),
-                    false);
+                    false,
+                    value.workOrder());
         }
 
         private CachedAssignment update(WorkflowDeviceHttpClient.Assignment value) {
@@ -117,19 +122,20 @@ public final class WorkflowAssignmentRepository {
                     value.status(),
                     value.deliverySequence(),
                     assignedAt,
-                    packageCached && !invalidatesPackage(mode, value.status()));
+                    packageCached && !invalidatesPackage(mode, value.status()),
+                    value.workOrder());
         }
 
         private CachedAssignment withPackageCached() {
             return new CachedAssignment(
                     assignmentId, workOrderId, projectId, workflowVersionId, mode,
-                    status, deliverySequence, assignedAt, true);
+                    status, deliverySequence, assignedAt, true, workOrder);
         }
 
         private CachedAssignment withPackageUnavailable() {
             return new CachedAssignment(
                     assignmentId, workOrderId, projectId, workflowVersionId, mode,
-                    status, deliverySequence, assignedAt, false);
+                    status, deliverySequence, assignedAt, false, workOrder);
         }
 
         public String assignmentId() { return assignmentId; }
@@ -141,6 +147,7 @@ public final class WorkflowAssignmentRepository {
         public long deliverySequence() { return deliverySequence; }
         public String assignedAt() { return assignedAt; }
         public boolean packageCached() { return packageCached; }
+        public WorkflowDeviceHttpClient.WorkOrderSummary workOrder() { return workOrder; }
 
         private JSONObject toJson() {
             try {
@@ -154,7 +161,9 @@ public final class WorkflowAssignmentRepository {
                         .put("status", status)
                         .put("delivery_sequence", deliverySequence)
                         .put("assigned_at", assignedAt)
-                        .put("package_cached", packageCached);
+                        .put("package_cached", packageCached)
+                        .put("work_order", workOrder.available()
+                                ? workOrder.toJson() : JSONObject.NULL);
             } catch (JSONException exception) {
                 throw new IllegalStateException("unable to serialize workflow assignment", exception);
             }
@@ -176,7 +185,9 @@ public final class WorkflowAssignmentRepository {
                     value.optString("status", ""),
                     sequence,
                     value.optString("assigned_at", ""),
-                    value.optBoolean("package_cached", false));
+                    value.optBoolean("package_cached", false),
+                    WorkflowDeviceHttpClient.WorkOrderSummary.fromJson(
+                            value.optJSONObject("work_order")));
         }
     }
 

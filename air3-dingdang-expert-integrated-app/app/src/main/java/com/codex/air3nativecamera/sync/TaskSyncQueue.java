@@ -6,9 +6,11 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Ordered, idempotent queue. Callers own persistence and perform only one delivery at a time. */
 public final class TaskSyncQueue {
@@ -27,8 +29,12 @@ public final class TaskSyncQueue {
     }
 
     public synchronized TaskSyncEvent nextReady(long now) {
+        Set<String> blockedTasks = new HashSet<>();
         for (TaskSyncEvent event : events.values()) {
+            String taskKey = event.projectId() + "\u0000" + event.taskId();
+            if (blockedTasks.contains(taskKey)) continue;
             if (event.nextAttemptAt() <= now) return event;
+            blockedTasks.add(taskKey);
         }
         return null;
     }

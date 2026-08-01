@@ -23,6 +23,113 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
     private static final Set<String> ASSIGNMENT_STATUSES = set(
             "queued", "notified", "delivered", "verified", "ready",
             "active", "completed", "failed", "revoked");
+    private static final Set<String> WORK_ORDER_STATUSES = set(
+            "received", "accepted", "in_progress", "completed", "closed", "cancelled");
+
+    public static final class WorkOrderSummary {
+        private final String externalWorkOrderId;
+        private final String title;
+        private final String description;
+        private final String customerId;
+        private final String workOrderType;
+        private final String assetId;
+        private final String assetCategory;
+        private final String assetBrand;
+        private final String assetModel;
+        private final String priority;
+        private final String riskLevel;
+        private final String status;
+        private final String dueAt;
+        private final String receivedAt;
+
+        WorkOrderSummary(
+                String externalWorkOrderId,
+                String title,
+                String description,
+                String customerId,
+                String workOrderType,
+                String assetId,
+                String assetCategory,
+                String assetBrand,
+                String assetModel,
+                String priority,
+                String riskLevel,
+                String status,
+                String dueAt,
+                String receivedAt
+        ) {
+            this.externalWorkOrderId = clean(externalWorkOrderId);
+            this.title = clean(title);
+            this.description = clean(description);
+            this.customerId = clean(customerId);
+            this.workOrderType = clean(workOrderType);
+            this.assetId = clean(assetId);
+            this.assetCategory = clean(assetCategory);
+            this.assetBrand = clean(assetBrand);
+            this.assetModel = clean(assetModel);
+            this.priority = clean(priority);
+            this.riskLevel = clean(riskLevel);
+            this.status = clean(status);
+            this.dueAt = clean(dueAt);
+            this.receivedAt = clean(receivedAt);
+        }
+
+        static WorkOrderSummary unavailable() {
+            return new WorkOrderSummary("", "", "", "", "", "", "", "", "",
+                    "", "", "", "", "");
+        }
+
+        public boolean available() { return !title.isEmpty(); }
+        public String externalWorkOrderId() { return externalWorkOrderId; }
+        public String title() { return title; }
+        public String description() { return description; }
+        public String customerId() { return customerId; }
+        public String workOrderType() { return workOrderType; }
+        public String assetId() { return assetId; }
+        public String assetCategory() { return assetCategory; }
+        public String assetBrand() { return assetBrand; }
+        public String assetModel() { return assetModel; }
+        public String priority() { return priority; }
+        public String riskLevel() { return riskLevel; }
+        public String status() { return status; }
+        public String dueAt() { return dueAt; }
+        public String receivedAt() { return receivedAt; }
+
+        JSONObject toJson() {
+            try {
+                return new JSONObject()
+                        .put("externalWorkOrderId", nullable(externalWorkOrderId))
+                        .put("title", title)
+                        .put("description", nullable(description))
+                        .put("customerId", nullable(customerId))
+                        .put("workOrderType", nullable(workOrderType))
+                        .put("assetId", nullable(assetId))
+                        .put("assetCategory", nullable(assetCategory))
+                        .put("assetBrand", nullable(assetBrand))
+                        .put("assetModel", nullable(assetModel))
+                        .put("priority", nullable(priority))
+                        .put("riskLevel", nullable(riskLevel))
+                        .put("status", status)
+                        .put("dueAt", nullable(dueAt))
+                        .put("receivedAt", receivedAt);
+            } catch (JSONException exception) {
+                throw new IllegalStateException("unable to serialize work order summary", exception);
+            }
+        }
+
+        static WorkOrderSummary fromJson(JSONObject value) {
+            if (value == null) return unavailable();
+            WorkOrderSummary parsed = parseWorkOrder(value);
+            if (parsed == null) {
+                throw new IllegalArgumentException("work order summary is invalid");
+            }
+            return parsed;
+        }
+
+        private static Object nullable(String value) {
+            return value.isEmpty() ? JSONObject.NULL : value;
+        }
+    }
 
     public static final class Assignment {
         private final String assignmentId;
@@ -33,6 +140,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
         private final String status;
         private final long deliverySequence;
         private final String assignedAt;
+        private final WorkOrderSummary workOrder;
 
         Assignment(
                 String assignmentId,
@@ -44,6 +152,21 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
                 long deliverySequence,
                 String assignedAt
         ) {
+            this(assignmentId, workOrderId, projectId, workflowVersionId, mode, status,
+                    deliverySequence, assignedAt, WorkOrderSummary.unavailable());
+        }
+
+        private Assignment(
+                String assignmentId,
+                String workOrderId,
+                String projectId,
+                String workflowVersionId,
+                String mode,
+                String status,
+                long deliverySequence,
+                String assignedAt,
+                WorkOrderSummary workOrder
+        ) {
             this.assignmentId = assignmentId;
             this.workOrderId = workOrderId;
             this.projectId = projectId;
@@ -52,6 +175,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
             this.status = status;
             this.deliverySequence = deliverySequence;
             this.assignedAt = assignedAt;
+            this.workOrder = workOrder;
         }
 
         public String assignmentId() { return assignmentId; }
@@ -62,6 +186,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
         public String status() { return status; }
         public long deliverySequence() { return deliverySequence; }
         public String assignedAt() { return assignedAt; }
+        public WorkOrderSummary workOrder() { return workOrder; }
     }
 
     public static final class AssignmentPage {
@@ -276,6 +401,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
         String mode = clean(value.optString("mode", ""));
         String status = clean(value.optString("status", ""));
         String assignedAt = clean(value.optString("assignedAt", ""));
+        WorkOrderSummary workOrder = parseWorkOrder(value.optJSONObject("workOrder"));
         Object sequence = value.opt("deliverySequence");
         long deliverySequence = exactNonNegativeLong(sequence);
         if (!validIdentifier(assignmentId)
@@ -286,6 +412,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
                 || !ASSIGNMENT_STATUSES.contains(status)
                 || deliverySequence < 1L
                 || assignedAt.isEmpty()
+                || workOrder == null
                 || ("none".equals(mode) && !workflowVersionId.isEmpty())
                 || (!"none".equals(mode) && workflowVersionId.isEmpty())) {
             return null;
@@ -298,7 +425,57 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
                 mode,
                 status,
                 deliverySequence,
-                assignedAt);
+                assignedAt,
+                workOrder);
+    }
+
+    private static WorkOrderSummary parseWorkOrder(JSONObject value) {
+        if (value == null) return null;
+        String title = boundedText(value, "title", 240, false);
+        String status = boundedText(value, "status", 40, false);
+        String receivedAt = boundedText(value, "receivedAt", 100, false);
+        if (title == null || status == null || receivedAt == null
+                || !WORK_ORDER_STATUSES.contains(status)) {
+            return null;
+        }
+        String externalId = boundedText(value, "externalWorkOrderId", 200, true);
+        String description = boundedText(value, "description", 2000, true);
+        String customerId = boundedText(value, "customerId", 160, true);
+        String workOrderType = boundedText(value, "workOrderType", 160, true);
+        String assetId = boundedText(value, "assetId", 160, true);
+        String assetCategory = boundedText(value, "assetCategory", 160, true);
+        String assetBrand = boundedText(value, "assetBrand", 160, true);
+        String assetModel = boundedText(value, "assetModel", 160, true);
+        String priority = boundedText(value, "priority", 80, true);
+        String riskLevel = boundedText(value, "riskLevel", 80, true);
+        String dueAt = boundedText(value, "dueAt", 100, true);
+        if (externalId == null || description == null || customerId == null
+                || workOrderType == null || assetId == null || assetCategory == null
+                || assetBrand == null || assetModel == null || priority == null
+                || riskLevel == null || dueAt == null) {
+            return null;
+        }
+        return new WorkOrderSummary(
+                externalId, title, description, customerId, workOrderType, assetId,
+                assetCategory, assetBrand, assetModel, priority, riskLevel, status,
+                dueAt, receivedAt);
+    }
+
+    private static String boundedText(
+            JSONObject value,
+            String key,
+            int maxLength,
+            boolean optional
+    ) {
+        Object raw = value.opt(key);
+        if (raw == null || raw == JSONObject.NULL) return optional ? "" : null;
+        if (!(raw instanceof String)) return null;
+        String text = clean((String) raw);
+        if (text.length() > maxLength || (!optional && text.isEmpty())) return null;
+        for (int index = 0; index < text.length(); index += 1) {
+            if (Character.isISOControl(text.charAt(index))) return null;
+        }
+        return text;
     }
 
     private static String nullableText(JSONObject value, String key) {

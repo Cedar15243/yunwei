@@ -108,6 +108,15 @@ const reportableStatuses = new Set([
   "failed",
 ]);
 
+const workOrderStatuses = new Set([
+  "received",
+  "accepted",
+  "in_progress",
+  "completed",
+  "closed",
+  "cancelled",
+]);
+
 const workflowStepStatuses = new Set([
   "pending",
   "active",
@@ -308,7 +317,7 @@ export function createWorkflowDeviceGateway(
     async listAssignments(identity, afterSequence, limit) {
       const { data, error } = await supabase.from("workflow_assignments")
         .select(
-          "id, work_order_id, project_id, workflow_version_id, mode, status, delivery_sequence, assigned_at",
+          "id, work_order_id, project_id, workflow_version_id, mode, status, delivery_sequence, assigned_at, work_orders!workflow_assignments_work_order_fk(external_work_order_id, title, description, customer_id, work_order_type, asset_id, asset_category, asset_brand, asset_model, priority, risk_level, status, due_at, received_at)",
         )
         .eq("organization_id", identity.organizationId)
         .eq("assigned_profile_id", identity.actorProfileId)
@@ -425,9 +434,10 @@ function assignmentMetadata(value: unknown): Record<string, unknown> | null {
   const status = requiredText(item?.status);
   const deliverySequence = finiteInteger(item?.delivery_sequence);
   const assignedAt = requiredText(item?.assigned_at);
+  const workOrder = assignmentWorkOrder(item?.work_orders);
   if (
     !assignmentId || !workOrderId || !mode || !status ||
-    deliverySequence === null || !assignedAt
+    deliverySequence === null || !assignedAt || !workOrder
   ) return null;
   return {
     assignmentId,
@@ -438,7 +448,36 @@ function assignmentMetadata(value: unknown): Record<string, unknown> | null {
     status,
     deliverySequence,
     assignedAt,
+    workOrder,
   };
+}
+
+function assignmentWorkOrder(value: unknown): Record<string, unknown> | null {
+  const item = recordValue(value);
+  const title = boundedText(item?.title, 240);
+  const status = boundedText(item?.status, 40);
+  const receivedAt = boundedText(item?.received_at, 100);
+  const optional = {
+    externalWorkOrderId: nullableBoundedText(
+      item?.external_work_order_id,
+      200,
+    ),
+    description: nullableBoundedText(item?.description, 2000),
+    customerId: nullableBoundedText(item?.customer_id, 160),
+    workOrderType: nullableBoundedText(item?.work_order_type, 160),
+    assetId: nullableBoundedText(item?.asset_id, 160),
+    assetCategory: nullableBoundedText(item?.asset_category, 160),
+    assetBrand: nullableBoundedText(item?.asset_brand, 160),
+    assetModel: nullableBoundedText(item?.asset_model, 160),
+    priority: nullableBoundedText(item?.priority, 80),
+    riskLevel: nullableBoundedText(item?.risk_level, 80),
+    dueAt: nullableBoundedText(item?.due_at, 100),
+  };
+  if (
+    !title || !status || !workOrderStatuses.has(status) || !receivedAt ||
+    Object.values(optional).some((item) => item === undefined)
+  ) return null;
+  return { ...optional, title, status, receivedAt };
 }
 
 function packageResponse(value: unknown): DeviceWorkflowPackage | null {
@@ -487,7 +526,8 @@ function executionStartCommand(
   const runtimeSnapshot = recordValue(body?.runtimeSnapshot);
   const idempotencyKey = boundedText(body?.idempotencyKey, 200);
   if (
-    !executionId || !assignmentId || !projectId || !localTaskId || !initialNodeId ||
+    !executionId || !assignmentId || !projectId || !localTaskId ||
+    !initialNodeId ||
     !runtimeSnapshot || !idempotencyKey
   ) return null;
   return {

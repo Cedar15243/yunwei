@@ -30,6 +30,7 @@ public final class WorkflowRuntimeState {
     private final JSONObject variables;
     private final List<WorkflowEvidenceReference> evidenceReferences;
     private final Map<String, Integer> stepAttempts;
+    private final List<WorkflowDeferredStep> deferredSteps;
     private final TaskSyncQueue pendingEvents;
 
     WorkflowRuntimeState(
@@ -42,6 +43,7 @@ public final class WorkflowRuntimeState {
         this(workflowVersionId, "", currentNodeId, status, sequence, variables,
                 Collections.<WorkflowEvidenceReference>emptyList(),
                 Collections.<String, Integer>emptyMap(),
+                Collections.<WorkflowDeferredStep>emptyList(),
                 new TaskSyncQueue());
     }
 
@@ -54,6 +56,7 @@ public final class WorkflowRuntimeState {
             JSONObject variables,
             List<WorkflowEvidenceReference> evidenceReferences,
             Map<String, Integer> stepAttempts,
+            List<WorkflowDeferredStep> deferredSteps,
             TaskSyncQueue pendingEvents
     ) {
         this.workflowVersionId = clean(workflowVersionId);
@@ -64,6 +67,7 @@ public final class WorkflowRuntimeState {
         this.variables = copy(variables);
         this.evidenceReferences = Collections.unmodifiableList(new ArrayList<>(evidenceReferences));
         this.stepAttempts = Collections.unmodifiableMap(new LinkedHashMap<>(stepAttempts));
+        this.deferredSteps = Collections.unmodifiableList(new ArrayList<>(deferredSteps));
         this.pendingEvents = copyQueue(pendingEvents);
         if (this.workflowVersionId.isEmpty()
                 || (!this.executionId.isEmpty() && !validExecutionId(this.executionId))
@@ -72,9 +76,11 @@ public final class WorkflowRuntimeState {
         }
         if (this.evidenceReferences.size() > 2000
                 || this.stepAttempts.size() > 1000
+                || this.deferredSteps.size() > 1000
                 || this.pendingEvents.pending().size() > 2000) {
             throw new IllegalArgumentException("workflow recovery state is too large");
         }
+        validateDeferredSteps();
     }
 
     WorkflowRuntimeState moveTo(String nodeId, Status nextStatus, JSONObject nextVariables) {
@@ -87,6 +93,7 @@ public final class WorkflowRuntimeState {
                 nextVariables,
                 evidenceReferences,
                 stepAttempts,
+                deferredSteps,
                 pendingEvents);
     }
 
@@ -100,6 +107,7 @@ public final class WorkflowRuntimeState {
                 nextVariables,
                 evidenceReferences,
                 stepAttempts,
+                deferredSteps,
                 pendingEvents);
     }
 
@@ -129,6 +137,7 @@ public final class WorkflowRuntimeState {
                 variables,
                 evidenceReferences,
                 stepAttempts,
+                deferredSteps,
                 pendingEvents);
     }
 
@@ -155,6 +164,10 @@ public final class WorkflowRuntimeState {
     public int stepAttempt(String nodeId) {
         Integer attempt = stepAttempts.get(clean(nodeId));
         return attempt == null ? 0 : attempt;
+    }
+
+    public List<WorkflowDeferredStep> deferredSteps() {
+        return deferredSteps;
     }
 
     public List<TaskSyncEvent> pendingEvents() {
@@ -184,7 +197,58 @@ public final class WorkflowRuntimeState {
             return this;
         }
         next.add(evidence);
-        return rebuild(next, stepAttempts, pendingEvents);
+        return rebuild(next, stepAttempts, deferredSteps, pendingEvents);
+    }
+
+    public boolean hasRemoteEvidenceAsset(String localEvidenceId) {
+        WorkflowEvidenceReference evidence = evidenceReference(localEvidenceId);
+        return evidence != null && !evidence.remoteAssetId().isEmpty();
+    }
+
+    public WorkflowRuntimeState resolveEvidenceAsset(
+            String localEvidenceId,
+            String remoteAssetId
+    ) {
+        String localId = clean(localEvidenceId);
+        String remoteId = clean(remoteAssetId);
+        if (remoteId.isEmpty()) {
+            throw new IllegalArgumentException("workflow evidence asset is invalid");
+        }
+        List<WorkflowEvidenceReference> next = new ArrayList<>(evidenceReferences.size());
+        boolean found = false;
+        boolean changed = false;
+        for (WorkflowEvidenceReference evidence : evidenceReferences) {
+            if (!evidence.localEvidenceId().equals(localId)) {
+                next.add(evidence);
+                continue;
+            }
+            found = true;
+            if (!evidence.remoteAssetId().isEmpty()) {
+                if (!evidence.remoteAssetId().equals(remoteId)) {
+                    throw new IllegalArgumentException("workflow evidence asset conflict");
+                }
+                next.add(evidence);
+                continue;
+            }
+            WorkflowEvidenceReference resolved = new WorkflowEvidenceReference(
+                    evidence.localEvidenceId(), evidence.nodeId(), evidence.evidenceKey(),
+                    evidence.type(), evidence.localReference(), remoteId,
+                    evidence.durationSeconds());
+            next.add(resolved);
+            changed = true;
+        }
+        if (!found) throw new IllegalArgumentException("workflow evidence is not found");
+        return changed
+                ? rebuild(next, stepAttempts, deferredSteps, pendingEvents)
+                : this;
+    }
+
+    WorkflowEvidenceReference evidenceReference(String localEvidenceId) {
+        String key = clean(localEvidenceId);
+        for (WorkflowEvidenceReference evidence : evidenceReferences) {
+            if (evidence.localEvidenceId().equals(key)) return evidence;
+        }
+        return null;
     }
 
     public WorkflowRuntimeState recordStepAttempt(String nodeId, int attempt) {
@@ -196,7 +260,42 @@ public final class WorkflowRuntimeState {
         if (attempt == current) return this;
         Map<String, Integer> next = new LinkedHashMap<>(stepAttempts);
         next.put(key, attempt);
-        return rebuild(evidenceReferences, next, pendingEvents);
+        return rebuild(evidenceReferences, next, deferredSteps, pendingEvents);
+    }
+
+    public WorkflowRuntimeState deferStep(WorkflowDeferredStep deferred) {
+        if (deferred == null || executionId.isEmpty()) {
+            throw new IllegalArgumentException("workflow deferred step is required");
+        }
+        for (WorkflowDeferredStep existing : deferredSteps) {
+            if (!existing.idempotencyKey().equals(deferred.idempotencyKey())) continue;
+            if (!existing.sameAs(deferred)) {
+                throw new IllegalArgumentException("workflow deferred step identifier conflict");
+            }
+            return this;
+        }
+        if (hasPendingEvent(deferred.idempotencyKey())) {
+            throw new IllegalArgumentException("workflow deferred step identifier conflict");
+        }
+        List<WorkflowDeferredStep> next = new ArrayList<>(deferredSteps);
+        next.add(deferred);
+        return rebuild(evidenceReferences, stepAttempts, next, pendingEvents);
+    }
+
+    public WorkflowRuntimeState removeDeferredStep(String idempotencyKey) {
+        String key = clean(idempotencyKey);
+        List<WorkflowDeferredStep> next = new ArrayList<>();
+        boolean removed = false;
+        for (WorkflowDeferredStep deferred : deferredSteps) {
+            if (!removed && deferred.idempotencyKey().equals(key)) {
+                removed = true;
+            } else {
+                next.add(deferred);
+            }
+        }
+        return removed
+                ? rebuild(evidenceReferences, stepAttempts, next, pendingEvents)
+                : this;
     }
 
     public WorkflowRuntimeState enqueuePendingEvent(TaskSyncEvent event) {
@@ -210,14 +309,14 @@ public final class WorkflowRuntimeState {
             return this;
         }
         if (!next.enqueue(event)) throw new IllegalArgumentException("workflow pending event is invalid");
-        return rebuild(evidenceReferences, stepAttempts, next);
+        return rebuild(evidenceReferences, stepAttempts, deferredSteps, next);
     }
 
     public WorkflowRuntimeState markPendingEventSucceeded(String idempotencyKey) {
         String key = clean(idempotencyKey);
         TaskSyncQueue next = copyQueue(pendingEvents);
         return next.markSucceeded(key)
-                ? rebuild(evidenceReferences, stepAttempts, next)
+                ? rebuild(evidenceReferences, stepAttempts, deferredSteps, next)
                 : this;
     }
 
@@ -228,7 +327,7 @@ public final class WorkflowRuntimeState {
     ) {
         TaskSyncQueue next = copyQueue(pendingEvents);
         return next.markFailed(clean(idempotencyKey), clean(reason), now)
-                ? rebuild(evidenceReferences, stepAttempts, next)
+                ? rebuild(evidenceReferences, stepAttempts, deferredSteps, next)
                 : this;
     }
 
@@ -240,6 +339,8 @@ public final class WorkflowRuntimeState {
             for (Map.Entry<String, Integer> item : stepAttempts.entrySet()) {
                 attempts.put(item.getKey(), item.getValue());
             }
+            JSONArray deferred = new JSONArray();
+            for (WorkflowDeferredStep item : deferredSteps) deferred.put(item.toJson());
             return new JSONObject()
                     .put("workflow_version_id", workflowVersionId)
                     .put("execution_id", executionId.isEmpty() ? JSONObject.NULL : executionId)
@@ -249,6 +350,7 @@ public final class WorkflowRuntimeState {
                     .put("variables", copy(variables))
                     .put("evidence_references", evidence)
                     .put("step_attempts", attempts)
+                    .put("deferred_steps", deferred)
                     .put("pending_events", pendingEvents.toJson());
         } catch (JSONException exception) {
             throw new IllegalStateException("unable to serialize workflow state", exception);
@@ -268,11 +370,14 @@ public final class WorkflowRuntimeState {
         if (variables == null) throw new IllegalArgumentException("workflow state variables are invalid");
         if ((value.has("evidence_references") && value.optJSONArray("evidence_references") == null)
                 || (value.has("step_attempts") && value.optJSONObject("step_attempts") == null)
+                || (value.has("deferred_steps") && value.optJSONArray("deferred_steps") == null)
                 || (value.has("pending_events") && value.optJSONArray("pending_events") == null)) {
             throw new IllegalArgumentException("workflow recovery snapshot shape is invalid");
         }
         List<WorkflowEvidenceReference> evidence = parseEvidence(value.optJSONArray("evidence_references"));
         Map<String, Integer> attempts = parseAttempts(value.optJSONObject("step_attempts"));
+        List<WorkflowDeferredStep> deferred = parseDeferred(
+                value.optJSONArray("deferred_steps"));
         TaskSyncQueue events = TaskSyncQueue.fromJsonStrict(value.optJSONArray("pending_events"));
         return new WorkflowRuntimeState(
                 value.optString("workflow_version_id", ""),
@@ -283,12 +388,14 @@ public final class WorkflowRuntimeState {
                 variables,
                 evidence,
                 attempts,
+                deferred,
                 events);
     }
 
     private WorkflowRuntimeState rebuild(
             List<WorkflowEvidenceReference> evidence,
             Map<String, Integer> attempts,
+            List<WorkflowDeferredStep> deferred,
             TaskSyncQueue events
     ) {
         return new WorkflowRuntimeState(
@@ -300,7 +407,55 @@ public final class WorkflowRuntimeState {
                 variables,
                 evidence,
                 attempts,
+                deferred,
                 events);
+    }
+
+    private static List<WorkflowDeferredStep> parseDeferred(JSONArray values) {
+        List<WorkflowDeferredStep> result = new ArrayList<>();
+        if (values == null) return result;
+        for (int index = 0; index < values.length(); index += 1) {
+            JSONObject item = values.optJSONObject(index);
+            if (item == null) {
+                throw new IllegalArgumentException("workflow deferred snapshot is invalid");
+            }
+            WorkflowDeferredStep deferred = WorkflowDeferredStep.fromJson(item);
+            for (WorkflowDeferredStep existing : result) {
+                if (existing.idempotencyKey().equals(deferred.idempotencyKey())) {
+                    throw new IllegalArgumentException("workflow deferred snapshot is duplicated");
+                }
+            }
+            result.add(deferred);
+        }
+        return result;
+    }
+
+    private void validateDeferredSteps() {
+        LinkedHashMap<String, WorkflowEvidenceReference> evidenceById = new LinkedHashMap<>();
+        for (WorkflowEvidenceReference evidence : evidenceReferences) {
+            evidenceById.put(evidence.localEvidenceId(), evidence);
+        }
+        LinkedHashMap<String, Boolean> idempotencyKeys = new LinkedHashMap<>();
+        for (WorkflowDeferredStep deferred : deferredSteps) {
+            if (deferred == null
+                    || idempotencyKeys.put(deferred.idempotencyKey(), Boolean.TRUE) != null) {
+                throw new IllegalArgumentException("workflow deferred snapshot is duplicated");
+            }
+            JSONObject snapshot = deferred.runtimeSnapshot();
+            if (!workflowVersionId.equals(snapshot.optString("workflow_version_id", ""))
+                    || !executionId.equals(nullableText(snapshot, "execution_id"))) {
+                throw new IllegalArgumentException("workflow deferred execution is invalid");
+            }
+            for (String evidenceId : deferred.localEvidenceIds()) {
+                WorkflowEvidenceReference evidence = evidenceById.get(evidenceId);
+                if (evidence == null || !deferred.nodeId().equals(evidence.nodeId())) {
+                    throw new IllegalArgumentException("workflow deferred evidence is invalid");
+                }
+            }
+            if (hasPendingEvent(deferred.idempotencyKey())) {
+                throw new IllegalArgumentException("workflow deferred step identifier conflict");
+            }
+        }
     }
 
     private static List<WorkflowEvidenceReference> parseEvidence(JSONArray values) {

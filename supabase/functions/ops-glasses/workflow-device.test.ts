@@ -28,6 +28,23 @@ function gateway(
       status: "queued",
       delivery_sequence: 7,
       assigned_at: "2026-08-01T01:00:00.000Z",
+      work_orders: {
+        external_work_order_id: "MVS-20260801-001",
+        title: "冷水机组控制器故障",
+        description: "控制器报警，现场需要采集铭牌和配置页面。",
+        customer_id: "customer-a",
+        work_order_type: "repair",
+        asset_id: "asset-a",
+        asset_category: "hvac",
+        asset_brand: "Huafang",
+        asset_model: "HF-CH-01",
+        priority: "high",
+        risk_level: "medium",
+        status: "received",
+        due_at: "2026-08-02T01:00:00.000Z",
+        received_at: "2026-08-01T00:30:00.000Z",
+        binding_evidence: { mustNotLeak: true },
+      },
       execution_package: { forbidden: true },
       connector_token: "must-not-leak",
     }],
@@ -190,6 +207,22 @@ Deno.test("validates assignment cursors and returns metadata only", async () => 
       status: "queued",
       deliverySequence: 7,
       assignedAt: "2026-08-01T01:00:00.000Z",
+      workOrder: {
+        externalWorkOrderId: "MVS-20260801-001",
+        title: "冷水机组控制器故障",
+        description: "控制器报警，现场需要采集铭牌和配置页面。",
+        customerId: "customer-a",
+        workOrderType: "repair",
+        assetId: "asset-a",
+        assetCategory: "hvac",
+        assetBrand: "Huafang",
+        assetModel: "HF-CH-01",
+        priority: "high",
+        riskLevel: "medium",
+        status: "received",
+        dueAt: "2026-08-02T01:00:00.000Z",
+        receivedAt: "2026-08-01T00:30:00.000Z",
+      },
     }],
     nextSequence: 7,
   });
@@ -473,7 +506,10 @@ Deno.test("starts an owned workflow execution from authenticated identity only",
     gateway({
       startExecution: async (receivedIdentity, command) => {
         received = { receivedIdentity, command };
-        const started = await gateway().startExecution(receivedIdentity, command);
+        const started = await gateway().startExecution(
+          receivedIdentity,
+          command,
+        );
         return { ...started, id: executionId };
       },
     }),

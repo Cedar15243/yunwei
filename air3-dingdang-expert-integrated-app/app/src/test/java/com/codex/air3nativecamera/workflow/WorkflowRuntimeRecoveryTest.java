@@ -2,6 +2,7 @@ package com.codex.air3nativecamera.workflow;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertThrows;
 
 import com.codex.air3nativecamera.sync.TaskSyncEvent;
@@ -9,6 +10,8 @@ import com.codex.air3nativecamera.sync.TaskSyncEvent;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
+
+import java.util.Collections;
 
 public final class WorkflowRuntimeRecoveryTest {
     private static final String EXECUTION_ID = "11111111-1111-4111-8111-111111111111";
@@ -87,5 +90,68 @@ public final class WorkflowRuntimeRecoveryTest {
                         .put("payload", "{}")
                         .put("created_at", 1000L)));
         assertThrows(IllegalArgumentException.class, () -> WorkflowRuntimeState.fromJson(malformed));
+    }
+
+    @Test
+    public void preservesDeferredOfflineStepsUntilTheirEvidenceHasARemoteAsset() throws Exception {
+        WorkflowRuntimeState state = new WorkflowRuntimeState(
+                "33333333-3333-4333-8333-333333333333",
+                "photo",
+                WorkflowRuntimeState.Status.ACTIVE,
+                1,
+                new JSONObject()).withExecutionId(EXECUTION_ID)
+                .recordEvidence(new WorkflowEvidenceReference(
+                        "local-photo-1", "photo", "device_photo",
+                        WorkflowStepContext.EvidenceType.PHOTO,
+                        "task-evidence/photo-1.jpg", "", 0));
+        WorkflowRuntimeState advanced = state.moveTo(
+                "complete", WorkflowRuntimeState.Status.ACTIVE, state.variables());
+        WorkflowDeferredStep deferred = new WorkflowDeferredStep(
+                "photo", 1, new JSONObject(), new JSONObject(),
+                Collections.singletonList("local-photo-1"),
+                new JSONObject().put("nextNodeId", "complete"),
+                "complete", advanced.toJson(), 1000L,
+                EXECUTION_ID + ":photo:1:completed");
+
+        WorkflowRuntimeState restored = WorkflowRuntimeState.fromJson(
+                advanced.deferStep(deferred).toJson());
+
+        assertEquals(1, restored.deferredSteps().size());
+        assertEquals("photo", restored.deferredSteps().get(0).nodeId());
+        assertEquals("local-photo-1",
+                restored.deferredSteps().get(0).localEvidenceIds().get(0));
+        assertEquals("complete", restored.deferredSteps().get(0).nextNodeId());
+        assertEquals(0, restored.pendingEvents().size());
+    }
+
+    @Test
+    public void replacesLocalEvidenceWithOneImmutableRemoteAssetAcrossRestart() {
+        WorkflowRuntimeState state = new WorkflowRuntimeState(
+                "33333333-3333-4333-8333-333333333333",
+                "photo",
+                WorkflowRuntimeState.Status.ACTIVE,
+                1,
+                new JSONObject()).withExecutionId(EXECUTION_ID)
+                .recordEvidence(new WorkflowEvidenceReference(
+                        "local-photo-1", "photo", "device_photo",
+                        WorkflowStepContext.EvidenceType.PHOTO,
+                        "task-evidence/photo-1.jpg", "", 0));
+
+        WorkflowRuntimeState uploaded = state.resolveEvidenceAsset(
+                "local-photo-1", "77777777-7777-4777-8777-777777777777");
+        WorkflowRuntimeState restored = WorkflowRuntimeState.fromJson(uploaded.toJson());
+
+        assertTrue(restored.hasRemoteEvidenceAsset("local-photo-1"));
+        assertEquals("77777777-7777-4777-8777-777777777777",
+                restored.evidenceReferences().get(0).remoteAssetId());
+        assertEquals(restored.toJson().toString(), restored.resolveEvidenceAsset(
+                "local-photo-1", "77777777-7777-4777-8777-777777777777")
+                .toJson().toString());
+        assertThrows(IllegalArgumentException.class, () -> restored.resolveEvidenceAsset(
+                "local-photo-1", "88888888-8888-4888-8888-888888888888"));
+        assertThrows(IllegalArgumentException.class, () -> restored.resolveEvidenceAsset(
+                "missing-photo", "88888888-8888-4888-8888-888888888888"));
+        assertThrows(IllegalArgumentException.class, () -> state.resolveEvidenceAsset(
+                "local-photo-1", ""));
     }
 }

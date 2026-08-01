@@ -28,6 +28,21 @@ public final class TaskSyncQueueTest {
     }
 
     @Test
+    public void neverSkipsABackedOffHeadEventToSendALaterWorkflowEvent() {
+        TaskSyncQueue queue = new TaskSyncQueue();
+        queue.enqueue(event("task-a", "key-1"));
+        queue.enqueue(event("task-a", "key-2"));
+        queue.enqueue(event("task-b", "key-3"));
+        queue.markFailed("key-1", "timeout-1", 1000L);
+        queue.markFailed("key-1", "timeout-2", 1000L);
+
+        assertEquals("key-3", queue.nextReady(1500L).idempotencyKey());
+        queue.markSucceeded("key-3");
+        assertNull(queue.nextReady(1500L));
+        assertEquals("key-1", queue.nextReady(2000L).idempotencyKey());
+    }
+
+    @Test
     public void acceptsOnlyHttpsManagedDeviceSyncConfiguration() {
         DeviceSyncConfiguration configuration = DeviceSyncConfiguration.fromManagedValues(
                 " https://ops.example.com/functions/v1/ops-glasses/device-sync/events/ ",
