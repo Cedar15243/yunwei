@@ -76,6 +76,8 @@ import com.codex.air3nativecamera.task.MaintenanceTask;
 import com.codex.air3nativecamera.task.TaskSession;
 import com.codex.air3nativecamera.task.TaskSessionManager;
 import com.codex.air3nativecamera.sync.BackendAuthorization;
+import com.codex.air3nativecamera.sync.AndroidNetworkAvailabilityMonitor;
+import com.codex.air3nativecamera.sync.AndroidWorkflowPackageStoreProvider;
 import com.codex.air3nativecamera.sync.DeviceAccessTokenProvider;
 import com.codex.air3nativecamera.sync.DeviceSessionManager;
 import com.codex.air3nativecamera.sync.DeviceSyncConfiguration;
@@ -84,6 +86,12 @@ import com.codex.air3nativecamera.sync.HttpTaskSyncTransport;
 import com.codex.air3nativecamera.sync.TaskSyncClient;
 import com.codex.air3nativecamera.sync.TaskSyncEventFactory;
 import com.codex.air3nativecamera.sync.TaskSyncReporter;
+import com.codex.air3nativecamera.sync.VerifiedWorkflowPackageCache;
+import com.codex.air3nativecamera.sync.WorkflowAssignmentRepository;
+import com.codex.air3nativecamera.sync.WorkflowAssignmentSyncCoordinator;
+import com.codex.air3nativecamera.sync.WorkflowDeliveryController;
+import com.codex.air3nativecamera.sync.WorkflowDeviceHttpClient;
+import com.codex.air3nativecamera.sync.WorkflowSyncTriggerCoordinator;
 import com.codex.air3nativecamera.skills.HoneywellTempHumiditySkill;
 import com.codex.air3nativecamera.skills.SceneReferenceGuide;
 import com.codex.air3nativecamera.skills.SceneSkillAiBridge;
@@ -98,6 +106,10 @@ import com.codex.air3nativecamera.voice.VoiceEventStateMachine;
 import com.codex.air3nativecamera.voice.WakeListeningSchedulePolicy;
 import com.codex.air3nativecamera.voice.WakeWordEngine;
 import com.codex.air3nativecamera.voice.WakeWordEngines;
+import com.codex.air3nativecamera.workflow.AndroidAtomicWorkflowSnapshotStorage;
+import com.codex.air3nativecamera.workflow.ManagedWorkflowPublicKeySource;
+import com.codex.air3nativecamera.workflow.WorkflowCapabilityRegistry;
+import com.codex.air3nativecamera.workflow.WorkflowPackageVerifier;
 import com.codex.expertcollab.ExpertCollabCoordinator;
 import com.codex.expertcollab.CollabServiceHealth;
 
@@ -130,7 +142,11 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 
 import javax.net.ssl.SSLSocketFactory;
 
@@ -198,6 +214,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final String DIRECT_ASR_API_KEY = GeneratedConfig.DIRECT_ASR_API_KEY;
     private static final String DINGDANG_BACKEND_BASE_URL = GeneratedConfig.DINGDANG_BACKEND_BASE_URL;
     private static final String DINGDANG_BACKEND_API_KEY = GeneratedConfig.DINGDANG_BACKEND_API_KEY;
+    private static final String WORKFLOW_TRUSTED_PUBLIC_KEYS = "workflow_trusted_public_keys";
     private static final boolean SECURE_RUNTIME = GeneratedConfig.SECURE_RUNTIME;
     private static final String APP_ID = GeneratedConfig.APP_ID;
     private static final String APP_LABEL = GeneratedConfig.APP_LABEL;
@@ -416,6 +433,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private TaskSyncReporter taskSyncReporter;
     private DeviceSyncConfiguration deviceSyncConfiguration;
     private DeviceSessionManager deviceSessionManager;
+    private WorkflowDeliveryController workflowDeliveryController;
     private Bundle managedRestrictions;
     private ManagedRuntimeConfiguration runtimeConfiguration;
     private final HoneywellTempHumiditySkill honeywellTempHumiditySkill = new HoneywellTempHumiditySkill();
@@ -501,6 +519,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 runtimeConfiguration.iflytekApiSecret());
         taskSyncClient = createManagedTaskSyncClient();
         taskSyncReporter = taskSyncClient == null ? null : new TaskSyncReporter(taskSyncClient);
+        workflowDeliveryController = createManagedWorkflowDeliveryController();
+        if (workflowDeliveryController != null) {
+            try {
+                workflowDeliveryController.start();
+            } catch (RuntimeException exception) {
+                Log.e(KEY_LOG_TAG, "Workflow delivery network monitor failed", exception);
+                workflowDeliveryController.close();
+                workflowDeliveryController = null;
+            }
+        }
         restoreTaskSessions();
         restoreInspectionRun();
         restoreChatProjects();
@@ -579,6 +607,76 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         return new TaskSyncClient(new File(getFilesDir(), "task-sync/events.json"),
                 new HttpTaskSyncTransport(deviceSyncConfiguration, tokenProvider));
+    }
+
+    private WorkflowDeliveryController createManagedWorkflowDeliveryController() {
+        if (!SECURE_RUNTIME || deviceSyncConfiguration == null || deviceSessionManager == null) {
+            Log.i(KEY_LOG_TAG, "Managed workflow delivery is not provisioned");
+            return null;
+        }
+        String managedKeySet = managedRestrictions == null
+                ? ""
+                : managedRestrictions.getString(WORKFLOW_TRUSTED_PUBLIC_KEYS, "");
+        if (managedKeySet.trim().isEmpty()) {
+            Log.w(KEY_LOG_TAG, "Managed workflow signing public keys are not provisioned");
+            return null;
+        }
+        ExecutorService executor = null;
+        try {
+            ManagedWorkflowPublicKeySource publicKeys =
+                    ManagedWorkflowPublicKeySource.fromManagedJson(managedKeySet);
+            WorkflowCapabilityRegistry capabilityRegistry = new WorkflowCapabilityRegistry(
+                    new HashMap<String, WorkflowCapabilityRegistry.Handler>());
+            Set<String> supportedCapabilities = capabilityRegistry.supportedCapabilities();
+            WorkflowPackageVerifier verifier = new WorkflowPackageVerifier(
+                    publicKeys,
+                    BuildConfig.VERSION_CODE,
+                    1,
+                    supportedCapabilities);
+            File deliveryDirectory = new File(getFilesDir(), "workflow-delivery");
+            WorkflowAssignmentRepository repository = new WorkflowAssignmentRepository(
+                    new AndroidAtomicWorkflowSnapshotStorage(
+                            deliveryDirectory,
+                            "assignments.json"));
+            WorkflowDeviceHttpClient client = new WorkflowDeviceHttpClient(
+                    deviceSyncConfiguration,
+                    deviceSessionManager,
+                    BuildConfig.VERSION_CODE,
+                    1,
+                    new ArrayList<>(supportedCapabilities));
+            VerifiedWorkflowPackageCache packageCache = new VerifiedWorkflowPackageCache(
+                    verifier,
+                    new AndroidWorkflowPackageStoreProvider(
+                            new File(deliveryDirectory, "packages"),
+                            verifier));
+            WorkflowAssignmentSyncCoordinator operation =
+                    new WorkflowAssignmentSyncCoordinator(client, repository, packageCache, 4);
+            executor = Executors.newSingleThreadExecutor(new ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable runnable) {
+                    Thread thread = new Thread(runnable, "workflow-delivery-sync");
+                    thread.setDaemon(true);
+                    return thread;
+                }
+            });
+            WorkflowSyncTriggerCoordinator trigger = new WorkflowSyncTriggerCoordinator(
+                    operation,
+                    executor,
+                    repository::cursor);
+            ExecutorService ownedExecutor = executor;
+            Log.i(KEY_LOG_TAG,
+                    "Managed workflow delivery ready trustedKeys=" + publicKeys.size()
+                            + " capabilities=" + supportedCapabilities.size());
+            return new WorkflowDeliveryController(
+                    deviceSessionManager::prewarm,
+                    trigger::request,
+                    new AndroidNetworkAvailabilityMonitor(getApplicationContext()),
+                    ownedExecutor::shutdownNow);
+        } catch (RuntimeException exception) {
+            if (executor != null) executor.shutdownNow();
+            Log.e(KEY_LOG_TAG, "Managed workflow delivery initialization failed", exception);
+            return null;
+        }
     }
 
     private DeviceSyncConfiguration resolveDeviceSyncConfiguration() {
@@ -721,6 +819,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     protected void onResume() {
         super.onResume();
         applyImmersiveSystemUi();
+        if (workflowDeliveryController != null) {
+            workflowDeliveryController.onForeground();
+        }
         if (screenMode == ScreenMode.CAMERA
                 && previewView != null && previewView.isAvailable() && cameraDevice == null
                 && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -785,6 +886,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     @Override
     protected void onDestroy() {
         releaseExpertCoordinator();
+        if (workflowDeliveryController != null) {
+            workflowDeliveryController.close();
+            workflowDeliveryController = null;
+        }
         if (taskSyncReporter != null) {
             taskSyncReporter.close();
             taskSyncReporter = null;

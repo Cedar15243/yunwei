@@ -10,7 +10,7 @@
     "validate:workflow-binding-rules": "node scripts/validate-workflow-binding-rule-management.mjs",
     "validate:ai-brain": "node scripts/validate-ai-brain-flow.mjs",
     "validate:native-hud": "node scripts/validate-native-hud-flow.mjs",
-    "validate:native-build": "node scripts/validate-native-build-versioning.mjs && node scripts/validate-device-session-android.mjs",
+    "validate:native-build": "node scripts/validate-native-build-versioning.mjs && node scripts/validate-device-session-android.mjs && node scripts/validate-workflow-delivery-android.mjs",
     "validate:investor-v8-isolation": "node scripts/validate-dingdang-investor-v8-isolation.mjs",
     "verify:air3-delivery": "node scripts/verify-air3-delivery-final.mjs",
     "audit:dingdang-goal": "node scripts/audit-dingdang-goal-readiness.mjs",
