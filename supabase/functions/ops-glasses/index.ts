@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { ensureSchema } from "./automigrate.ts";
+import { createDeviceSyncGateway, routeDeviceSync } from "./device-sync.ts";
 import { createManagementGateway, routeManagement } from "./management.ts";
+import { authorizeGlassesRequest } from "./device-auth.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
@@ -173,13 +175,20 @@ Deno.serve(async (request) => {
     const env = readEnv();
     const path = urlPath(request);
     const managementRequest = path.startsWith("/management/");
-    if (path !== "/health" && !managementRequest && !isAuthorized(request, env)) {
-      return json({ ok: false, error: "unauthorized" }, 401);
-    }
-
+    const deviceSyncRequest = path.startsWith("/device-sync/");
     const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
+    if (path !== "/health" && !managementRequest && !deviceSyncRequest) {
+      const authorization = await authorizeGlassesRequest(
+        request,
+        env.OPS_GLASSES_API_KEY,
+        createDeviceSyncGateway(supabase).authenticateDevice,
+      );
+      if (!authorization.ok) {
+        return json({ ok: false, error: authorization.error }, authorization.status);
+      }
+    }
     await ensureSchema(env);
 
     if (request.method === "GET" && path === "/health") {
@@ -188,6 +197,10 @@ Deno.serve(async (request) => {
 
     if (managementRequest) {
       return await routeManagement(request, createManagementGateway(supabase));
+    }
+
+    if (deviceSyncRequest) {
+      return await routeDeviceSync(request, createDeviceSyncGateway(supabase));
     }
 
     if (request.method === "GET" && path.match(/^\/sessions\/[^/]+\/asr$/)) {
@@ -2561,12 +2574,6 @@ function isOfficialOpenAiTranscribe(env: Env): boolean {
 
 function isOfficialOpenAiMainProvider(env: Env): boolean {
   return env.OPENAI_BASE_URL.includes("api.openai.com");
-}
-
-function isAuthorized(request: Request, env: Env): boolean {
-  const directKey = request.headers.get("x-ops-glasses-key") ?? "";
-  const authorization = request.headers.get("authorization") ?? "";
-  return directKey === env.OPS_GLASSES_API_KEY || authorization === `Bearer ${env.OPS_GLASSES_API_KEY}`;
 }
 
 function urlPath(request: Request): string {
