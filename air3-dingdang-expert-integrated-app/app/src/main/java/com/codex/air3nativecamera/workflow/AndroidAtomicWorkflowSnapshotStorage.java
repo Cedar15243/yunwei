@@ -2,11 +2,14 @@ package com.codex.air3nativecamera.workflow;
 
 import android.util.AtomicFile;
 
+import com.codex.air3nativecamera.sync.WorkflowAssignmentRepository;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 
-public final class AndroidAtomicWorkflowSnapshotStorage implements WorkflowSnapshotStorage {
+public final class AndroidAtomicWorkflowSnapshotStorage
+        implements WorkflowSnapshotStorage, WorkflowAssignmentRepository.Storage {
     private final AtomicFile file;
 
     public AndroidAtomicWorkflowSnapshotStorage(File directory, String fileName) {

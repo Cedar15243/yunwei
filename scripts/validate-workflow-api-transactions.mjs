@@ -112,6 +112,11 @@ for (const contract of [
 ]) {
   assert.match(resolution, contract, "work-order resolution must lock and authorize assignment changes");
 }
+assert.match(
+  resolution,
+  /update public\.workflow_assignments[\s\S]*?status\s*=\s*'revoked'[\s\S]*?delivery_sequence\s*=\s*nextval\('public\.workflow_assignment_sequence'::regclass\)/i,
+  "rebound assignments must advance the device delivery cursor when revoked",
+);
 
 const claim = functionBody("claim_workflow_assignment");
 for (const contract of [

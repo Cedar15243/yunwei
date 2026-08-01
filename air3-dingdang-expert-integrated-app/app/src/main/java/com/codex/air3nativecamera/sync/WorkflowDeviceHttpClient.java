@@ -16,8 +16,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport {
+public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport, WorkflowAssignmentGateway {
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
+    private static final long MAX_SAFE_INTEGER = 9_007_199_254_740_991L;
     private static final Set<String> ASSIGNMENT_MODES = set("required", "optional", "none");
     private static final Set<String> ASSIGNMENT_STATUSES = set(
             "queued", "notified", "delivered", "verified", "ready",
@@ -33,7 +34,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport 
         private final long deliverySequence;
         private final String assignedAt;
 
-        private Assignment(
+        Assignment(
                 String assignmentId,
                 String workOrderId,
                 String projectId,
@@ -67,7 +68,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport 
         private final List<Assignment> items;
         private final long nextSequence;
 
-        private AssignmentPage(List<Assignment> items, long nextSequence) {
+        AssignmentPage(List<Assignment> items, long nextSequence) {
             this.items = Collections.unmodifiableList(new ArrayList<>(items));
             this.nextSequence = nextSequence;
         }
@@ -118,8 +119,9 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport 
         }
     }
 
+    @Override
     public AssignmentPage listAssignments(long afterSequence, int limit) throws IOException {
-        if (afterSequence < 0L || limit < 1 || limit > 100) {
+        if (afterSequence < 0L || afterSequence > MAX_SAFE_INTEGER || limit < 1 || limit > 100) {
             throw new IllegalArgumentException("workflow assignment cursor is invalid");
         }
         String endpoint = configuration.workflowEndpoint()
@@ -127,10 +129,10 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport 
         JSONObject response = request("GET", endpoint, null, false);
         JSONArray values = response.optJSONArray("items");
         Object rawNextSequence = response.opt("nextSequence");
-        if (values == null || !(rawNextSequence instanceof Number)) {
+        long nextSequence = exactNonNegativeLong(rawNextSequence);
+        if (values == null || nextSequence < 0L) {
             throw new IOException("workflow_assignment_response_invalid");
         }
-        long nextSequence = ((Number) rawNextSequence).longValue();
         if (nextSequence < afterSequence || values.length() > limit) {
             throw new IOException("workflow_assignment_response_invalid");
         }
@@ -149,6 +151,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport 
         return new AssignmentPage(items, nextSequence);
     }
 
+    @Override
     public JSONObject fetchPackage(String assignmentId) throws IOException {
         String id = requiredIdentifier(assignmentId, "workflow assignment identifier is invalid");
         JSONObject response = request(
@@ -267,14 +270,14 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport 
         String status = clean(value.optString("status", ""));
         String assignedAt = clean(value.optString("assignedAt", ""));
         Object sequence = value.opt("deliverySequence");
+        long deliverySequence = exactNonNegativeLong(sequence);
         if (!validIdentifier(assignmentId)
                 || !validIdentifier(workOrderId)
                 || (!projectId.isEmpty() && !validIdentifier(projectId))
                 || (!workflowVersionId.isEmpty() && !validIdentifier(workflowVersionId))
                 || !ASSIGNMENT_MODES.contains(mode)
                 || !ASSIGNMENT_STATUSES.contains(status)
-                || !(sequence instanceof Number)
-                || ((Number) sequence).longValue() < 1L
+                || deliverySequence < 1L
                 || assignedAt.isEmpty()
                 || ("none".equals(mode) && !workflowVersionId.isEmpty())
                 || (!"none".equals(mode) && workflowVersionId.isEmpty())) {
@@ -287,7 +290,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport 
                 workflowVersionId,
                 mode,
                 status,
-                ((Number) sequence).longValue(),
+                deliverySequence,
                 assignedAt);
     }
 
@@ -356,6 +359,18 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport 
     private static String safeErrorCode(String value) {
         String code = clean(value);
         return code.matches("^[a-z0-9_]{1,120}$") ? code : "request_failed";
+    }
+
+    private static long exactNonNegativeLong(Object raw) {
+        if (!(raw instanceof Number)) return -1L;
+        Number number = (Number) raw;
+        double decimal = number.doubleValue();
+        long integer = number.longValue();
+        return Double.isFinite(decimal)
+                && decimal == (double) integer
+                && integer >= 0L
+                && integer <= MAX_SAFE_INTEGER
+                ? integer : -1L;
     }
 
     private static Set<String> set(String... values) {

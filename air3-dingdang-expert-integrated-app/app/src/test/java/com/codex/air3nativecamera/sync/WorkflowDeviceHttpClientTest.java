@@ -99,6 +99,18 @@ public final class WorkflowDeviceHttpClientTest {
         assertFalse(connections.used.get(2).requestText().contains("\"executionId\""));
     }
 
+    @Test(expected = IOException.class)
+    public void rejectsFractionalAssignmentSequencesInsteadOfTruncatingThem() throws Exception {
+        QueueConnectionFactory connections = new QueueConnectionFactory();
+        connections.enqueue(200, "{\"items\":[{\"assignmentId\":\"assignment-a\","
+                + "\"workOrderId\":\"order-a\",\"projectId\":\"project-a\","
+                + "\"workflowVersionId\":\"version-a\",\"mode\":\"required\","
+                + "\"status\":\"queued\",\"deliverySequence\":7.5,"
+                + "\"assignedAt\":\"2026-08-01T00:00:00Z\"}],\"nextSequence\":7.5}");
+
+        client(configuration(), connections).listAssignments(3L, 50);
+    }
+
     private WorkflowDeviceHttpClient client(
             DeviceSyncConfiguration configuration,
             QueueConnectionFactory connections

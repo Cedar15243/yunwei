@@ -455,6 +455,7 @@ begin
   if active_assignment.id is not null then
     update public.workflow_assignments
     set status = 'revoked',
+        delivery_sequence = nextval('public.workflow_assignment_sequence'::regclass),
         revoked_at = now(),
         revoked_reason = 'replaced before execution: ' || btrim(resolution_reason)
     where id = active_assignment.id;
