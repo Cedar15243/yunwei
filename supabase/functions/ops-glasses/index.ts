@@ -8,6 +8,10 @@ import {
   routeWorkflowManagement,
 } from "./workflow-management.ts";
 import { createEd25519WorkflowSigner } from "./workflow-signing.ts";
+import {
+  createWorkflowDeviceGateway,
+  routeWorkflowDevice,
+} from "./workflow-device.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
@@ -160,7 +164,7 @@ type Supabase = SupabaseClient<any, "public", "public", any, any>;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-ops-glasses-key",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-ops-glasses-key, x-app-version-code, x-workflow-schema-version, x-workflow-capabilities",
   "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
 };
 
@@ -184,6 +188,7 @@ Deno.serve(async (request) => {
     const managementRequest = path.startsWith("/management/");
     const workflowManagementRequest = isWorkflowManagementPath(path);
     const deviceSyncRequest = path.startsWith("/device-sync/");
+    const workflowDeviceRequest = path.startsWith("/device-sync/workflows/");
     const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
@@ -216,6 +221,13 @@ Deno.serve(async (request) => {
 
     if (managementRequest) {
       return await routeManagement(request, createManagementGateway(supabase));
+    }
+
+    if (workflowDeviceRequest) {
+      return await routeWorkflowDevice(
+        request,
+        createWorkflowDeviceGateway(supabase),
+      );
     }
 
     if (deviceSyncRequest) {
