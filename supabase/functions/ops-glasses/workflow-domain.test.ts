@@ -229,6 +229,29 @@ Deno.test("enforces typed node configuration keys and values", () => {
   }]);
 });
 
+Deno.test("rejects contradictory numeric form field ranges", () => {
+  const draft = linearDraft();
+  draft.nodes[1] = {
+    nodeId: "capture",
+    type: "form",
+    config: {
+      fields: [{
+        key: "temperature",
+        label: "温度",
+        type: "number",
+        required: true,
+        min: 10,
+        max: 1,
+      }],
+    },
+  };
+
+  assertEquals(validateWorkflowDraft(draft).errors, [{
+    code: "node_config_value_invalid",
+    path: "$.nodes[1].config.fields",
+  }]);
+});
+
 Deno.test("validates safe typed transition conditions", () => {
   const valid = linearDraft();
   valid.transitions[1].condition = {

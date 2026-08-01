@@ -565,7 +565,9 @@ function validFields(value: unknown, max = 30): boolean {
       ) ||
       (item.required !== undefined && typeof item.required !== "boolean") ||
       (item.unit !== undefined && !boundedPlainText(item.unit, 40)) ||
-      !optionalFiniteNumber(item.min) || !optionalFiniteNumber(item.max)
+      !optionalFiniteNumber(item.min) || !optionalFiniteNumber(item.max) ||
+      (typeof item.min === "number" && typeof item.max === "number" &&
+        item.min > item.max)
     ) return false;
     if (
       ["single_choice", "multi_choice"].includes(item.type) &&

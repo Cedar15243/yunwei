@@ -8,6 +8,7 @@ import {
   deleteWorkflowTransition,
   discardWorkflowChanges,
   moveWorkflowNode,
+  updateWorkflowNodeConfig,
   WorkflowEditorError,
 } from "./workflow-editor-state";
 
@@ -52,6 +53,29 @@ describe("workflow editor state", () => {
       .toEqual({ x: 420, y: 310 });
     expect(moved.selectedNodeId).toBe("instruction-2");
     expect(moved.dirty).toBe(true);
+  });
+
+  it("updates node configuration without mutating the saved baseline", () => {
+    const initial = addWorkflowNode(
+      createWorkflowEditorState(definition),
+      "instruction",
+      { x: 240, y: 120 },
+      { title: "原始标题" },
+    );
+
+    const updated = updateWorkflowNodeConfig(initial, "instruction-1", {
+      title: "设备铭牌拍摄",
+      riskLevel: "high",
+    });
+
+    expect(updated.draft.nodes.find((node) => node.nodeId === "instruction-1")?.config).toEqual({
+      title: "设备铭牌拍摄",
+      riskLevel: "high",
+    });
+    expect(initial.draft.nodes.find((node) => node.nodeId === "instruction-1")?.config).toEqual({
+      title: "原始标题",
+    });
+    expect(updated.dirty).toBe(true);
   });
 
   it("rejects illegal connections into start or out of complete", () => {

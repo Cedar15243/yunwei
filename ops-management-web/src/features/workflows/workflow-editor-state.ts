@@ -87,6 +87,22 @@ export function selectWorkflowNode(
   return { ...state, selectedNodeId: nodeId };
 }
 
+export function updateWorkflowNodeConfig(
+  state: WorkflowEditorState,
+  nodeId: string,
+  config: Record<string, unknown>,
+): WorkflowEditorState {
+  requireNode(state, nodeId);
+  return changed(state, {
+    ...state.draft,
+    nodes: state.draft.nodes.map((node) =>
+      node.nodeId === nodeId
+        ? { ...node, config: cloneValue(config) }
+        : node
+    ),
+  }, nodeId);
+}
+
 export function connectWorkflowNodes(
   state: WorkflowEditorState,
   fromNodeId: string,

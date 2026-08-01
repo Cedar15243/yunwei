@@ -5,7 +5,6 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  Trash2,
 } from "lucide-react";
 import type { ManagementApi } from "../../api/management-api";
 import type {
@@ -14,6 +13,8 @@ import type {
   WorkflowNodeCatalogItem,
 } from "../../api/workflow-types";
 import { WorkflowCanvas } from "./WorkflowCanvas";
+import { Air3HudPreview } from "./Air3HudPreview";
+import { NodeInspector } from "./NodeInspector";
 import {
   addWorkflowNode,
   connectWorkflowNodes,
@@ -23,6 +24,7 @@ import {
   discardWorkflowChanges,
   moveWorkflowNode,
   selectWorkflowNode,
+  updateWorkflowNodeConfig,
   WorkflowEditorError,
   type WorkflowEditorState,
 } from "./workflow-editor-state";
@@ -211,19 +213,20 @@ export function WorkflowStudioPage({
         <aside aria-label="节点属性" className="node-inspector">
           <div className="studio-pane-title">
             <span>节点属性</span>
-            {selectedNode && selectedNode.type !== "start" && selectedNode.type !== "complete" ? (
-              <button aria-label="删除节点" className="icon-button" onClick={() => update((current) => deleteWorkflowNode(current, selectedNode.nodeId))} title="删除节点" type="button">
-                <Trash2 size={16} />
-              </button>
-            ) : null}
+            <small>{selectedCatalog?.label ?? "未选择"}</small>
           </div>
-          {selectedNode ? (
-            <dl className="node-summary">
-              <div><dt>节点类型</dt><dd>{selectedCatalog?.label ?? selectedNode.type}</dd></div>
-              <div><dt>节点标识</dt><dd>{selectedNode.nodeId}</dd></div>
-              <div><dt>页面模板</dt><dd>{selectedCatalog?.pageTemplate ?? "none"}</dd></div>
-              <div><dt>所需能力</dt><dd>{selectedCatalog?.requiredCapability ?? "基础运行时"}</dd></div>
-            </dl>
+          {selectedNode && selectedCatalog ? (
+            <>
+              <NodeInspector
+                catalog={selectedCatalog}
+                node={selectedNode}
+                onChange={(config) => update((current) => updateWorkflowNodeConfig(current, selectedNode.nodeId, config))}
+                onDelete={selectedNode.type !== "start" && selectedNode.type !== "complete"
+                  ? () => update((current) => deleteWorkflowNode(current, selectedNode.nodeId))
+                  : undefined}
+              />
+              <Air3HudPreview catalog={selectedCatalog} node={selectedNode} />
+            </>
           ) : (
             <div className="node-inspector-empty">未选择节点</div>
           )}

@@ -25,7 +25,17 @@ const catalog: WorkflowCatalog = {
   offlinePolicies: ["allowed", "blocked", "server_required"],
   nodes: [
     { type: "start", label: "开始", category: "flow", pageTemplate: "none", requiredCapability: null, fields: [] },
-    { type: "instruction", label: "操作说明", category: "content", pageTemplate: "instruction", requiredCapability: null, fields: [] },
+    {
+      type: "instruction",
+      label: "操作说明",
+      category: "content",
+      pageTemplate: "instruction",
+      requiredCapability: null,
+      fields: [
+        { key: "title", label: "页面标题", kind: "text", maxLength: 160 },
+        { key: "description", label: "操作说明", kind: "textarea", maxLength: 4000 },
+      ],
+    },
     { type: "complete", label: "完成", category: "flow", pageTemplate: "completion", requiredCapability: null, fields: [] },
   ],
 };
@@ -59,6 +69,12 @@ describe("WorkflowStudioPage", () => {
 
     const canvas = screen.getByRole("region", { name: "工作流画布" });
     expect(within(canvas).getByText("操作说明")).toBeVisible();
+    const titleInput = screen.getByRole("textbox", { name: "页面标题" });
+    await user.clear(titleInput);
+    await user.type(titleInput, "拍摄设备铭牌");
+
+    const preview = screen.getByRole("region", { name: "Air3 HUD 预览" });
+    expect(within(preview).getByRole("heading", { name: "拍摄设备铭牌" })).toBeVisible();
     expect(screen.getByText("有未保存修改")).toBeVisible();
   });
 

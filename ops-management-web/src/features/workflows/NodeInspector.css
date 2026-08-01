@@ -1,0 +1,8 @@
+.node-config-warning {
+  border-left: 3px solid #b7791f;
+  background: #fff8e6;
+  color: #7a4b00;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
