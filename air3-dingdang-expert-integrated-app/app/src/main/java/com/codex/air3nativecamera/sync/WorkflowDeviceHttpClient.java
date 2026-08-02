@@ -10,7 +10,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -19,6 +21,7 @@ import java.util.Set;
 public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport, WorkflowAssignmentGateway {
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
     private static final long MAX_SAFE_INTEGER = 9_007_199_254_740_991L;
+    private static final int MAX_WORKFLOW_PHOTO_BYTES = 5 * 1024 * 1024;
     private static final Set<String> ASSIGNMENT_MODES = set("required", "optional", "none");
     private static final Set<String> ASSIGNMENT_STATUSES = set(
             "queued", "notified", "delivered", "verified", "ready",
@@ -337,6 +340,64 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
         request("POST", endpoint, body, false);
     }
 
+    public String uploadEvidence(
+            String assignmentId,
+            String executionId,
+            String localEvidenceId,
+            String nodeId,
+            String evidenceKey,
+            byte[] bytes,
+            String capturedAt
+    ) throws IOException {
+        String assignment = requiredUuid(
+                assignmentId, "workflow assignment identifier is invalid");
+        String execution = requiredUuid(
+                executionId, "workflow execution identifier is invalid");
+        String localId = requiredShortIdentifier(
+                localEvidenceId, "workflow local evidence identifier is invalid");
+        String node = requiredShortIdentifier(
+                nodeId, "workflow node identifier is invalid");
+        String key = requiredShortIdentifier(
+                evidenceKey, "workflow evidence key is invalid");
+        String captured = clean(capturedAt);
+        if (bytes == null || bytes.length < 1 || bytes.length > MAX_WORKFLOW_PHOTO_BYTES
+                || captured.isEmpty() || captured.length() > 100) {
+            throw new IllegalArgumentException("workflow evidence payload is invalid");
+        }
+        String digest = sha256(bytes);
+        JSONObject body;
+        try {
+            body = new JSONObject()
+                    .put("assignmentId", assignment)
+                    .put("executionId", execution)
+                    .put("localEvidenceId", localId)
+                    .put("nodeId", node)
+                    .put("evidenceKey", key)
+                    .put("kind", "photo")
+                    .put("contentType", "image/jpeg")
+                    .put("byteSize", bytes.length)
+                    .put("sha256", digest)
+                    .put("dataBase64", Base64.getEncoder().encodeToString(bytes))
+                    .put("capturedAt", captured);
+        } catch (JSONException exception) {
+            throw new IOException("workflow_evidence_payload_invalid", exception);
+        }
+        JSONObject response = request(
+                "POST",
+                configuration.workflowEndpoint() + "/evidence",
+                body,
+                false);
+        String assetId = clean(response.optString("assetId", ""));
+        String uploadStatus = clean(response.optString("uploadStatus", ""));
+        String remoteDigest = clean(response.optString("sha256", ""));
+        long byteSize = exactNonNegativeLong(response.opt("byteSize"));
+        if (!validUuid(assetId) || !"synced".equals(uploadStatus)
+                || byteSize != bytes.length || !digest.equals(remoteDigest)) {
+            throw new IOException("workflow_evidence_response_invalid");
+        }
+        return assetId;
+    }
+
     private JSONObject request(
             String method,
             String endpoint,
@@ -534,6 +595,36 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
         String result = clean(value);
         if (!validIdentifier(result)) throw new IllegalArgumentException(message);
         return result;
+    }
+
+    private static String requiredShortIdentifier(String value, String message) {
+        String result = clean(value);
+        if (!result.matches("^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$")) {
+            throw new IllegalArgumentException(message);
+        }
+        return result;
+    }
+
+    private static String requiredUuid(String value, String message) {
+        String result = clean(value).toLowerCase(java.util.Locale.ROOT);
+        if (!validUuid(result)) throw new IllegalArgumentException(message);
+        return result;
+    }
+
+    private static boolean validUuid(String value) {
+        return value != null && value.matches(
+                "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
+    }
+
+    private static String sha256(byte[] bytes) throws IOException {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+            StringBuilder value = new StringBuilder(64);
+            for (byte item : digest) value.append(String.format("%02x", item & 0xff));
+            return value.toString();
+        } catch (Exception exception) {
+            throw new IOException("workflow_evidence_digest_failed", exception);
+        }
     }
 
     private static boolean validIdentifier(String value) {

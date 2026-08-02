@@ -49,6 +49,20 @@ export type WorkflowStepExecutionCommand = {
   runtimeSnapshot: Record<string, unknown>;
 };
 
+export type WorkflowEvidenceUploadCommand = {
+  assignmentId: string;
+  executionId: string;
+  localEvidenceId: string;
+  nodeId: string;
+  evidenceKey: string;
+  kind: "photo";
+  contentType: "image/jpeg";
+  byteSize: number;
+  sha256: string;
+  bytes: Uint8Array;
+  capturedAt: string;
+};
+
 export type WorkflowDeviceGateway = {
   authenticateDevice(token: string): Promise<DeviceSyncIdentity | null>;
   listAssignments(
@@ -78,6 +92,10 @@ export type WorkflowDeviceGateway = {
     identity: DeviceSyncIdentity,
     executionId: string,
     command: WorkflowStepExecutionCommand,
+  ): Promise<Record<string, unknown> | null>;
+  storeEvidence(
+    identity: DeviceSyncIdentity,
+    command: WorkflowEvidenceUploadCommand,
   ): Promise<Record<string, unknown> | null>;
 };
 
@@ -127,6 +145,9 @@ const workflowStepStatuses = new Set([
   "skipped",
   "failed",
 ]);
+
+const maxWorkflowPhotoBytes = 5 * 1024 * 1024;
+const workflowEvidenceBucket = "ops-glasses-captures";
 
 const headers = {
   "Access-Control-Allow-Origin": "*",
@@ -278,6 +299,31 @@ export async function routeWorkflowDevice(
       return response(execution, 201);
     }
 
+    if (
+      request.method === "POST" &&
+      path === "/device-sync/workflows/evidence"
+    ) {
+      const command = await workflowEvidenceUploadCommand(
+        await requestObject(request),
+      );
+      if (!command) {
+        return response(
+          { ok: false, error: "invalid_workflow_evidence" },
+          400,
+        );
+      }
+      const item = await gateway.storeEvidence(identity, command);
+      if (!item) return response({ ok: false, error: "not_found" }, 404);
+      const evidence = workflowEvidenceResponse(item, command);
+      if (!evidence) {
+        throw new WorkflowDeviceError(
+          502,
+          "workflow_evidence_invalid_response",
+        );
+      }
+      return response(evidence, 201);
+    }
+
     const stepRoute = path.match(
       /^\/device-sync\/workflows\/executions\/([^/]+)\/steps$/,
     );
@@ -423,7 +469,155 @@ export function createWorkflowDeviceGateway(
       if (error) throw workflowDatabaseError(error);
       return firstRow(data);
     },
+    async storeEvidence(identity, command) {
+      const { data: execution, error: executionError } = await supabase
+        .from("workflow_executions")
+        .select("id, assignment_id, task_id")
+        .eq("organization_id", identity.organizationId)
+        .eq("operator_profile_id", identity.actorProfileId)
+        .eq("device_id", identity.deviceId)
+        .eq("id", command.executionId)
+        .eq("assignment_id", command.assignmentId)
+        .maybeSingle();
+      if (executionError) throw executionError;
+      const taskId = uuidValue(execution?.task_id);
+      if (!execution || !taskId) return null;
+
+      const filePath = [
+        "workflow",
+        identity.organizationId,
+        taskId,
+        command.executionId,
+        `${command.localEvidenceId}.jpg`,
+      ].join("/");
+      const existing = await existingEvidence(supabase, filePath);
+      if (existing) {
+        const recoverable = recoverableEvidence(existing, command);
+        if (recoverable.upload_status === "synced") return recoverable;
+        return await uploadReservedEvidence(
+          supabase,
+          identity,
+          filePath,
+          recoverable,
+          command,
+        );
+      }
+
+      const { data: reserved, error: reserveError } = await supabase
+        .from("media_assets").insert({
+          organization_id: identity.organizationId,
+          task_id: taskId,
+          kind: command.kind,
+          content_type: command.contentType,
+          storage_bucket: workflowEvidenceBucket,
+          file_path: filePath,
+          sha256: command.sha256,
+          byte_size: command.byteSize,
+          upload_status: "uploading",
+          failure_reason: "",
+          captured_at: command.capturedAt,
+        }).select("id, upload_status, byte_size, sha256").single();
+      if (reserveError || !reserved) {
+        const raced = await existingEvidence(supabase, filePath);
+        if (!raced) {
+          throw reserveError ??
+            new Error("workflow evidence reservation failed");
+        }
+        const recoverable = recoverableEvidence(raced, command);
+        if (recoverable.upload_status === "synced") return recoverable;
+        return await uploadReservedEvidence(
+          supabase,
+          identity,
+          filePath,
+          recoverable,
+          command,
+        );
+      }
+      return await uploadReservedEvidence(
+        supabase,
+        identity,
+        filePath,
+        recoverableEvidence(reserved, command),
+        command,
+      );
+    },
   };
+}
+
+async function existingEvidence(
+  supabase: any,
+  filePath: string,
+): Promise<Record<string, unknown> | null> {
+  const { data, error } = await supabase.from("media_assets")
+    .select("id, upload_status, byte_size, sha256")
+    .eq("file_path", filePath)
+    .maybeSingle();
+  if (error) throw error;
+  return isRecord(data) ? data : null;
+}
+
+function matchingEvidence(
+  item: Record<string, unknown>,
+  command: WorkflowEvidenceUploadCommand,
+): Record<string, unknown> {
+  if (
+    item.upload_status !== "synced" ||
+    finiteInteger(item.byte_size) !== command.byteSize ||
+    item.sha256 !== command.sha256
+  ) {
+    throw new WorkflowDeviceError(409, "workflow_evidence_conflict");
+  }
+  return item;
+}
+
+function recoverableEvidence(
+  item: Record<string, unknown>,
+  command: WorkflowEvidenceUploadCommand,
+): Record<string, unknown> {
+  const status = item.upload_status;
+  if (
+    !uuidValue(item.id) ||
+    !new Set(["uploading", "failed", "synced"]).has(String(status)) ||
+    finiteInteger(item.byte_size) !== command.byteSize ||
+    item.sha256 !== command.sha256
+  ) {
+    throw new WorkflowDeviceError(409, "workflow_evidence_conflict");
+  }
+  return item;
+}
+
+async function uploadReservedEvidence(
+  supabase: any,
+  identity: DeviceSyncIdentity,
+  filePath: string,
+  reserved: Record<string, unknown>,
+  command: WorkflowEvidenceUploadCommand,
+): Promise<Record<string, unknown>> {
+  const assetId = uuidValue(reserved.id);
+  if (!assetId) {
+    throw new WorkflowDeviceError(502, "workflow_evidence_invalid_response");
+  }
+  const { error: uploadError } = await supabase.storage
+    .from(workflowEvidenceBucket)
+    .upload(filePath, command.bytes, {
+      contentType: command.contentType,
+      cacheControl: "3600",
+      upsert: true,
+    });
+  if (uploadError) {
+    throw new WorkflowDeviceError(502, "workflow_evidence_storage_failed");
+  }
+  const { data, error } = await supabase.from("media_assets")
+    .update({ upload_status: "synced", failure_reason: "" })
+    .eq("organization_id", identity.organizationId)
+    .eq("id", assetId)
+    .eq("file_path", filePath)
+    .select("id, upload_status, byte_size, sha256")
+    .single();
+  if (error || !data) {
+    throw error ?? new Error("workflow evidence completion failed");
+  }
+  return matchingEvidence(data, command);
 }
 
 function assignmentMetadata(value: unknown): Record<string, unknown> | null {
@@ -572,6 +766,108 @@ function executionResponse(
     currentNodeId,
     startedAt,
   };
+}
+
+async function workflowEvidenceUploadCommand(
+  body: Record<string, unknown> | null,
+): Promise<WorkflowEvidenceUploadCommand | null> {
+  const allowedKeys = new Set([
+    "assignmentId",
+    "executionId",
+    "localEvidenceId",
+    "nodeId",
+    "evidenceKey",
+    "kind",
+    "contentType",
+    "byteSize",
+    "sha256",
+    "dataBase64",
+    "capturedAt",
+  ]);
+  if (!body || Object.keys(body).some((key) => !allowedKeys.has(key))) {
+    return null;
+  }
+  const assignmentId = uuidValue(body?.assignmentId);
+  const executionId = uuidValue(body?.executionId);
+  const localEvidenceId = boundedIdentifier(body?.localEvidenceId);
+  const nodeId = boundedIdentifier(body?.nodeId);
+  const evidenceKey = boundedIdentifier(body?.evidenceKey);
+  const kind = body?.kind;
+  const contentType = body?.contentType;
+  const byteSize = finiteInteger(body?.byteSize);
+  const sha256 = typeof body?.sha256 === "string"
+    ? body.sha256.trim().toLowerCase()
+    : "";
+  const dataBase64 = typeof body?.dataBase64 === "string"
+    ? body.dataBase64
+    : "";
+  const capturedAt = boundedText(body?.capturedAt, 100);
+  if (
+    !assignmentId || !executionId || !localEvidenceId || !nodeId ||
+    !evidenceKey || kind !== "photo" || contentType !== "image/jpeg" ||
+    byteSize === null || byteSize < 1 || byteSize > maxWorkflowPhotoBytes ||
+    !/^[0-9a-f]{64}$/.test(sha256) || !capturedAt ||
+    !Number.isFinite(Date.parse(capturedAt)) ||
+    dataBase64.length < 4 ||
+    dataBase64.length > Math.ceil(maxWorkflowPhotoBytes / 3) * 4 + 4 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(dataBase64)
+  ) return null;
+
+  let bytes: Uint8Array;
+  try {
+    const decoded = atob(dataBase64);
+    bytes = new Uint8Array(decoded.length);
+    for (let index = 0; index < decoded.length; index += 1) {
+      bytes[index] = decoded.charCodeAt(index);
+    }
+  } catch {
+    return null;
+  }
+  if (bytes.length !== byteSize || await sha256Hex(bytes) !== sha256) {
+    return null;
+  }
+  return {
+    assignmentId,
+    executionId,
+    localEvidenceId,
+    nodeId,
+    evidenceKey,
+    kind,
+    contentType,
+    byteSize,
+    sha256,
+    bytes,
+    capturedAt,
+  };
+}
+
+function workflowEvidenceResponse(
+  value: unknown,
+  command: WorkflowEvidenceUploadCommand,
+): Record<string, unknown> | null {
+  const item = recordValue(value);
+  const assetId = uuidValue(item?.id);
+  const uploadStatus = item?.upload_status;
+  const byteSize = finiteInteger(item?.byte_size);
+  const sha256 = typeof item?.sha256 === "string"
+    ? item.sha256.trim().toLowerCase()
+    : "";
+  if (
+    !assetId || uploadStatus !== "synced" ||
+    byteSize !== command.byteSize || sha256 !== command.sha256
+  ) return null;
+  return { assetId, uploadStatus, byteSize, sha256 };
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(bytes.length);
+  copy.set(bytes);
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", copy.buffer),
+  );
+  return Array.from(digest)
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function stepExecutionCommand(
@@ -792,6 +1088,11 @@ function requiredText(value: unknown): string | null {
 function boundedText(value: unknown, maxLength: number): string | null {
   const text = requiredText(value);
   return text && text.length <= maxLength ? text : null;
+}
+
+function boundedIdentifier(value: unknown): string | null {
+  const text = boundedText(value, 160);
+  return text && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(text) ? text : null;
 }
 
 function nullableBoundedText(

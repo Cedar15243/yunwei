@@ -24,10 +24,19 @@ assert.match(restrictions, /android:key="workflow_trusted_public_keys"/);
 for (const contract of [
   /ManagedWorkflowPublicKeySource\.fromManagedJson\(managedKeySet\)/,
   /new WorkflowPackageVerifier\(\s*publicKeys,\s*BuildConfig\.VERSION_CODE,\s*1,/,
-  /new WorkflowCapabilityRegistry\(\s*new HashMap<String, WorkflowCapabilityRegistry\.Handler>\(\)\)/,
+  /handlers\.put\("camera\.photo",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
+  /beginWorkflowPhotoCapture\(request, callback\)/,
+  /new WorkflowCapabilityRegistry\(handlers\)/,
   /new WorkflowAssignmentRepository\(/,
   /new WorkflowAssignmentSyncCoordinator\(client, repository, packageCache, 4\)/,
   /new WorkflowSyncTriggerCoordinator\(/,
+  /new WorkflowEvidenceUploadCoordinator\(/,
+  /client\.uploadEvidence\(/,
+  /executionCoordinator\.onEvidenceUploaded\(/,
+  /workflowEvidenceUploadCoordinator\.request\(\)/,
+  /shouldFailPendingImageUpload\(\s*sendAfterImageUpload,\s*voiceStreamState == VoiceStreamState\.AI_PENDING\)/,
+  /failAssistantStreamingMessage\(error, null, "照片上传阶段"\)/,
+  /recoverableAiFailureMessage\(stage, detail, requestId\)/,
   /new AndroidNetworkAvailabilityMonitor\(getApplicationContext\(\)\)/,
   /workflowDeliveryController\.start\(\)/,
   /workflowDeliveryController\.onForeground\(\)/,
@@ -35,6 +44,21 @@ for (const contract of [
 ]) {
   assert.match(main, contract);
 }
+
+assert.equal(
+  (main.match(/handlers\.put\(/g) ?? []).length,
+  1,
+  "only the implemented camera.photo capability may be advertised",
+);
+assert.match(main, /workflowNavigationBackAction\(/);
+assert.match(
+  main,
+  /private void returnToHudHomeFromVoice\(\)[\s\S]*?cancelWorkflowPhotoCapture\("workflow_photo_home"\)/,
+);
+assert.match(
+  main,
+  /private void retryAiWithVoice\(\)[\s\S]*?composerImageUploadFailed = false;[\s\S]*?sendAfterImageUpload = false;/,
+);
 
 assert.match(keySource, /KeyFactory\.getInstance\("Ed25519"\)/);
 assert.match(keySource, /exactPositiveInt\(root\.opt\("schemaVersion"\)\)/);

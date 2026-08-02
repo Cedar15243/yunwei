@@ -148,6 +148,24 @@ public final class MainActivityVoiceCommandTest {
     }
 
     @Test
+    public void failedPendingImageUploadLeavesAnalysisWithAnActionableStage() {
+        assertFalse(MainActivity.shouldFailPendingImageUpload(false, true));
+        assertFalse(MainActivity.shouldFailPendingImageUpload(true, false));
+        assertTrue(MainActivity.shouldFailPendingImageUpload(true, true));
+        assertEquals("后端未授权",
+                MainActivity.aiFailureNetworkState("managed_backend_credential_missing"));
+        assertEquals("网络超时",
+                MainActivity.aiFailureNetworkState("ai_stream_terminal_timeout"));
+
+        String message = MainActivity.recoverableAiFailureMessage(
+                "照片上传阶段", "managed_backend_credential_missing", "");
+        assertTrue(message.contains("阶段：照片上传阶段"));
+        assertTrue(message.contains("状态：后端未授权"));
+        assertTrue(message.contains("照片和描述已保留"));
+        assertTrue(message.contains("重试"));
+    }
+
+    @Test
     public void followUpAiReplyLeavesTheOldGuidanceStepSoTheAnswerIsVisible() {
         assertTrue(MainActivity.shouldLeaveGuidanceAfterAiReply(true, "请补拍接线端子近景"));
         assertFalse(MainActivity.shouldLeaveGuidanceAfterAiReply(false, "请补拍接线端子近景"));
@@ -606,6 +624,18 @@ public final class MainActivityVoiceCommandTest {
         assertEquals("project-rail", MainActivity.chatBackTarget(true, true));
         assertEquals("standby", MainActivity.chatBackTarget(false, true));
         assertEquals("chat", MainActivity.chatBackTarget(false, false));
+    }
+
+    @Test
+    public void workflowBackNavigationNeverExecutesAnOptionalBusinessAction() {
+        assertEquals("workflow_list", MainActivity.workflowNavigationBackAction(
+                "workflow_choose:assignment-1", "workflow_standard:assignment-1"));
+        assertEquals("workflow_list", MainActivity.workflowNavigationBackAction(
+                "workflow_start:assignment-1", "workflow_list"));
+        assertEquals("workflow_back", MainActivity.workflowNavigationBackAction(
+                "workflow_confirmed:complete", "workflow_back"));
+        assertEquals("workflow_back", MainActivity.workflowNavigationBackAction(
+                "workflow_next", ""));
     }
 
     @Test

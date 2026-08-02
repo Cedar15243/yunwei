@@ -454,11 +454,13 @@ public final class WorkflowExecutionCoordinator {
         if (!validSnapshot(assignment, snapshot)) {
             return result(OpenCode.INVALID_STATE, null, null);
         }
+        if (!state.executionId().isEmpty()) {
+            schedulePending(snapshot, assignment.assignmentId());
+        }
         if (state.status() == WorkflowRuntimeState.Status.COMPLETED) {
             return result(OpenCode.COMPLETED, state, step(snapshot.workflowPackage(), state));
         }
         if (!state.executionId().isEmpty()) {
-            schedulePending(snapshot, assignment.assignmentId());
             return result(OpenCode.RESUMED, state, step(snapshot.workflowPackage(), state));
         }
         if ("optional".equals(assignment.mode()) && !optionalConfirmed) {

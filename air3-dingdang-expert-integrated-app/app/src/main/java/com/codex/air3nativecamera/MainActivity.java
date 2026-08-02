@@ -91,6 +91,8 @@ import com.codex.air3nativecamera.sync.WorkflowAssignmentRepository;
 import com.codex.air3nativecamera.sync.WorkflowAssignmentSyncCoordinator;
 import com.codex.air3nativecamera.sync.WorkflowDeliveryController;
 import com.codex.air3nativecamera.sync.WorkflowDeviceHttpClient;
+import com.codex.air3nativecamera.sync.WorkflowEvidenceUploadCoordinator;
+import com.codex.air3nativecamera.sync.WorkflowPackageSnapshotAccess;
 import com.codex.air3nativecamera.sync.WorkflowSyncTriggerCoordinator;
 import com.codex.air3nativecamera.skills.HoneywellTempHumiditySkill;
 import com.codex.air3nativecamera.skills.SceneReferenceGuide;
@@ -109,7 +111,14 @@ import com.codex.air3nativecamera.voice.WakeWordEngines;
 import com.codex.air3nativecamera.workflow.AndroidAtomicWorkflowSnapshotStorage;
 import com.codex.air3nativecamera.workflow.ManagedWorkflowPublicKeySource;
 import com.codex.air3nativecamera.workflow.WorkflowCapabilityRegistry;
+import com.codex.air3nativecamera.workflow.WorkflowEvidenceReference;
+import com.codex.air3nativecamera.workflow.WorkflowExecutionCoordinator;
+import com.codex.air3nativecamera.workflow.WorkflowHudPresenter;
+import com.codex.air3nativecamera.workflow.WorkflowPackage;
 import com.codex.air3nativecamera.workflow.WorkflowPackageVerifier;
+import com.codex.air3nativecamera.workflow.WorkflowRuntimeState;
+import com.codex.air3nativecamera.workflow.WorkflowSnapshot;
+import com.codex.air3nativecamera.workflow.WorkflowStepContext;
 import com.codex.expertcollab.ExpertCollabCoordinator;
 import com.codex.expertcollab.CollabServiceHealth;
 
@@ -363,6 +372,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private boolean hudGlassesGuideVisible;
     private String hudOperationAbilityId = "";
     private int hudOperationPageIndex;
+    private OperationDetail hudOperationDetail;
     // Persisted messages are records, not an instruction to reopen a task on the next launch.
     private boolean hudTaskWorkspaceActive;
     private boolean requireNewTaskOnNextInput = true;
@@ -434,6 +444,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private DeviceSyncConfiguration deviceSyncConfiguration;
     private DeviceSessionManager deviceSessionManager;
     private WorkflowDeliveryController workflowDeliveryController;
+    private WorkflowAssignmentRepository workflowAssignmentRepository;
+    private AndroidWorkflowPackageStoreProvider workflowPackageStoreProvider;
+    private WorkflowPackageSnapshotAccess workflowSnapshotAccess;
+    private WorkflowDeviceHttpClient workflowDeviceHttpClient;
+    private WorkflowCapabilityRegistry workflowCapabilityRegistry;
+    private WorkflowExecutionCoordinator workflowExecutionCoordinator;
+    private WorkflowEvidenceUploadCoordinator workflowEvidenceUploadCoordinator;
+    private final WorkflowHudPresenter workflowHudPresenter = new WorkflowHudPresenter();
+    private String activeWorkflowAssignmentId = "";
+    private boolean workflowCapturePending;
+    private WorkflowCapabilityRegistry.Callback workflowPhotoCallback;
     private Bundle managedRestrictions;
     private ManagedRuntimeConfiguration runtimeConfiguration;
     private final HoneywellTempHumiditySkill honeywellTempHumiditySkill = new HoneywellTempHumiditySkill();
@@ -527,6 +548,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 Log.e(KEY_LOG_TAG, "Workflow delivery network monitor failed", exception);
                 workflowDeliveryController.close();
                 workflowDeliveryController = null;
+                resetManagedWorkflowRuntime();
             }
         }
         restoreTaskSessions();
@@ -625,8 +647,21 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         try {
             ManagedWorkflowPublicKeySource publicKeys =
                     ManagedWorkflowPublicKeySource.fromManagedJson(managedKeySet);
-            WorkflowCapabilityRegistry capabilityRegistry = new WorkflowCapabilityRegistry(
-                    new HashMap<String, WorkflowCapabilityRegistry.Handler>());
+            Map<String, WorkflowCapabilityRegistry.Handler> handlers = new HashMap<>();
+            handlers.put("camera.photo", new WorkflowCapabilityRegistry.Handler() {
+                @Override
+                public void execute(
+                        final WorkflowCapabilityRegistry.Request request,
+                        final WorkflowCapabilityRegistry.Callback callback
+                ) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            beginWorkflowPhotoCapture(request, callback);
+                        }
+                    });
+                }
+            });
+            WorkflowCapabilityRegistry capabilityRegistry = new WorkflowCapabilityRegistry(handlers);
             Set<String> supportedCapabilities = capabilityRegistry.supportedCapabilities();
             WorkflowPackageVerifier verifier = new WorkflowPackageVerifier(
                     publicKeys,
@@ -644,11 +679,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     BuildConfig.VERSION_CODE,
                     1,
                     new ArrayList<>(supportedCapabilities));
-            VerifiedWorkflowPackageCache packageCache = new VerifiedWorkflowPackageCache(
-                    verifier,
+            AndroidWorkflowPackageStoreProvider storeProvider =
                     new AndroidWorkflowPackageStoreProvider(
-                            new File(deliveryDirectory, "packages"),
-                            verifier));
+                            new File(deliveryDirectory, "packages"), verifier);
+            VerifiedWorkflowPackageCache packageCache = new VerifiedWorkflowPackageCache(
+                    verifier, storeProvider);
             WorkflowAssignmentSyncCoordinator operation =
                     new WorkflowAssignmentSyncCoordinator(client, repository, packageCache, 4);
             executor = Executors.newSingleThreadExecutor(new ThreadFactory() {
@@ -663,19 +698,149 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     operation,
                     executor,
                     repository::cursor);
+            WorkflowPackageSnapshotAccess snapshotAccess =
+                    new WorkflowPackageSnapshotAccess(storeProvider);
+            WorkflowExecutionCoordinator executionCoordinator =
+                    new WorkflowExecutionCoordinator(
+                            repository,
+                            snapshotAccess,
+                            client,
+                            executor);
+            WorkflowEvidenceUploadCoordinator evidenceUploadCoordinator =
+                    new WorkflowEvidenceUploadCoordinator(
+                            getFilesDir(),
+                            new WorkflowEvidenceUploadCoordinator.PendingSource() {
+                                @Override
+                                public List<WorkflowEvidenceUploadCoordinator.PendingEvidence>
+                                        pending() {
+                                    return pendingWorkflowEvidence(repository, snapshotAccess);
+                                }
+                            },
+                            new WorkflowEvidenceUploadCoordinator.Transport() {
+                                @Override
+                                public String upload(
+                                        WorkflowEvidenceUploadCoordinator.PendingEvidence evidence,
+                                        byte[] bytes,
+                                        String capturedAt
+                                ) throws IOException {
+                                    return client.uploadEvidence(
+                                            evidence.assignmentId(),
+                                            evidence.executionId(),
+                                            evidence.localEvidenceId(),
+                                            evidence.nodeId(),
+                                            evidence.evidenceKey(),
+                                            bytes,
+                                            capturedAt);
+                                }
+                            },
+                            new WorkflowEvidenceUploadCoordinator.Acknowledger() {
+                                @Override
+                                public boolean acknowledge(
+                                        String assignmentId,
+                                        String localEvidenceId,
+                                        String remoteAssetId
+                                ) {
+                                    WorkflowExecutionCoordinator.ActionResult result =
+                                            executionCoordinator.onEvidenceUploaded(
+                                                    assignmentId,
+                                                    localEvidenceId,
+                                                    remoteAssetId);
+                                    return result.code()
+                                            == WorkflowExecutionCoordinator.ActionCode.EVIDENCE_UPDATED
+                                            || result.code()
+                                            == WorkflowExecutionCoordinator.ActionCode.REPLAY_QUEUED;
+                                }
+                            },
+                            executor);
+            workflowAssignmentRepository = repository;
+            workflowPackageStoreProvider = storeProvider;
+            workflowSnapshotAccess = snapshotAccess;
+            workflowDeviceHttpClient = client;
+            workflowCapabilityRegistry = capabilityRegistry;
+            workflowExecutionCoordinator = executionCoordinator;
+            workflowEvidenceUploadCoordinator = evidenceUploadCoordinator;
             ExecutorService ownedExecutor = executor;
             Log.i(KEY_LOG_TAG,
                     "Managed workflow delivery ready trustedKeys=" + publicKeys.size()
                             + " capabilities=" + supportedCapabilities.size());
             return new WorkflowDeliveryController(
                     deviceSessionManager::prewarm,
-                    trigger::request,
+                    new java.util.function.LongPredicate() {
+                        @Override public boolean test(long hintedSequence) {
+                            boolean requested = trigger.request(hintedSequence);
+                            resumePendingWorkflowOutboxes(executionCoordinator);
+                            evidenceUploadCoordinator.request();
+                            return requested;
+                        }
+                    },
                     new AndroidNetworkAvailabilityMonitor(getApplicationContext()),
                     ownedExecutor::shutdownNow);
         } catch (RuntimeException exception) {
             if (executor != null) executor.shutdownNow();
+            resetManagedWorkflowRuntime();
             Log.e(KEY_LOG_TAG, "Managed workflow delivery initialization failed", exception);
             return null;
+        }
+    }
+
+    private void resetManagedWorkflowRuntime() {
+        workflowCapturePending = false;
+        workflowPhotoCallback = null;
+        activeWorkflowAssignmentId = "";
+        workflowExecutionCoordinator = null;
+        workflowEvidenceUploadCoordinator = null;
+        workflowCapabilityRegistry = null;
+        workflowDeviceHttpClient = null;
+        workflowSnapshotAccess = null;
+        workflowPackageStoreProvider = null;
+        workflowAssignmentRepository = null;
+    }
+
+    private List<WorkflowEvidenceUploadCoordinator.PendingEvidence> pendingWorkflowEvidence(
+            WorkflowAssignmentRepository repository,
+            WorkflowPackageSnapshotAccess snapshotAccess
+    ) {
+        List<WorkflowEvidenceUploadCoordinator.PendingEvidence> pending = new ArrayList<>();
+        for (WorkflowAssignmentRepository.CachedAssignment assignment
+                : repository.assignments()) {
+            if ("revoked".equals(assignment.status())
+                    || "none".equals(assignment.mode())
+                    || !assignment.packageCached()) {
+                continue;
+            }
+            WorkflowSnapshot snapshot = snapshotAccess.load(assignment.assignmentId());
+            WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+            if (state == null || state.executionId().isEmpty()) continue;
+            for (WorkflowEvidenceReference evidence : state.evidenceReferences()) {
+                if (!evidence.remoteAssetId().isEmpty()
+                        || evidence.type() != WorkflowStepContext.EvidenceType.PHOTO) {
+                    continue;
+                }
+                try {
+                    pending.add(new WorkflowEvidenceUploadCoordinator.PendingEvidence(
+                            assignment.assignmentId(),
+                            state.executionId(),
+                            evidence.localEvidenceId(),
+                            evidence.nodeId(),
+                            evidence.evidenceKey(),
+                            evidence.localReference()));
+                } catch (IllegalArgumentException exception) {
+                    Log.w(KEY_LOG_TAG, "Invalid pending workflow evidence", exception);
+                }
+            }
+        }
+        return pending;
+    }
+
+    private void resumePendingWorkflowOutboxes(
+            WorkflowExecutionCoordinator executionCoordinator
+    ) {
+        for (WorkflowExecutionCoordinator.TaskListItem task : executionCoordinator.tasks()) {
+            if (task.entryAction() == WorkflowExecutionCoordinator.EntryAction.RESUME_WORKFLOW
+                    || task.entryAction()
+                    == WorkflowExecutionCoordinator.EntryAction.VIEW_COMPLETED) {
+                executionCoordinator.startOrResume(task.assignmentId());
+            }
         }
     }
 
@@ -878,6 +1043,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         cancelPendingChatStreamRender();
         cancelForegroundVoiceListening();
         stopVoiceRecording(false, "pause");
+        cancelWorkflowPhotoCapture("workflow_photo_interrupted");
         closeCamera();
         stopCameraThread();
         super.onPause();
@@ -885,11 +1051,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     @Override
     protected void onDestroy() {
+        cancelWorkflowPhotoCapture("workflow_photo_destroyed");
         releaseExpertCoordinator();
         if (workflowDeliveryController != null) {
             workflowDeliveryController.close();
             workflowDeliveryController = null;
         }
+        resetManagedWorkflowRuntime();
         if (taskSyncReporter != null) {
             taskSyncReporter.close();
             taskSyncReporter = null;
@@ -972,7 +1140,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (isCapabilityCenterVisible()) {
             if (isBackShortcutKey(keyCode)) {
                 if (capabilityDetailVisible) {
-                    if (hudPresentation != null) {
+                    if ("workflow".equals(hudOperationAbilityId)
+                            && !activeWorkflowAssignmentId.isEmpty()) {
+                        performHudOperation(workflowNavigationBackAction(
+                                hudOperationDetail == null
+                                        ? "" : hudOperationDetail.primaryAction(),
+                                hudOperationDetail == null
+                                        ? "" : hudOperationDetail.secondaryAction()));
+                    } else if (hudPresentation != null) {
                         capabilityDetailVisible = false;
                         hudPresentation.showState("capabilities");
                     } else {
@@ -1722,11 +1897,30 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void showHudOperationDetail(String abilityId, boolean preservePage) {
-        OperationDetail detail = operationDetailFactory.create(abilityId, currentMaintenanceTask(),
+        OperationDetail detail = resolveHudOperationDetail(abilityId);
+        showHudOperationDetail(abilityId, detail, preservePage);
+    }
+
+    private OperationDetail resolveHudOperationDetail(String abilityId) {
+        if ("tasks".equals(abilityId) && workflowExecutionCoordinator != null) {
+            List<WorkflowExecutionCoordinator.TaskListItem> tasks =
+                    workflowExecutionCoordinator.tasks();
+            if (!tasks.isEmpty()) return workflowHudPresenter.taskList(tasks);
+        }
+        return operationDetailFactory.create(abilityId, currentMaintenanceTask(),
                 inspectionChecklist, activeInspectionRun, taskSessionManager.sessions());
+    }
+
+    private void showHudOperationDetail(
+            String abilityId,
+            OperationDetail detail,
+            boolean preservePage
+    ) {
+        if (detail == null) return;
         hudCapabilityVisible = true;
         capabilityDetailVisible = true;
         hudOperationAbilityId = abilityId == null ? "" : abilityId;
+        hudOperationDetail = detail;
         int pageCount = operationPageCount(detail.items().size(), HUD_OPERATION_PAGE_SIZE);
         hudOperationPageIndex = preservePage
                 ? Math.max(0, Math.min(hudOperationPageIndex, pageCount - 1)) : 0;
@@ -1758,10 +1952,27 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return Math.min(Math.max(0, itemCount), safePage * safeSize);
     }
 
+    static String workflowNavigationBackAction(
+            String primaryAction,
+            String secondaryAction
+    ) {
+        String secondary = secondaryAction == null ? "" : secondaryAction.trim();
+        if ("workflow_list".equals(secondary) || "workflow_back".equals(secondary)) {
+            return secondary;
+        }
+        String primary = primaryAction == null ? "" : primaryAction.trim();
+        if (primary.startsWith("workflow_start:")
+                || primary.startsWith("workflow_resume:")
+                || primary.startsWith("workflow_choose:")
+                || primary.startsWith("workflow_standard:")) {
+            return "workflow_list";
+        }
+        return "workflow_back";
+    }
+
     private void changeHudOperationPage(boolean next) {
-        OperationDetail detail = operationDetailFactory.create(hudOperationAbilityId,
-                currentMaintenanceTask(), inspectionChecklist, activeInspectionRun,
-                taskSessionManager.sessions());
+        OperationDetail detail = hudOperationDetail == null
+                ? resolveHudOperationDetail(hudOperationAbilityId) : hudOperationDetail;
         int pageCount = operationPageCount(detail.items().size(), HUD_OPERATION_PAGE_SIZE);
         int target = hudOperationPageIndex + (next ? 1 : -1);
         if (target < 0 || target >= pageCount) {
@@ -1770,7 +1981,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         hudOperationPageIndex = target;
-        showHudOperationDetail(hudOperationAbilityId, true);
+        showHudOperationDetail(hudOperationAbilityId, detail, true);
         setChatStatus(next ? "能力内容下一页" : "能力内容上一页");
     }
 
@@ -1782,6 +1993,75 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         if ("operation_previous_page".equals(value)) {
             changeHudOperationPage(false);
+            return;
+        }
+        if (value.startsWith("workflow_open:")) {
+            openWorkflowTaskDetail(value.substring("workflow_open:".length()));
+            return;
+        }
+        if ("workflow_list".equals(value)) {
+            activeWorkflowAssignmentId = "";
+            showHudOperationDetail("tasks");
+            setChatStatus("已返回维修工单");
+            return;
+        }
+        if (value.startsWith("workflow_start:")) {
+            openWorkflowExecution(value.substring("workflow_start:".length()), false);
+            return;
+        }
+        if (value.startsWith("workflow_resume:")) {
+            openWorkflowExecution(value.substring("workflow_resume:".length()), false);
+            return;
+        }
+        if (value.startsWith("workflow_choose:")) {
+            openWorkflowExecution(value.substring("workflow_choose:".length()), true);
+            return;
+        }
+        if (value.startsWith("workflow_standard:")) {
+            activeWorkflowAssignmentId = value.substring("workflow_standard:".length()).trim();
+            hideCapabilityCenter();
+            setChatStatus("已进入普通维修任务");
+            beginVoiceDiagnosisConversation();
+            return;
+        }
+        if ("workflow_back".equals(value)) {
+            openWorkflowTaskDetail(activeWorkflowAssignmentId);
+            return;
+        }
+        if ("workflow_capture_photo".equals(value)) {
+            dispatchWorkflowPhotoCapture();
+            return;
+        }
+        if ("workflow_next".equals(value)) {
+            advanceActiveWorkflow(false, "");
+            return;
+        }
+        if (value.startsWith("workflow_select:")) {
+            selectActiveWorkflowChoice(value);
+            return;
+        }
+        if ("workflow_confirm".equals(value)) {
+            showWorkflowConfirmation("confirm", "确认执行当前操作？",
+                    "确认后将推进当前工单步骤。AI 不会代替你确认。");
+            return;
+        }
+        if ("workflow_complete".equals(value)) {
+            showWorkflowConfirmation("complete", "确认完成当前任务？",
+                    "确认后当前工作流将结束，并保留项目记录与未同步证据队列。");
+            return;
+        }
+        if (value.startsWith("workflow_confirmed:")) {
+            String kind = value.substring("workflow_confirmed:".length()).trim();
+            advanceActiveWorkflow(true, "complete".equals(kind)
+                    ? "确认完成当前任务" : "确认执行当前操作");
+            return;
+        }
+        if (value.startsWith("workflow_capture_")
+                || value.startsWith("workflow_voice_")
+                || "workflow_ai_assist".equals(value)
+                || "workflow_expert_call".equals(value)
+                || value.startsWith("workflow_input:")) {
+            setChatStatus("当前工作流能力尚未在本版本启用");
             return;
         }
         if (value.startsWith("set_agent:")) {
@@ -1877,6 +2157,205 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (value.startsWith("resume_task:")) {
             resumeTaskWorkspace(value.substring("resume_task:".length()));
         }
+    }
+
+    private void openWorkflowTaskDetail(String assignmentId) {
+        String id = assignmentId == null ? "" : assignmentId.trim();
+        if (workflowExecutionCoordinator == null || id.isEmpty()) {
+            setChatStatus("工单运行时不可用");
+            showHudOperationDetail("tasks");
+            return;
+        }
+        WorkflowExecutionCoordinator.TaskDetail detail =
+                workflowExecutionCoordinator.detail(id);
+        if (detail == null) {
+            setChatStatus("工单不存在或访问权限已撤销");
+            showHudOperationDetail("tasks");
+            return;
+        }
+        activeWorkflowAssignmentId = id;
+        showHudOperationDetail("workflow", workflowHudPresenter.taskDetail(detail), false);
+        setChatStatus("已打开工单详情");
+    }
+
+    private void openWorkflowExecution(String assignmentId, boolean optionalConfirmed) {
+        String id = assignmentId == null ? "" : assignmentId.trim();
+        if (workflowExecutionCoordinator == null || id.isEmpty()) {
+            setChatStatus("工单运行时不可用");
+            return;
+        }
+        activeWorkflowAssignmentId = id;
+        WorkflowExecutionCoordinator.OpenResult result = optionalConfirmed
+                ? workflowExecutionCoordinator.startWorkflow(id)
+                : workflowExecutionCoordinator.startOrResume(id);
+        showHudOperationDetail(
+                "workflow",
+                workflowHudPresenter.openResult(id, result),
+                false);
+        if (result.code() == WorkflowExecutionCoordinator.OpenCode.STARTED) {
+            setChatStatus("工作流已开始");
+        } else if (result.code() == WorkflowExecutionCoordinator.OpenCode.RESUMED) {
+            setChatStatus("已恢复上次工作流步骤");
+        } else if (result.code() == WorkflowExecutionCoordinator.OpenCode.NOT_READY) {
+            setChatStatus("工作流仍在安全下发或校验中");
+        } else if (result.code() == WorkflowExecutionCoordinator.OpenCode.COMPLETED) {
+            setChatStatus("该工作流已完成");
+        } else {
+            setChatStatus("工作流未启动：" + result.code().name());
+        }
+    }
+
+    private void dispatchWorkflowPhotoCapture() {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        if (workflowCapabilityRegistry == null || snapshot == null) {
+            setChatStatus("工作流照片能力不可用");
+            return;
+        }
+        WorkflowRuntimeState state = snapshot.runtimeState();
+        WorkflowPackage.Node node = snapshot.workflowPackage().node(state.currentNodeId());
+        if (state.executionId().isEmpty() || node == null
+                || !"photo_capture".equals(node.type())) {
+            setChatStatus("当前步骤不允许拍照");
+            return;
+        }
+        WorkflowCapabilityRegistry.Request request;
+        try {
+            request = new WorkflowCapabilityRegistry.Request(
+                    activeWorkflowAssignmentId,
+                    state.executionId(),
+                    state.stepAttempt(node.nodeId()) + 1,
+                    new JSONObject());
+        } catch (RuntimeException exception) {
+            setChatStatus("工作流拍照请求无效");
+            return;
+        }
+        WorkflowCapabilityRegistry.Dispatch dispatch = workflowCapabilityRegistry.dispatch(
+                node,
+                request,
+                new WorkflowCapabilityRegistry.Callback() {
+                    @Override
+                    public void complete(final WorkflowCapabilityRegistry.Result result) {
+                        mainHandler.post(new Runnable() {
+                            @Override public void run() {
+                                if (result == null
+                                        || result.status()
+                                        == WorkflowCapabilityRegistry.Result.Status.FAILED) {
+                                    setChatStatus("工作流拍照未完成");
+                                }
+                            }
+                        });
+                    }
+                });
+        if (dispatch != WorkflowCapabilityRegistry.Dispatch.STARTED) {
+            setChatStatus("工作流照片能力未启用");
+        }
+    }
+
+    private void beginWorkflowPhotoCapture(
+            WorkflowCapabilityRegistry.Request request,
+            WorkflowCapabilityRegistry.Callback callback
+    ) {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        if (request == null || callback == null || workflowCapturePending
+                || state == null || node == null
+                || !activeWorkflowAssignmentId.equals(request.assignmentId())
+                || !state.executionId().equals(request.executionId())
+                || !"photo_capture".equals(node.type())) {
+            if (callback != null) {
+                callback.complete(WorkflowCapabilityRegistry.Result.failed(
+                        "workflow_photo_state_invalid"));
+            }
+            setChatStatus("当前工作流拍照状态无效");
+            return;
+        }
+        workflowCapturePending = true;
+        workflowPhotoCallback = callback;
+        hideCapabilityCenter();
+        enterCameraScreen("workflow-capture");
+        setChatStatus("请拍摄当前工作流要求的照片");
+    }
+
+    private void selectActiveWorkflowChoice(String action) {
+        String[] parts = action == null ? new String[0] : action.split(":", 3);
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        if (parts.length != 3 || node == null || !"choice".equals(node.type())
+                || !node.nodeId().equals(parts[1])) {
+            setChatStatus("工作流选项已失效，请重新打开当前步骤");
+            return;
+        }
+        String fieldKey = node.config().optString("fieldKey", "").trim();
+        if (fieldKey.isEmpty()) {
+            setChatStatus("工作流选项配置无效");
+            return;
+        }
+        WorkflowStepContext context;
+        try {
+            context = new WorkflowStepContext().putField(fieldKey, parts[2]);
+        } catch (RuntimeException exception) {
+            setChatStatus("工作流选项值无效");
+            return;
+        }
+        advanceActiveWorkflow(context, new JSONObject(),
+                taskSyncPayload("selectedValue", parts[2]));
+    }
+
+    private void advanceActiveWorkflow(boolean confirmed, String confirmationPhrase) {
+        WorkflowStepContext context = new WorkflowStepContext().setConfirmed(confirmed);
+        if (confirmed) context.setConfirmationPhrase(confirmationPhrase);
+        advanceActiveWorkflow(context, new JSONObject(), new JSONObject());
+    }
+
+    private void advanceActiveWorkflow(
+            WorkflowStepContext context,
+            JSONObject input,
+            JSONObject output
+    ) {
+        if (workflowExecutionCoordinator == null || activeWorkflowAssignmentId.isEmpty()) {
+            setChatStatus("当前没有可执行的工作流");
+            return;
+        }
+        WorkflowExecutionCoordinator.ActionResult result =
+                workflowExecutionCoordinator.advance(
+                        activeWorkflowAssignmentId, context, input, output);
+        showHudOperationDetail(
+                "workflow",
+                workflowHudPresenter.actionResult(activeWorkflowAssignmentId, result),
+                false);
+        if (result.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED) {
+            setChatStatus(result.state() != null
+                    && result.state().status() == WorkflowRuntimeState.Status.COMPLETED
+                    ? "工作流已完成，项目记录已保留" : "已进入下一工作流步骤");
+        } else if (result.code() == WorkflowExecutionCoordinator.ActionCode.BLOCKED) {
+            setChatStatus("当前步骤尚未满足条件：" + result.reason());
+        } else {
+            setChatStatus("工作流操作未执行：" + result.reason());
+        }
+    }
+
+    private void showWorkflowConfirmation(String kind, String title, String description) {
+        OperationDetail detail = new OperationDetail(
+                "二次确认",
+                title,
+                description,
+                Arrays.asList("工单：" + activeWorkflowAssignmentId,
+                        "只有人工确认后才会推进流程。"),
+                "workflow_confirmed:" + kind,
+                "确认执行",
+                "workflow_back",
+                "取消");
+        showHudOperationDetail("workflow", detail, false);
+        setChatStatus("等待人工二次确认");
+    }
+
+    private WorkflowSnapshot activeWorkflowSnapshot() {
+        if (workflowSnapshotAccess == null || activeWorkflowAssignmentId.isEmpty()) return null;
+        return workflowSnapshotAccess.load(activeWorkflowAssignmentId);
     }
 
     private void setEnvironmentAgentEnabled(boolean enabled) {
@@ -2764,6 +3243,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private void retryAiWithVoice() {
         recoverableAiError = "";
+        composerImageUploadFailed = false;
+        sendAfterImageUpload = false;
         composerTranscript = "";
         voiceStreamState = VoiceStreamState.IDLE;
         setChatStatus("请重新描述现场问题");
@@ -4578,6 +5059,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             handleInspectionPhoto(jpegBytes);
             return;
         }
+        if (workflowCapturePending) {
+            handleWorkflowPhoto(jpegBytes);
+            return;
+        }
         composerImageGeneration++;
         composerImageBytes = jpegBytes;
         composerImageId = "";
@@ -4636,6 +5121,136 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }
         }
         scheduleForegroundVoiceListening("photo-captured");
+    }
+
+    private void handleWorkflowPhoto(byte[] jpegBytes) {
+        workflowCapturePending = false;
+        WorkflowCapabilityRegistry.Callback callback = workflowPhotoCallback;
+        workflowPhotoCallback = null;
+        closeCamera();
+        stopCameraThread();
+        renderChatScreen();
+
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        if (jpegBytes == null || jpegBytes.length == 0 || node == null
+                || !"photo_capture".equals(node.type())
+                || workflowExecutionCoordinator == null) {
+            completeWorkflowPhotoCallback(
+                    callback,
+                    WorkflowCapabilityRegistry.Result.failed("workflow_photo_invalid"));
+            setChatStatus("工作流照片无效，请重新拍摄");
+            openWorkflowExecution(activeWorkflowAssignmentId, false);
+            return;
+        }
+
+        String localEvidenceId = "workflow-photo-" + UUID.randomUUID();
+        File localPhoto;
+        try {
+            String reference = activeWorkflowAssignmentId + "-" + node.nodeId()
+                    + "-" + System.currentTimeMillis();
+            localPhoto = writeEvidenceFile(
+                    new File(getFilesDir(), "task-evidence"), reference, jpegBytes);
+        } catch (IOException exception) {
+            Log.w(KEY_LOG_TAG, "Unable to persist workflow photo", exception);
+            completeWorkflowPhotoCallback(
+                    callback,
+                    WorkflowCapabilityRegistry.Result.failed(
+                            "workflow_photo_persist_failed"));
+            setChatStatus("工作流照片保存失败，请重新拍摄");
+            openWorkflowExecution(activeWorkflowAssignmentId, false);
+            return;
+        }
+
+        String evidenceKey = node.config().optString("evidenceKey", node.nodeId()).trim();
+        WorkflowEvidenceReference evidence;
+        try {
+            evidence = new WorkflowEvidenceReference(
+                    localEvidenceId,
+                    node.nodeId(),
+                    evidenceKey.isEmpty() ? node.nodeId() : evidenceKey,
+                    WorkflowStepContext.EvidenceType.PHOTO,
+                    "task-evidence/" + localPhoto.getName(),
+                    "",
+                    0);
+        } catch (RuntimeException exception) {
+            if (!localPhoto.delete()) {
+                Log.w(KEY_LOG_TAG, "Unable to remove invalid workflow photo "
+                        + localPhoto.getName());
+            }
+            completeWorkflowPhotoCallback(
+                    callback,
+                    WorkflowCapabilityRegistry.Result.failed(
+                            "workflow_photo_reference_invalid"));
+            setChatStatus("工作流照片引用无效，请重新拍摄");
+            openWorkflowExecution(activeWorkflowAssignmentId, false);
+            return;
+        }
+
+        WorkflowExecutionCoordinator.ActionResult recorded =
+                workflowExecutionCoordinator.recordEvidence(
+                        activeWorkflowAssignmentId, evidence);
+        if (recorded.code() != WorkflowExecutionCoordinator.ActionCode.RECORDED) {
+            if (!localPhoto.delete()) {
+                Log.w(KEY_LOG_TAG, "Unable to remove rejected workflow photo "
+                        + localPhoto.getName());
+            }
+            completeWorkflowPhotoCallback(
+                    callback,
+                    WorkflowCapabilityRegistry.Result.failed(
+                            "workflow_photo_record_failed"));
+            showHudOperationDetail(
+                    "workflow",
+                    workflowHudPresenter.actionResult(activeWorkflowAssignmentId, recorded),
+                    false);
+            setChatStatus("工作流照片未登记：" + recorded.reason());
+            return;
+        }
+
+        int capturedCount = 0;
+        for (WorkflowEvidenceReference item : recorded.state().evidenceReferences()) {
+            if (node.nodeId().equals(item.nodeId())
+                    && item.type() == WorkflowStepContext.EvidenceType.PHOTO) {
+                capturedCount++;
+            }
+        }
+        JSONObject output = taskSyncPayload("capturedCount", capturedCount);
+        WorkflowExecutionCoordinator.ActionResult advanced =
+                workflowExecutionCoordinator.advance(
+                        activeWorkflowAssignmentId,
+                        new WorkflowStepContext(),
+                        new JSONObject(),
+                        output);
+        completeWorkflowPhotoCallback(
+                callback,
+                advanced.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED
+                        || advanced.code() == WorkflowExecutionCoordinator.ActionCode.BLOCKED
+                        ? WorkflowCapabilityRegistry.Result.completed(output)
+                        : WorkflowCapabilityRegistry.Result.failed(
+                                "workflow_photo_advance_failed"));
+        showHudOperationDetail(
+                "workflow",
+                workflowHudPresenter.actionResult(activeWorkflowAssignmentId, advanced),
+                false);
+        if (workflowEvidenceUploadCoordinator != null) {
+            workflowEvidenceUploadCoordinator.request();
+        }
+        if (advanced.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED) {
+            setChatStatus("照片已本地保存，等待安全上传");
+        } else if (advanced.code() == WorkflowExecutionCoordinator.ActionCode.BLOCKED) {
+            setChatStatus("照片已保存，请继续补全当前步骤");
+        } else {
+            setChatStatus("照片已保存，但工作流未推进：" + advanced.reason());
+        }
+    }
+
+    private static void completeWorkflowPhotoCallback(
+            WorkflowCapabilityRegistry.Callback callback,
+            WorkflowCapabilityRegistry.Result result
+    ) {
+        if (callback != null) callback.complete(result);
     }
 
     private void handleInspectionPhoto(final byte[] jpegBytes) {
@@ -4927,10 +5542,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                         if (imageGeneration != composerImageGeneration) {
                             return;
                         }
+                        boolean pendingAiRequest = shouldFailPendingImageUpload(
+                                sendAfterImageUpload,
+                                voiceStreamState == VoiceStreamState.AI_PENDING);
                         composerImageId = "";
                         composerImageUploadFailed = true;
                         sendAfterImageUpload = false;
                         showComposerAttachment("上传失败：" + safeMessage(error));
+                        if (pendingAiRequest) {
+                            failAssistantStreamingMessage(error, null, "照片上传阶段");
+                        }
                     }
                 });
             }
@@ -5299,6 +5920,39 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }
             return true;
         }
+        if (isCapabilityCenterVisible() && capabilityDetailVisible
+                && "workflow".equals(hudOperationAbilityId)
+                && !activeWorkflowAssignmentId.isEmpty()) {
+            if (command == VoiceCommandRouter.Command.BACK
+                    || command == VoiceCommandRouter.Command.CANCEL) {
+                performHudOperation(workflowNavigationBackAction(
+                        hudOperationDetail == null
+                                ? "" : hudOperationDetail.primaryAction(),
+                        hudOperationDetail == null
+                                ? "" : hudOperationDetail.secondaryAction()));
+                return true;
+            }
+            if (command == VoiceCommandRouter.Command.PHOTO
+                    || command == VoiceCommandRouter.Command.RETAKE) {
+                performHudOperation("workflow_capture_photo");
+                return true;
+            }
+            if (command == VoiceCommandRouter.Command.NEXT) {
+                performHudOperation("workflow_next");
+                return true;
+            }
+            if (command == VoiceCommandRouter.Command.CONFIRM
+                    || command == VoiceCommandRouter.Command.FINISH) {
+                String primaryAction = hudOperationDetail == null
+                        ? "" : hudOperationDetail.primaryAction();
+                if (primaryAction.startsWith("workflow_")) {
+                    performHudOperation(primaryAction);
+                } else {
+                    setChatStatus("当前工作流步骤没有可确认操作");
+                }
+                return true;
+            }
+        }
         if (isCapabilityCenterVisible()
                 && (command == VoiceCommandRouter.Command.BACK
                 || command == VoiceCommandRouter.Command.CANCEL)) {
@@ -5524,7 +6178,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         boolean returningToInspection = inspectionCapturePending && activeInspectionRun != null;
+        boolean returningToWorkflow = workflowCapturePending;
         inspectionCapturePending = false;
+        cancelWorkflowPhotoCapture("workflow_photo_cancelled");
         cancelForegroundVoiceListening();
         pendingVoicePhotoCapture = false;
         cancelVoiceEventDescriptionTimeout();
@@ -5538,8 +6194,20 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         renderChatScreen();
         if (returningToInspection) {
             showHudOperationDetail("inspection");
+        } else if (returningToWorkflow) {
+            openWorkflowExecution(activeWorkflowAssignmentId, false);
         }
         scheduleForegroundVoiceListening("voice-command-back");
+    }
+
+    private void cancelWorkflowPhotoCapture(String reason) {
+        if (!workflowCapturePending && workflowPhotoCallback == null) return;
+        workflowCapturePending = false;
+        WorkflowCapabilityRegistry.Callback callback = workflowPhotoCallback;
+        workflowPhotoCallback = null;
+        if (callback != null) {
+            callback.complete(WorkflowCapabilityRegistry.Result.failed(reason));
+        }
     }
 
     /** Returns to the standby HUD from any non-call surface without leaving camera or ASR alive. */
@@ -5554,6 +6222,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         stopVoiceRecording(false, "voice-home");
         voiceEventStateMachine.reset();
         pendingVoicePhotoCapture = false;
+        cancelWorkflowPhotoCapture("workflow_photo_home");
         if (screenMode == ScreenMode.CAMERA) {
             closeCamera();
             stopCameraThread();
@@ -5955,6 +6624,39 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return requestActive && aiPending;
     }
 
+    static boolean shouldFailPendingImageUpload(boolean autoSendPending, boolean aiPending) {
+        return autoSendPending && aiPending;
+    }
+
+    static String aiFailureNetworkState(String detail) {
+        String value = detail == null ? "" : detail.trim().toLowerCase(Locale.ROOT);
+        if (value.contains("credential") || value.contains("unauthorized")
+                || value.contains("forbidden") || value.contains("_401")
+                || value.contains("_403")) {
+            return "后端未授权";
+        }
+        if (value.contains("timeout")) {
+            return "网络超时";
+        }
+        if (value.contains("network") || value.contains("unknownhost")
+                || value.contains("connect") || value.contains("socket")
+                || value.contains("unreachable") || value.contains("dns")
+                || value.contains("ssl")) {
+            return "网络不可用";
+        }
+        return "服务异常";
+    }
+
+    static String recoverableAiFailureMessage(String stage, String detail, String requestId) {
+        String safeStage = stage == null || stage.trim().length() == 0
+                ? "AI 对话阶段" : stage.trim();
+        String reference = requestId == null || requestId.trim().length() == 0
+                ? "" : "；请求：" + requestId.trim();
+        return "AI 服务请求失败（阶段：" + safeStage
+                + "；状态：" + aiFailureNetworkState(detail) + reference
+                + "）。当前照片和描述已保留，可说“重试”或重新拍摄。";
+    }
+
     private void sendComposerToAi() {
         final String prompt = composerTranscript.trim();
         recoverableAiError = "";
@@ -6119,6 +6821,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     /** Keeps a transport failure out of the diagnosis record and leaves the current task recoverable. */
     private void failAssistantStreamingMessage(Exception error, String requestId) {
+        failAssistantStreamingMessage(error, requestId, "AI 对话阶段");
+    }
+
+    private void failAssistantStreamingMessage(Exception error, String requestId, String stage) {
         String detail = safeMessage(error);
         if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
             chatMessages.remove(streamingAssistantIndex);
@@ -6126,11 +6832,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         streamingAssistantIndex = -1;
         gptRequestGeneration++;
         voiceStreamState = VoiceStreamState.IDLE;
-        String reference = requestId == null || requestId.length() == 0 ? "" : "（请求 " + requestId + "）";
-        recoverableAiError = detail.length() == 0
-                ? "AI 服务暂时不可用" + reference + "。当前照片和描述已保留，可说“重试”。"
-                : "AI 服务请求失败" + reference + "。当前照片和描述已保留，可说“重试”。";
-        setChatStatus("AI 服务暂时不可用");
+        recoverableAiError = recoverableAiFailureMessage(stage, detail, requestId);
+        setChatStatus("AI 请求失败 · " + aiFailureNetworkState(detail));
         persistChatProjects();
         renderChatStreamMessagesOnly();
         syncHudPresentation();

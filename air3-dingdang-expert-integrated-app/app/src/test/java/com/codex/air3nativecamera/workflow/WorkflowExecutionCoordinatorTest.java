@@ -86,6 +86,36 @@ public final class WorkflowExecutionCoordinatorTest {
     }
 
     @Test
+    public void completedExecutionReschedulesItsDurableOutboxAfterRestart() throws Exception {
+        Fixture fixture = fixture();
+        WorkflowExecutionCoordinator coordinator = fixture.coordinator();
+        coordinator.startOrResume("assignment-a");
+        fixture.jobs.remove(0).run();
+        coordinator.recordEvidence("assignment-a", new WorkflowEvidenceReference(
+                "local-photo-1", "photo", "nameplate",
+                WorkflowStepContext.EvidenceType.PHOTO,
+                "task-evidence/photo-1.jpg",
+                "77777777-7777-4777-8777-777777777777", 0));
+        coordinator.advance(
+                "assignment-a", new WorkflowStepContext(),
+                new JSONObject(), new JSONObject().put("capturedCount", 1));
+        fixture.jobs.remove(0).run();
+
+        WorkflowExecutionCoordinator.ActionResult completed = coordinator.advance(
+                "assignment-a", new WorkflowStepContext(),
+                new JSONObject(), new JSONObject());
+        assertEquals(WorkflowRuntimeState.Status.COMPLETED, completed.state().status());
+        assertEquals(1, fixture.jobs.size());
+
+        fixture.jobs.clear();
+        WorkflowExecutionCoordinator.OpenResult restored =
+                fixture.coordinator().startOrResume("assignment-a");
+
+        assertEquals(WorkflowExecutionCoordinator.OpenCode.COMPLETED, restored.code());
+        assertEquals(1, fixture.jobs.size());
+    }
+
+    @Test
     public void defersOfflineEvidenceAndEveryLaterStepUntilTheRemoteAssetExists() throws Exception {
         Fixture fixture = fixture();
         WorkflowExecutionCoordinator coordinator = fixture.coordinator();

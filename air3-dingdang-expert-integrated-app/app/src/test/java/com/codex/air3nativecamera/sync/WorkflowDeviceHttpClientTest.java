@@ -112,6 +112,38 @@ public final class WorkflowDeviceHttpClientTest {
         assertFalse(connections.used.get(2).requestText().contains("\"executionId\""));
     }
 
+    @Test
+    public void uploadsWorkflowPhotoEvidenceAndAcceptsOnlyARealAssetUuid() throws Exception {
+        QueueConnectionFactory connections = new QueueConnectionFactory();
+        String assignmentId = "33333333-3333-4333-8333-333333333333";
+        String assetId = "77777777-7777-4777-8777-777777777777";
+        connections.enqueue(201, "{\"assetId\":\"" + assetId
+                + "\",\"uploadStatus\":\"synced\",\"byteSize\":3,\"sha256\":\""
+                + "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81"
+                + "\"}");
+        WorkflowDeviceHttpClient client = client(configuration(), connections);
+
+        String uploadedAssetId = client.uploadEvidence(
+                assignmentId,
+                EXECUTION_ID,
+                "workflow-photo-local-1",
+                "photo-a",
+                "nameplate",
+                new byte[]{1, 2, 3},
+                "2026-08-01T02:00:00.000Z");
+
+        assertEquals(assetId, uploadedAssetId);
+        assertTrue(connections.opened.get(0).endsWith("/device-sync/workflows/evidence"));
+        JSONObject body = new JSONObject(connections.used.get(0).requestText());
+        assertEquals("AQID", body.getString("dataBase64"));
+        assertEquals(3, body.getInt("byteSize"));
+        assertEquals("039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+                body.getString("sha256"));
+        assertFalse(connections.used.get(0).requestText().contains("task-evidence"));
+        assertEquals("Bearer access-a",
+                connections.used.get(0).getRequestProperty("Authorization"));
+    }
+
     @Test(expected = IOException.class)
     public void rejectsExecutionStartWhenServerReturnsADifferentExecutionId() throws Exception {
         QueueConnectionFactory connections = new QueueConnectionFactory();

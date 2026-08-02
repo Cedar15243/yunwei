@@ -82,6 +82,12 @@ function gateway(
       organization_id: "must-not-leak",
       operator_profile_id: "must-not-leak",
     }),
+    storeEvidence: async (_identity, command) => ({
+      id: "77777777-7777-4777-8777-777777777777",
+      upload_status: "synced",
+      byte_size: command.byteSize,
+      sha256: command.sha256,
+    }),
     ...overrides,
   };
 }
@@ -837,4 +843,244 @@ Deno.test("maps workflow execution commands to server-only transaction RPCs", as
       target_device_id: "device-a",
     },
   }]);
+});
+
+Deno.test("accepts verified workflow photo bytes and returns only the media asset UUID", async () => {
+  let received: Record<string, unknown> | null = null;
+  const assetId = "77777777-7777-4777-8777-777777777777";
+  const response = await routeWorkflowDevice(
+    request("POST", "/device-sync/workflows/evidence", {
+      token: "access-token",
+      body: {
+        assignmentId: "11111111-1111-4111-8111-111111111111",
+        executionId: "22222222-2222-4222-8222-222222222222",
+        localEvidenceId: "workflow-photo-local-1",
+        nodeId: "photo-a",
+        evidenceKey: "nameplate",
+        kind: "photo",
+        contentType: "image/jpeg",
+        byteSize: 3,
+        sha256:
+          "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+        dataBase64: "AQID",
+        capturedAt: "2026-08-01T02:00:00.000Z",
+      },
+    }),
+    gateway({
+      storeEvidence: async (
+        _identity: unknown,
+        command: Record<string, unknown>,
+      ) => {
+        received = command;
+        return {
+          id: assetId,
+          upload_status: "synced",
+          byte_size: 3,
+          sha256:
+            "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+          organization_id: "must-not-leak",
+          file_path: "must-not-leak",
+        };
+      },
+    } as any),
+  );
+
+  assertEquals(response.status, 201);
+  assertEquals(await response.json(), {
+    assetId,
+    uploadStatus: "synced",
+    byteSize: 3,
+    sha256: "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+  });
+  assertEquals(Array.from((received as any).bytes), [1, 2, 3]);
+  assertEquals((received as any).dataBase64, undefined);
+});
+
+Deno.test("rejects corrupt workflow evidence before storage", async () => {
+  let calls = 0;
+  const response = await routeWorkflowDevice(
+    request("POST", "/device-sync/workflows/evidence", {
+      token: "access-token",
+      body: {
+        assignmentId: "11111111-1111-4111-8111-111111111111",
+        executionId: "22222222-2222-4222-8222-222222222222",
+        localEvidenceId: "workflow-photo-local-1",
+        nodeId: "photo-a",
+        evidenceKey: "nameplate",
+        kind: "photo",
+        contentType: "image/jpeg",
+        byteSize: 4,
+        sha256: "0".repeat(64),
+        dataBase64: "AQID",
+        capturedAt: "2026-08-01T02:00:00.000Z",
+      },
+    }),
+    gateway({
+      storeEvidence: async () => {
+        calls += 1;
+        return null;
+      },
+    } as any),
+  );
+
+  assertEquals(response.status, 400);
+  assertEquals((await response.json()).error, "invalid_workflow_evidence");
+  assertEquals(calls, 0);
+});
+
+Deno.test("stores workflow evidence under a server-derived private path", async () => {
+  const inserted: Array<Record<string, unknown>> = [];
+  const updated: Array<Record<string, unknown>> = [];
+  const uploaded: Array<Record<string, unknown>> = [];
+  const assetId = "77777777-7777-4777-8777-777777777777";
+  const mediaAsset: Record<string, unknown> = { id: assetId };
+  const supabase = {
+    from(table: string) {
+      const builder: any = {
+        select: () => builder,
+        eq: () => builder,
+        insert: (value: Record<string, unknown>) => {
+          Object.assign(mediaAsset, value);
+          inserted.push(value);
+          return builder;
+        },
+        update: (value: Record<string, unknown>) => {
+          Object.assign(mediaAsset, value);
+          updated.push(value);
+          return builder;
+        },
+        maybeSingle: async () =>
+          table === "workflow_executions"
+            ? {
+              data: {
+                id: "22222222-2222-4222-8222-222222222222",
+                assignment_id: "11111111-1111-4111-8111-111111111111",
+                task_id: "33333333-3333-4333-8333-333333333333",
+              },
+              error: null,
+            }
+            : { data: null, error: null },
+        single: async () => ({ data: { ...mediaAsset }, error: null }),
+      };
+      return builder;
+    },
+    storage: {
+      from: (bucket: string) => ({
+        upload: async (
+          path: string,
+          bytes: Uint8Array,
+          options: Record<string, unknown>,
+        ) => {
+          uploaded.push({ bucket, path, bytes: Array.from(bytes), options });
+          return { data: { path }, error: null };
+        },
+        remove: async () => ({ data: [], error: null }),
+      }),
+    },
+  };
+  const actual = createWorkflowDeviceGateway(supabase);
+  const result = await actual.storeEvidence(identity, {
+    assignmentId: "11111111-1111-4111-8111-111111111111",
+    executionId: "22222222-2222-4222-8222-222222222222",
+    localEvidenceId: "workflow-photo-local-1",
+    nodeId: "photo-a",
+    evidenceKey: "nameplate",
+    kind: "photo",
+    contentType: "image/jpeg",
+    byteSize: 3,
+    sha256: "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+    bytes: new Uint8Array([1, 2, 3]),
+    capturedAt: "2026-08-01T02:00:00.000Z",
+  });
+
+  assertEquals(result?.id, assetId);
+  assertEquals(
+    uploaded[0].path,
+    "workflow/org-a/33333333-3333-4333-8333-333333333333/" +
+      "22222222-2222-4222-8222-222222222222/workflow-photo-local-1.jpg",
+  );
+  assertEquals(inserted[0].file_path, uploaded[0].path);
+  assertEquals(inserted[0].upload_status, "uploading");
+  assertEquals((uploaded[0].options as any).upsert, true);
+  assertEquals(updated[0].upload_status, "synced");
+});
+
+Deno.test("resumes a reserved workflow evidence row after storage interruption", async () => {
+  const assetId = "77777777-7777-4777-8777-777777777777";
+  const sha256 =
+    "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81";
+  const uploads: Array<Record<string, unknown>> = [];
+  const updates: Array<Record<string, unknown>> = [];
+  const supabase = {
+    from(table: string) {
+      const builder: any = {
+        select: () => builder,
+        eq: () => builder,
+        update: (value: Record<string, unknown>) => {
+          updates.push(value);
+          return builder;
+        },
+        maybeSingle: async () =>
+          table === "workflow_executions"
+            ? {
+              data: {
+                id: "22222222-2222-4222-8222-222222222222",
+                assignment_id: "11111111-1111-4111-8111-111111111111",
+                task_id: "33333333-3333-4333-8333-333333333333",
+              },
+              error: null,
+            }
+            : {
+              data: {
+                id: assetId,
+                upload_status: "uploading",
+                byte_size: 3,
+                sha256,
+              },
+              error: null,
+            },
+        single: async () => ({
+          data: {
+            id: assetId,
+            upload_status: "synced",
+            byte_size: 3,
+            sha256,
+          },
+          error: null,
+        }),
+      };
+      return builder;
+    },
+    storage: {
+      from: (bucket: string) => ({
+        upload: async (
+          path: string,
+          bytes: Uint8Array,
+          options: Record<string, unknown>,
+        ) => {
+          uploads.push({ bucket, path, bytes: Array.from(bytes), options });
+          return { data: { path }, error: null };
+        },
+      }),
+    },
+  };
+
+  const actual = createWorkflowDeviceGateway(supabase);
+  const result = await actual.storeEvidence(identity, {
+    assignmentId: "11111111-1111-4111-8111-111111111111",
+    executionId: "22222222-2222-4222-8222-222222222222",
+    localEvidenceId: "workflow-photo-local-1",
+    nodeId: "photo-a",
+    evidenceKey: "nameplate",
+    kind: "photo",
+    contentType: "image/jpeg",
+    byteSize: 3,
+    sha256,
+    bytes: new Uint8Array([1, 2, 3]),
+    capturedAt: "2026-08-01T02:00:00.000Z",
+  });
+
+  assertEquals(result?.upload_status, "synced");
+  assertEquals((uploads[0].options as any).upsert, true);
+  assertEquals(updates[0].upload_status, "synced");
 });
