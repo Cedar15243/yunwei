@@ -121,6 +121,7 @@ import com.codex.air3nativecamera.workflow.WorkflowRuntimeState;
 import com.codex.air3nativecamera.workflow.WorkflowSnapshot;
 import com.codex.air3nativecamera.workflow.WorkflowStepContext;
 import com.codex.air3nativecamera.workflow.WorkflowVideoCapturePlan;
+import com.codex.air3nativecamera.workflow.WorkflowVoiceInputSession;
 import com.codex.expertcollab.ExpertCollabCoordinator;
 import com.codex.expertcollab.CollabServiceHealth;
 
@@ -179,7 +180,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         SHOW_RECORDS
     }
     private enum VoiceStreamState { IDLE, LISTENING, PARTIAL_READY, FINAL_READY, AI_PENDING, AI_DONE, VOICE_UNCLEAR }
-    private enum VoiceSessionPurpose { NONE, WAKE, COMMAND, OFFLINE_WAKE_COMMAND }
+    private enum VoiceSessionPurpose { NONE, WAKE, COMMAND, OFFLINE_WAKE_COMMAND, WORKFLOW_INPUT }
     private enum HudTaskProgress { NONE, GUIDANCE, COMPLETED }
 
     private interface ChatAiClient {
@@ -460,6 +461,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private WorkflowCapabilityRegistry.Callback workflowPhotoCallback;
     private WorkflowVideoCapturePlan workflowVideoCapturePlan;
     private WorkflowCapabilityRegistry.Callback workflowVideoCallback;
+    private WorkflowVoiceInputSession workflowVoiceInputSession;
+    private WorkflowCapabilityRegistry.Callback workflowVoiceCallback;
     private Bundle managedRestrictions;
     private ManagedRuntimeConfiguration runtimeConfiguration;
     private final HoneywellTempHumiditySkill honeywellTempHumiditySkill = new HoneywellTempHumiditySkill();
@@ -679,6 +682,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     });
                 }
             });
+            handlers.put("audio.voice_input", new WorkflowCapabilityRegistry.Handler() {
+                @Override
+                public void execute(
+                        final WorkflowCapabilityRegistry.Request request,
+                        final WorkflowCapabilityRegistry.Callback callback
+                ) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            beginWorkflowVoiceInput(request, callback);
+                        }
+                    });
+                }
+            });
             WorkflowCapabilityRegistry capabilityRegistry = new WorkflowCapabilityRegistry(handlers);
             Set<String> supportedCapabilities = capabilityRegistry.supportedCapabilities();
             WorkflowPackageVerifier verifier = new WorkflowPackageVerifier(
@@ -808,6 +824,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         workflowCapturePending = false;
         workflowPhotoCallback = null;
         cancelWorkflowVideoCapture("workflow_video_runtime_reset");
+        cancelWorkflowVoiceInput("workflow_voice_runtime_reset");
         activeWorkflowAssignmentId = "";
         workflowExecutionCoordinator = null;
         workflowEvidenceUploadCoordinator = null;
@@ -1075,6 +1092,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         cancelPendingChatStreamRender();
         cancelForegroundVoiceListening();
         stopVoiceRecording(false, "pause");
+        cancelWorkflowVoiceInput("workflow_voice_interrupted");
         cancelWorkflowPhotoCapture("workflow_photo_interrupted");
         closeCamera();
         stopCameraThread();
@@ -1157,6 +1175,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private boolean handleHardwareShortcut(int keyCode) {
         Log.i(KEY_LOG_TAG, "handleHardwareShortcut keyCode=" + keyCode + " screen=" + screenMode);
+        if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
+            if (isBackShortcutKey(keyCode)) {
+                stopVoiceRecording(false, "workflow_voice_cancelled");
+                cancelWorkflowVoiceInput("workflow_voice_cancelled");
+                openWorkflowExecution(activeWorkflowAssignmentId, false);
+                setChatStatus("已取消当前工作流语音填写");
+                return true;
+            }
+            if (isConfirmKey(keyCode) || isSendShortcutKey(keyCode)) {
+                if (recordingVoice) finishToggleVoiceRecording("workflow_voice_finish");
+                return true;
+            }
+        }
         if (isCommandOverlayVisible()) {
             if (isBackShortcutKey(keyCode) || isConfirmKey(keyCode)) {
                 hideCommandOverlay();
@@ -2068,6 +2099,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             dispatchWorkflowVideoCapture();
             return;
         }
+        if ("workflow_voice_input".equals(value)) {
+            dispatchWorkflowVoiceInput();
+            return;
+        }
         if ("workflow_next".equals(value)) {
             advanceActiveWorkflow(false, "");
             return;
@@ -2392,6 +2427,188 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         setChatStatus("请录制当前工作流要求的视频，最长 "
                 + plan.maximumDurationSeconds() + " 秒");
         startSceneVideoCapture();
+    }
+
+    private void dispatchWorkflowVoiceInput() {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        if (workflowCapabilityRegistry == null || snapshot == null) {
+            setChatStatus("工作流语音能力不可用");
+            return;
+        }
+        WorkflowRuntimeState state = snapshot.runtimeState();
+        WorkflowPackage.Node node = snapshot.workflowPackage().node(state.currentNodeId());
+        if (state.executionId().isEmpty() || node == null
+                || !"voice_input".equals(node.type())) {
+            setChatStatus("当前步骤不允许语音填写");
+            return;
+        }
+        WorkflowCapabilityRegistry.Request request;
+        try {
+            request = new WorkflowCapabilityRegistry.Request(
+                    activeWorkflowAssignmentId,
+                    state.executionId(),
+                    state.stepAttempt(node.nodeId()) + 1,
+                    new JSONObject());
+        } catch (RuntimeException exception) {
+            setChatStatus("工作流语音请求无效");
+            return;
+        }
+        WorkflowCapabilityRegistry.Dispatch dispatch = workflowCapabilityRegistry.dispatch(
+                node,
+                request,
+                new WorkflowCapabilityRegistry.Callback() {
+                    @Override
+                    public void complete(final WorkflowCapabilityRegistry.Result result) {
+                        mainHandler.post(new Runnable() {
+                            @Override public void run() {
+                                if (result == null
+                                        || result.status()
+                                        == WorkflowCapabilityRegistry.Result.Status.FAILED) {
+                                    Log.w(KEY_LOG_TAG, "Workflow voice input did not complete");
+                                }
+                            }
+                        });
+                    }
+                });
+        if (dispatch != WorkflowCapabilityRegistry.Dispatch.STARTED) {
+            setChatStatus("工作流语音能力未启用");
+        }
+    }
+
+    private void beginWorkflowVoiceInput(
+            WorkflowCapabilityRegistry.Request request,
+            WorkflowCapabilityRegistry.Callback callback
+    ) {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        WorkflowVoiceInputSession session;
+        try {
+            session = WorkflowVoiceInputSession.from(
+                    request, (int) (VOICE_RECORDING_MS / 1000L));
+        } catch (RuntimeException exception) {
+            session = null;
+        }
+        if (request == null || callback == null || session == null
+                || workflowVoiceInputSession != null || recordingVoice
+                || pendingSceneVideoCapture || sceneVideoStarting || sceneVideoRecording
+                || screenMode != ScreenMode.CHAT || state == null || node == null
+                || realtimeAsrClient == null
+                || !session.matches(activeWorkflowAssignmentId,
+                state.executionId(), node.nodeId())) {
+            if (callback != null) {
+                callback.complete(WorkflowCapabilityRegistry.Result.failed(
+                        "workflow_voice_state_invalid"));
+            }
+            setChatStatus("当前工作流语音状态或时长配置无效");
+            return;
+        }
+        workflowVoiceInputSession = session;
+        workflowVoiceCallback = callback;
+        cancelForegroundVoiceListening();
+        voiceSessionPurpose = VoiceSessionPurpose.WORKFLOW_INPUT;
+        voiceStartedFromAutoWindow = false;
+        composerTranscript = "";
+        clearLiveTranscriptMessageIfStreaming();
+        setChatStatus("请说出当前步骤需要填写的内容，最长 "
+                + session.plan().maximumDurationSeconds() + " 秒");
+        startToggleVoiceRecording();
+    }
+
+    private void completeWorkflowVoiceInput(String transcript) {
+        WorkflowVoiceInputSession session = workflowVoiceInputSession;
+        WorkflowCapabilityRegistry.Callback callback = workflowVoiceCallback;
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        if (session == null || callback == null || state == null || node == null
+                || !session.matches(activeWorkflowAssignmentId,
+                state.executionId(), node.nodeId())) {
+            failWorkflowVoiceInput(
+                    "workflow_voice_state_changed",
+                    "工作流步骤已变化，语音内容未写入，请在当前步骤重新填写");
+            return;
+        }
+        WorkflowVoiceInputSession.Completion completion;
+        try {
+            completion = session.complete(transcript);
+        } catch (RuntimeException exception) {
+            failWorkflowVoiceInput(
+                    "workflow_voice_transcript_invalid",
+                    "语音内容无效，请在当前步骤重新填写");
+            return;
+        }
+        workflowVoiceInputSession = null;
+        workflowVoiceCallback = null;
+        voiceSessionPurpose = VoiceSessionPurpose.NONE;
+        voiceStreamState = VoiceStreamState.IDLE;
+        composerTranscript = "";
+        clearLiveTranscriptMessageIfStreaming();
+        WorkflowExecutionCoordinator.ActionResult advanced =
+                workflowExecutionCoordinator.advance(
+                        activeWorkflowAssignmentId,
+                        completion.context(),
+                        completion.inputData(),
+                        completion.outputData());
+        callback.complete(
+                advanced.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED
+                        || advanced.code() == WorkflowExecutionCoordinator.ActionCode.BLOCKED
+                        ? WorkflowCapabilityRegistry.Result.completed(completion.outputData())
+                        : WorkflowCapabilityRegistry.Result.failed(
+                                "workflow_voice_advance_failed"));
+        showHudOperationDetail(
+                "workflow",
+                workflowHudPresenter.actionResult(activeWorkflowAssignmentId, advanced),
+                false);
+        if (advanced.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED) {
+            setChatStatus("语音内容已记录，已进入下一工作流步骤");
+        } else if (advanced.code() == WorkflowExecutionCoordinator.ActionCode.BLOCKED) {
+            setChatStatus("语音内容已记录，请继续补全当前步骤");
+        } else {
+            setChatStatus("语音内容未写入工作流：" + advanced.reason());
+        }
+        renderComposer();
+    }
+
+    private void failWorkflowVoiceInput(String reason, String message) {
+        WorkflowCapabilityRegistry.Callback callback = workflowVoiceCallback;
+        workflowVoiceCallback = null;
+        workflowVoiceInputSession = null;
+        if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
+            voiceSessionPurpose = VoiceSessionPurpose.NONE;
+        }
+        voiceStreamState = VoiceStreamState.IDLE;
+        composerTranscript = "";
+        clearLiveTranscriptMessageIfStreaming();
+        if (callback != null) {
+            callback.complete(WorkflowCapabilityRegistry.Result.failed(
+                    reason == null || reason.trim().isEmpty()
+                            ? "workflow_voice_failed" : reason.trim()));
+        }
+        if (workflowExecutionCoordinator != null && !activeWorkflowAssignmentId.isEmpty()) {
+            openWorkflowExecution(activeWorkflowAssignmentId, false);
+        }
+        setChatStatus(message == null || message.trim().isEmpty()
+                ? "工作流语音填写未完成，请重试" : message.trim());
+        renderComposer();
+    }
+
+    private void cancelWorkflowVoiceInput(String reason) {
+        WorkflowCapabilityRegistry.Callback callback = workflowVoiceCallback;
+        workflowVoiceCallback = null;
+        workflowVoiceInputSession = null;
+        if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
+            voiceSessionPurpose = VoiceSessionPurpose.NONE;
+        }
+        voiceStreamState = VoiceStreamState.IDLE;
+        composerTranscript = "";
+        clearLiveTranscriptMessageIfStreaming();
+        if (callback != null) {
+            Log.i(KEY_LOG_TAG, "Workflow voice input cancelled reason=" + reason);
+            callback.complete(WorkflowCapabilityRegistry.Result.cancelled());
+        }
     }
 
     private void selectActiveWorkflowChoice(String action) {
@@ -6307,6 +6524,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         voiceEventStateMachine.reset();
         composerTranscript = "";
         stopVoiceRecording(false, "voice_back");
+        cancelWorkflowVoiceInput("workflow_voice_back");
         closeCamera();
         stopCameraThread();
         voiceSessionPurpose = VoiceSessionPurpose.NONE;
@@ -6343,6 +6561,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         voiceEventStateMachine.reset();
         pendingVoicePhotoCapture = false;
         cancelWorkflowPhotoCapture("workflow_photo_home");
+        cancelWorkflowVoiceInput("workflow_voice_home");
         if (screenMode == ScreenMode.CAMERA) {
             closeCamera();
             stopCameraThread();
@@ -7564,17 +7783,24 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private void startToggleVoiceRecording() {
         boolean autoWindowStart = voiceStartedFromAutoWindow;
         boolean offlineWakeCommandStart = voiceSessionPurpose == VoiceSessionPurpose.OFFLINE_WAKE_COMMAND;
+        boolean workflowVoiceInputStart = voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT;
         voiceStartedFromAutoWindow = false;
         if (recordingVoice) {
             finishToggleVoiceRecording("manual_finish");
             return;
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            if (workflowVoiceInputStart) {
+                failWorkflowVoiceInput(
+                        "workflow_voice_audio_permission_denied",
+                        "麦克风权限未开启，当前工作流步骤未推进");
+                return;
+            }
             recoverableAiError = "麦克风权限未开启。请在系统设置中开启后使用语音助手。";
             renderChatScreen();
             return;
         }
-        if (!offlineWakeCommandStart) {
+        if (!offlineWakeCommandStart && !workflowVoiceInputStart) {
             activateHudTaskWorkspace();
         }
         // A manual voice turn must have exclusive microphone ownership as well. The wake path
@@ -7623,7 +7849,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             } else {
                 setChatStatus("语音识别中");
             }
-            transcriptDraftText.setText("结束提问");
+            transcriptDraftText.setText(workflowVoiceInputStart ? "结束填写" : "结束提问");
             startVoiceRecordThread(recorder, file, bufferSize);
             voiceStopRunnable = new Runnable() {
                 @Override
@@ -7631,12 +7857,32 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     finishToggleVoiceRecording("max_duration");
                 }
             };
-            mainHandler.postDelayed(voiceStopRunnable, autoWindowStart ? VOICE_AUTO_WAKE_RECORDING_MS : VOICE_RECORDING_MS);
+            mainHandler.postDelayed(
+                    voiceStopRunnable,
+                    autoWindowStart
+                            ? VOICE_AUTO_WAKE_RECORDING_MS
+                            : workflowVoiceInputStart
+                            ? workflowVoiceInputMaximumDurationMillis()
+                            : VOICE_RECORDING_MS);
             renderComposer();
         } catch (Exception error) {
             recordingVoice = false;
+            if (workflowVoiceInputStart) {
+                stopVoiceRecording(false, "workflow_voice_start_failed");
+                failWorkflowVoiceInput(
+                        "workflow_voice_recording_failed",
+                        "录音启动失败，当前工作流步骤未推进");
+                return;
+            }
             setComposerStatus("录音失败：" + safeMessage(error));
         }
+    }
+
+    private long workflowVoiceInputMaximumDurationMillis() {
+        WorkflowVoiceInputSession session = workflowVoiceInputSession;
+        return session == null
+                ? VOICE_RECORDING_MS
+                : session.plan().maximumDurationMillis();
     }
 
     private void startRealtimeAsr() {
@@ -7807,6 +8053,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 }
                 realtimeAsrFinished = false;
                 voiceStartedFromAutoWindow = false;
+                if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
+                    composerTranscript = "";
+                    clearLiveTranscriptMessageIfStreaming();
+                    voiceStreamState = VoiceStreamState.IDLE;
+                    failWorkflowVoiceInput(
+                            "workflow_voice_asr_timeout",
+                            "语音转写超时，当前工作流步骤未推进，请重试");
+                    return;
+                }
                 voiceSessionPurpose = VoiceSessionPurpose.NONE;
                 composerTranscript = "";
                 clearLiveTranscriptMessageIfStreaming();
@@ -8018,6 +8273,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     onVoiceUnclear(asrSessionId, "voice-filler-retry");
                     return;
                 }
+                if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
+                    voiceAsrSessionGate.invalidate();
+                    stopVoiceCaptureAfterAsrFinal();
+                    voiceStartedFromAutoWindow = false;
+                    voiceStreamState = VoiceStreamState.FINAL_READY;
+                    completeWorkflowVoiceInput(finalText);
+                    return;
+                }
                 if (autoWindowFinal && isDingdangWakeOnly(finalText)) {
                     voiceAsrSessionGate.invalidate();
                     composerTranscript = "";
@@ -8133,6 +8396,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 }
                 cancelVoiceAsrFinishTimeout();
                 voiceAsrSessionGate.invalidate();
+                if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
+                    stopVoiceCaptureAfterAsrFinal();
+                    voiceStartedFromAutoWindow = false;
+                    failWorkflowVoiceInput(
+                            "workflow_voice_" + code,
+                            voiceStatusForDiagnostic(code)
+                                    + "，当前工作流步骤未推进，请重试");
+                    return;
+                }
                 if (VOICE_WORKFLOW_ENABLED
                         && voiceEventStateMachine.state() == VoiceEventStateMachine.State.WAITING_FOR_DESCRIPTION
                         && composerTranscript.trim().length() > 0) {
@@ -8263,6 +8535,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         if (wakeAudioRunning) {
             Log.w(KEY_LOG_TAG, "Offline wake microphone release timed out");
+            if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
+                wakeFeedbackDelivered = false;
+                failWorkflowVoiceInput(
+                        "workflow_voice_microphone_switch_timeout",
+                        "麦克风切换未完成，当前工作流步骤未推进，请重试");
+                return;
+            }
             voiceSessionPurpose = VoiceSessionPurpose.NONE;
             wakeFeedbackDelivered = false;
             setChatStatus("麦克风切换未完成，请再说‘小叮当’");
@@ -8274,6 +8553,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (!isVoiceControlAvailableOnCurrentScreen() || recordingVoice
                 || (voiceSessionPurpose != VoiceSessionPurpose.COMMAND
                 && voiceSessionPurpose != VoiceSessionPurpose.OFFLINE_WAKE_COMMAND
+                && voiceSessionPurpose != VoiceSessionPurpose.WORKFLOW_INPUT
                 && voiceSessionPurpose != VoiceSessionPurpose.NONE)) {
             return;
         }

@@ -801,9 +801,16 @@ if (!integratedWakeEngine.includes('WAKE_THRESHOLD_PARAMETER = "0 0:850"') ||
 const startToggleVoiceBody = integratedMethod("private void startToggleVoiceRecording(");
 if (!integratedActivity.includes("OFFLINE_WAKE_COMMAND") ||
     !integratedActivity.includes("shouldRejectOfflineWakeAtStandby") ||
-    !startToggleVoiceBody.includes("if (!offlineWakeCommandStart)") ||
+    !startToggleVoiceBody.includes(
+      "boolean workflowVoiceInputStart = voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT",
+    ) ||
+    !startToggleVoiceBody.includes(
+      "if (!offlineWakeCommandStart && !workflowVoiceInputStart)",
+    ) ||
     !startToggleVoiceBody.includes("activateHudTaskWorkspace();")) {
-  throw new Error("offline wake commands must be gated at standby without activating the task workspace");
+  throw new Error(
+    "offline wake commands and workflow voice input must not activate the ordinary task workspace",
+  );
 }
 const wakeWriteAudio = integratedWakeEngine.slice(
   integratedWakeEngine.indexOf("private void writeAudio("),

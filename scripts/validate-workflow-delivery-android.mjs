@@ -26,8 +26,10 @@ for (const contract of [
   /new WorkflowPackageVerifier\(\s*publicKeys,\s*BuildConfig\.VERSION_CODE,\s*1,/,
   /handlers\.put\("camera\.photo",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
   /handlers\.put\("camera\.video",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
+  /handlers\.put\("audio\.voice_input",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
   /beginWorkflowPhotoCapture\(request, callback\)/,
   /beginWorkflowVideoCapture\(request, callback\)/,
+  /beginWorkflowVoiceInput\(request, callback\)/,
   /new WorkflowCapabilityRegistry\(handlers\)/,
   /new WorkflowAssignmentRepository\(/,
   /new WorkflowAssignmentSyncCoordinator\(client, repository, packageCache, 4\)/,
@@ -49,8 +51,30 @@ for (const contract of [
 
 assert.equal(
   (main.match(/handlers\.put\(/g) ?? []).length,
-  2,
-  "only the implemented camera.photo and camera.video capabilities may be advertised",
+  3,
+  "only the implemented photo, video, and workflow voice capabilities may be advertised",
+);
+assert.match(main, /VoiceSessionPurpose \{ NONE, WAKE, COMMAND, OFFLINE_WAKE_COMMAND, WORKFLOW_INPUT \}/);
+assert.match(main, /"workflow_voice_input"\.equals\(value\)[\s\S]*?dispatchWorkflowVoiceInput\(\)/);
+assert.match(main, /private void completeWorkflowVoiceInput\(String transcript\)/);
+assert.match(main, /private void failWorkflowVoiceInput\(String reason, String message\)/);
+assert.match(main, /workflowVoiceInputMaximumDurationMillis\(\)/);
+assert.match(
+  main,
+  /private void onAsrFinal[\s\S]*?voiceSessionPurpose == VoiceSessionPurpose\.WORKFLOW_INPUT[\s\S]*?completeWorkflowVoiceInput\(finalText\)/,
+);
+assert.match(
+  main,
+  /private void onVoiceUnclear[\s\S]*?voiceSessionPurpose == VoiceSessionPurpose\.WORKFLOW_INPUT[\s\S]*?failWorkflowVoiceInput\(/,
+);
+assert.match(main, /private void resetManagedWorkflowRuntime\(\)[\s\S]*?cancelWorkflowVoiceInput\(/);
+assert.match(
+  main,
+  /private void startToggleVoiceRecording\(\)[\s\S]*?catch \(Exception error\) \{[\s\S]*?stopVoiceRecording\(false, "workflow_voice_start_failed"\)[\s\S]*?failWorkflowVoiceInput\(/,
+);
+assert.match(
+  main,
+  /private void cancelWorkflowVoiceInput\(String reason\)[\s\S]*?voiceStreamState = VoiceStreamState\.IDLE;[\s\S]*?composerTranscript = "";/,
 );
 assert.match(main, /workflowNavigationBackAction\(/);
 assert.match(
