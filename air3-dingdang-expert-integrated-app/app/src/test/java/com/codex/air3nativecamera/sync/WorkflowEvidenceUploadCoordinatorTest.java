@@ -36,6 +36,9 @@ public final class WorkflowEvidenceUploadCoordinatorTest {
                         (item, bytes, capturedAt) -> {
                             attempts.add(item.localEvidenceId());
                             assertEquals(1, bytes.length);
+                            assertEquals("photo", item.kind());
+                            assertEquals("image/jpeg", item.contentType());
+                            assertEquals(0, item.durationSeconds());
                             assertTrue(capturedAt.endsWith("Z"));
                             if ("local-a".equals(item.localEvidenceId()) && failFirst[0]) {
                                 throw new IOException("offline");
@@ -68,6 +71,50 @@ public final class WorkflowEvidenceUploadCoordinatorTest {
         jobs.remove(0).run();
         assertEquals(Arrays.asList("local-a", "local-b", "local-a"), attempts);
         assertEquals(Arrays.asList("local-b", "local-a"), acknowledged);
+    }
+
+    @Test
+    public void uploadsAValidatedShortVideoWithoutBlockingTheCaller() throws Exception {
+        File root = Files.createTempDirectory("workflow-video-evidence").toFile();
+        write(root, "task-evidence/clip.mp4", new byte[]{1, 2, 3, 4});
+        List<WorkflowEvidenceUploadCoordinator.PendingEvidence> pending =
+                new ArrayList<>();
+        pending.add(new WorkflowEvidenceUploadCoordinator.PendingEvidence(
+                "assignment-video",
+                "11111111-1111-4111-8111-111111111111",
+                "local-video",
+                "video-a",
+                "control-panel",
+                WorkflowEvidenceUploadCoordinator.MediaKind.VIDEO,
+                "task-evidence/clip.mp4",
+                12));
+        List<Runnable> jobs = new ArrayList<>();
+        List<String> acknowledged = new ArrayList<>();
+        WorkflowEvidenceUploadCoordinator coordinator =
+                new WorkflowEvidenceUploadCoordinator(
+                        root,
+                        () -> new ArrayList<>(pending),
+                        (item, bytes, capturedAt) -> {
+                            assertEquals("video", item.kind());
+                            assertEquals("video/mp4", item.contentType());
+                            assertEquals(12, item.durationSeconds());
+                            assertEquals(4, bytes.length);
+                            return "77777777-7777-4777-8777-777777777777";
+                        },
+                        (assignmentId, localEvidenceId, remoteAssetId) -> {
+                            acknowledged.add(localEvidenceId);
+                            pending.clear();
+                            return true;
+                        },
+                        jobs::add,
+                        () -> 1000L);
+
+        coordinator.request();
+        assertTrue(coordinator.isRunning());
+        jobs.remove(0).run();
+
+        assertEquals(Arrays.asList("local-video"), acknowledged);
+        assertFalse(coordinator.isRunning());
     }
 
     @Test
@@ -119,7 +166,9 @@ public final class WorkflowEvidenceUploadCoordinatorTest {
                 "local-a",
                 "photo-a",
                 "nameplate",
-                "../outside.jpg");
+                WorkflowEvidenceUploadCoordinator.MediaKind.PHOTO,
+                "../outside.jpg",
+                0);
     }
 
     private static WorkflowEvidenceUploadCoordinator.PendingEvidence evidence(
@@ -133,7 +182,9 @@ public final class WorkflowEvidenceUploadCoordinatorTest {
                 localId,
                 "photo-a",
                 "nameplate",
-                reference);
+                WorkflowEvidenceUploadCoordinator.MediaKind.PHOTO,
+                reference,
+                0);
     }
 
     private static void write(File root, String relative, byte[] bytes) throws IOException {

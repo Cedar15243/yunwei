@@ -129,6 +129,9 @@ public final class WorkflowDeviceHttpClientTest {
                 "workflow-photo-local-1",
                 "photo-a",
                 "nameplate",
+                "photo",
+                "image/jpeg",
+                0,
                 new byte[]{1, 2, 3},
                 "2026-08-01T02:00:00.000Z");
 
@@ -142,6 +145,36 @@ public final class WorkflowDeviceHttpClientTest {
         assertFalse(connections.used.get(0).requestText().contains("task-evidence"));
         assertEquals("Bearer access-a",
                 connections.used.get(0).getRequestProperty("Authorization"));
+    }
+
+    @Test
+    public void uploadsWorkflowVideoWithItsVerifiedDurationAndMediaContract() throws Exception {
+        QueueConnectionFactory connections = new QueueConnectionFactory();
+        String assetId = "77777777-7777-4777-8777-777777777777";
+        connections.enqueue(201, "{\"assetId\":\"" + assetId
+                + "\",\"uploadStatus\":\"synced\",\"byteSize\":4,\"durationSeconds\":12,\"sha256\":\""
+                + "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a"
+                + "\"}");
+        WorkflowDeviceHttpClient client = client(configuration(), connections);
+
+        String uploadedAssetId = client.uploadEvidence(
+                "33333333-3333-4333-8333-333333333333",
+                EXECUTION_ID,
+                "workflow-video-local-1",
+                "video-a",
+                "control-panel",
+                "video",
+                "video/mp4",
+                12,
+                new byte[]{1, 2, 3, 4},
+                "2026-08-02T02:00:00.000Z");
+
+        assertEquals(assetId, uploadedAssetId);
+        JSONObject body = new JSONObject(connections.used.get(0).requestText());
+        assertEquals("video", body.getString("kind"));
+        assertEquals("video/mp4", body.getString("contentType"));
+        assertEquals(12, body.getInt("durationSeconds"));
+        assertEquals("AQIDBA==", body.getString("dataBase64"));
     }
 
     @Test(expected = IOException.class)

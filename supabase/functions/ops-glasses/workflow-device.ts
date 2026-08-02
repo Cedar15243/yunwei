@@ -55,9 +55,10 @@ export type WorkflowEvidenceUploadCommand = {
   localEvidenceId: string;
   nodeId: string;
   evidenceKey: string;
-  kind: "photo";
-  contentType: "image/jpeg";
+  kind: "photo" | "video";
+  contentType: "image/jpeg" | "video/mp4";
   byteSize: number;
+  durationSeconds?: number;
   sha256: string;
   bytes: Uint8Array;
   capturedAt: string;
@@ -147,6 +148,8 @@ const workflowStepStatuses = new Set([
 ]);
 
 const maxWorkflowPhotoBytes = 5 * 1024 * 1024;
+const maxWorkflowVideoBytes = 8 * 1024 * 1024;
+const maxWorkflowVideoDurationSeconds = 15;
 const workflowEvidenceBucket = "ops-glasses-captures";
 
 const headers = {
@@ -488,7 +491,9 @@ export function createWorkflowDeviceGateway(
         identity.organizationId,
         taskId,
         command.executionId,
-        `${command.localEvidenceId}.jpg`,
+        `${command.localEvidenceId}.${
+          command.kind === "video" ? "mp4" : "jpg"
+        }`,
       ].join("/");
       const existing = await existingEvidence(supabase, filePath);
       if (existing) {
@@ -513,10 +518,12 @@ export function createWorkflowDeviceGateway(
           file_path: filePath,
           sha256: command.sha256,
           byte_size: command.byteSize,
+          duration_seconds: command.durationSeconds ?? 0,
           upload_status: "uploading",
           failure_reason: "",
           captured_at: command.capturedAt,
-        }).select("id, upload_status, byte_size, sha256").single();
+        }).select("id, upload_status, byte_size, duration_seconds, sha256")
+        .single();
       if (reserveError || !reserved) {
         const raced = await existingEvidence(supabase, filePath);
         if (!raced) {
@@ -549,7 +556,7 @@ async function existingEvidence(
   filePath: string,
 ): Promise<Record<string, unknown> | null> {
   const { data, error } = await supabase.from("media_assets")
-    .select("id, upload_status, byte_size, sha256")
+    .select("id, upload_status, byte_size, duration_seconds, sha256")
     .eq("file_path", filePath)
     .maybeSingle();
   if (error) throw error;
@@ -563,6 +570,7 @@ function matchingEvidence(
   if (
     item.upload_status !== "synced" ||
     finiteInteger(item.byte_size) !== command.byteSize ||
+    evidenceDuration(item, command) !== (command.durationSeconds ?? 0) ||
     item.sha256 !== command.sha256
   ) {
     throw new WorkflowDeviceError(409, "workflow_evidence_conflict");
@@ -579,6 +587,7 @@ function recoverableEvidence(
     !uuidValue(item.id) ||
     !new Set(["uploading", "failed", "synced"]).has(String(status)) ||
     finiteInteger(item.byte_size) !== command.byteSize ||
+    evidenceDuration(item, command) !== (command.durationSeconds ?? 0) ||
     item.sha256 !== command.sha256
   ) {
     throw new WorkflowDeviceError(409, "workflow_evidence_conflict");
@@ -612,7 +621,7 @@ async function uploadReservedEvidence(
     .eq("organization_id", identity.organizationId)
     .eq("id", assetId)
     .eq("file_path", filePath)
-    .select("id, upload_status, byte_size, sha256")
+    .select("id, upload_status, byte_size, duration_seconds, sha256")
     .single();
   if (error || !data) {
     throw error ?? new Error("workflow evidence completion failed");
@@ -780,6 +789,7 @@ async function workflowEvidenceUploadCommand(
     "kind",
     "contentType",
     "byteSize",
+    "durationSeconds",
     "sha256",
     "dataBase64",
     "capturedAt",
@@ -795,6 +805,9 @@ async function workflowEvidenceUploadCommand(
   const kind = body?.kind;
   const contentType = body?.contentType;
   const byteSize = finiteInteger(body?.byteSize);
+  const durationSeconds = body?.durationSeconds === undefined
+    ? 0
+    : finiteInteger(body.durationSeconds);
   const sha256 = typeof body?.sha256 === "string"
     ? body.sha256.trim().toLowerCase()
     : "";
@@ -804,12 +817,15 @@ async function workflowEvidenceUploadCommand(
   const capturedAt = boundedText(body?.capturedAt, 100);
   if (
     !assignmentId || !executionId || !localEvidenceId || !nodeId ||
-    !evidenceKey || kind !== "photo" || contentType !== "image/jpeg" ||
-    byteSize === null || byteSize < 1 || byteSize > maxWorkflowPhotoBytes ||
+    !evidenceKey ||
+    !validWorkflowMedia(kind, contentType, durationSeconds) ||
+    byteSize === null || byteSize < 1 ||
+    byteSize > workflowMediaMaximumBytes(kind) ||
     !/^[0-9a-f]{64}$/.test(sha256) || !capturedAt ||
     !Number.isFinite(Date.parse(capturedAt)) ||
     dataBase64.length < 4 ||
-    dataBase64.length > Math.ceil(maxWorkflowPhotoBytes / 3) * 4 + 4 ||
+    dataBase64.length >
+      Math.ceil(workflowMediaMaximumBytes(kind) / 3) * 4 + 4 ||
     !/^[A-Za-z0-9+/]+={0,2}$/.test(dataBase64)
   ) return null;
 
@@ -833,8 +849,9 @@ async function workflowEvidenceUploadCommand(
     nodeId,
     evidenceKey,
     kind,
-    contentType,
+    contentType: contentType as WorkflowEvidenceUploadCommand["contentType"],
     byteSize,
+    durationSeconds: durationSeconds ?? 0,
     sha256,
     bytes,
     capturedAt,
@@ -849,14 +866,44 @@ function workflowEvidenceResponse(
   const assetId = uuidValue(item?.id);
   const uploadStatus = item?.upload_status;
   const byteSize = finiteInteger(item?.byte_size);
+  const durationSeconds = finiteInteger(item?.duration_seconds) ?? 0;
   const sha256 = typeof item?.sha256 === "string"
     ? item.sha256.trim().toLowerCase()
     : "";
   if (
     !assetId || uploadStatus !== "synced" ||
-    byteSize !== command.byteSize || sha256 !== command.sha256
+    byteSize !== command.byteSize || sha256 !== command.sha256 ||
+    (command.kind === "video" &&
+      durationSeconds !== command.durationSeconds)
   ) return null;
-  return { assetId, uploadStatus, byteSize, sha256 };
+  return command.kind === "video"
+    ? { assetId, uploadStatus, byteSize, durationSeconds, sha256 }
+    : { assetId, uploadStatus, byteSize, sha256 };
+}
+
+function validWorkflowMedia(
+  kind: unknown,
+  contentType: unknown,
+  durationSeconds: number | null,
+): kind is WorkflowEvidenceUploadCommand["kind"] {
+  if (kind === "photo") {
+    return contentType === "image/jpeg" && durationSeconds === 0;
+  }
+  return kind === "video" && contentType === "video/mp4" &&
+    durationSeconds !== null && durationSeconds >= 1 &&
+    durationSeconds <= maxWorkflowVideoDurationSeconds;
+}
+
+function workflowMediaMaximumBytes(kind: unknown): number {
+  return kind === "video" ? maxWorkflowVideoBytes : maxWorkflowPhotoBytes;
+}
+
+function evidenceDuration(
+  item: Record<string, unknown>,
+  command: WorkflowEvidenceUploadCommand,
+): number | null {
+  const duration = finiteInteger(item.duration_seconds);
+  return duration ?? (command.kind === "photo" ? 0 : null);
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {

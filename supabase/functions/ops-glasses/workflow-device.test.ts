@@ -928,6 +928,93 @@ Deno.test("rejects corrupt workflow evidence before storage", async () => {
   assertEquals(calls, 0);
 });
 
+Deno.test("accepts a bounded workflow MP4 with authoritative duration metadata", async () => {
+  let received: Record<string, unknown> | null = null;
+  const assetId = "77777777-7777-4777-8777-777777777777";
+  const response = await routeWorkflowDevice(
+    request("POST", "/device-sync/workflows/evidence", {
+      token: "access-token",
+      body: {
+        assignmentId: "11111111-1111-4111-8111-111111111111",
+        executionId: "22222222-2222-4222-8222-222222222222",
+        localEvidenceId: "workflow-video-local-1",
+        nodeId: "video-a",
+        evidenceKey: "control-panel",
+        kind: "video",
+        contentType: "video/mp4",
+        byteSize: 4,
+        durationSeconds: 12,
+        sha256:
+          "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+        dataBase64: "AQIDBA==",
+        capturedAt: "2026-08-02T02:00:00.000Z",
+      },
+    }),
+    gateway({
+      storeEvidence: async (
+        _identity: unknown,
+        command: Record<string, unknown>,
+      ) => {
+        received = command;
+        return {
+          id: assetId,
+          upload_status: "synced",
+          byte_size: 4,
+          duration_seconds: 12,
+          sha256:
+            "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+        };
+      },
+    } as any),
+  );
+
+  assertEquals(response.status, 201);
+  assertEquals(await response.json(), {
+    assetId,
+    uploadStatus: "synced",
+    byteSize: 4,
+    durationSeconds: 12,
+    sha256: "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+  });
+  assertEquals((received as any).kind, "video");
+  assertEquals((received as any).contentType, "video/mp4");
+  assertEquals((received as any).durationSeconds, 12);
+});
+
+Deno.test("rejects video duration and media type mismatches before storage", async () => {
+  let calls = 0;
+  const response = await routeWorkflowDevice(
+    request("POST", "/device-sync/workflows/evidence", {
+      token: "access-token",
+      body: {
+        assignmentId: "11111111-1111-4111-8111-111111111111",
+        executionId: "22222222-2222-4222-8222-222222222222",
+        localEvidenceId: "workflow-video-local-1",
+        nodeId: "video-a",
+        evidenceKey: "control-panel",
+        kind: "video",
+        contentType: "image/jpeg",
+        byteSize: 4,
+        durationSeconds: 16,
+        sha256:
+          "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+        dataBase64: "AQIDBA==",
+        capturedAt: "2026-08-02T02:00:00.000Z",
+      },
+    }),
+    gateway({
+      storeEvidence: async () => {
+        calls += 1;
+        return null;
+      },
+    } as any),
+  );
+
+  assertEquals(response.status, 400);
+  assertEquals((await response.json()).error, "invalid_workflow_evidence");
+  assertEquals(calls, 0);
+});
+
 Deno.test("stores workflow evidence under a server-derived private path", async () => {
   const inserted: Array<Record<string, unknown>> = [];
   const updated: Array<Record<string, unknown>> = [];

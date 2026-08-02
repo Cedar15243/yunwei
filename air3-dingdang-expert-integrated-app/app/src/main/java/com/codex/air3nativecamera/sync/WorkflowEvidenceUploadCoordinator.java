@@ -20,7 +20,25 @@ import java.util.concurrent.RejectedExecutionException;
 /** Uploads unresolved workflow evidence already persisted in workflow snapshots. */
 public final class WorkflowEvidenceUploadCoordinator {
     private static final int MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+    private static final int MAX_VIDEO_BYTES = 8 * 1024 * 1024;
     private static final int MAX_UPLOADS_PER_RUN = 8;
+
+    public enum MediaKind {
+        PHOTO("photo", "image/jpeg", ".jpg", MAX_PHOTO_BYTES),
+        VIDEO("video", "video/mp4", ".mp4", MAX_VIDEO_BYTES);
+
+        private final String value;
+        private final String contentType;
+        private final String extension;
+        private final int maximumBytes;
+
+        MediaKind(String value, String contentType, String extension, int maximumBytes) {
+            this.value = value;
+            this.contentType = contentType;
+            this.extension = extension;
+            this.maximumBytes = maximumBytes;
+        }
+    }
 
     public interface PendingSource {
         List<PendingEvidence> pending();
@@ -45,7 +63,9 @@ public final class WorkflowEvidenceUploadCoordinator {
         private final String localEvidenceId;
         private final String nodeId;
         private final String evidenceKey;
+        private final MediaKind mediaKind;
         private final String localReference;
+        private final int durationSeconds;
 
         public PendingEvidence(
                 String assignmentId,
@@ -53,14 +73,27 @@ public final class WorkflowEvidenceUploadCoordinator {
                 String localEvidenceId,
                 String nodeId,
                 String evidenceKey,
-                String localReference
+                MediaKind mediaKind,
+                String localReference,
+                int durationSeconds
         ) {
             this.assignmentId = identifier(assignmentId, 200);
             this.executionId = uuid(executionId);
             this.localEvidenceId = identifier(localEvidenceId, 160);
             this.nodeId = identifier(nodeId, 160);
             this.evidenceKey = identifier(evidenceKey, 160);
+            if (mediaKind == null) {
+                throw new IllegalArgumentException("workflow evidence media kind is invalid");
+            }
+            this.mediaKind = mediaKind;
             this.localReference = reference(localReference);
+            this.durationSeconds = durationSeconds;
+            if (!this.localReference.toLowerCase(Locale.ROOT).endsWith(mediaKind.extension)
+                    || (mediaKind == MediaKind.PHOTO && durationSeconds != 0)
+                    || (mediaKind == MediaKind.VIDEO
+                    && (durationSeconds < 1 || durationSeconds > 15))) {
+                throw new IllegalArgumentException("workflow evidence media contract is invalid");
+            }
         }
 
         public String assignmentId() { return assignmentId; }
@@ -68,7 +101,11 @@ public final class WorkflowEvidenceUploadCoordinator {
         public String localEvidenceId() { return localEvidenceId; }
         public String nodeId() { return nodeId; }
         public String evidenceKey() { return evidenceKey; }
+        public String kind() { return mediaKind.value; }
+        public String contentType() { return mediaKind.contentType; }
+        public int maximumBytes() { return mediaKind.maximumBytes; }
         public String localReference() { return localReference; }
+        public int durationSeconds() { return durationSeconds; }
     }
 
     private final File filesRoot;
@@ -163,7 +200,7 @@ public final class WorkflowEvidenceUploadCoordinator {
             attempted++;
             try {
                 File file = resolve(evidence.localReference());
-                byte[] bytes = read(file);
+                byte[] bytes = read(file, evidence.maximumBytes());
                 String remoteAssetId = transport.upload(
                         evidence, bytes, timestamp(file.lastModified()));
                 if (!acknowledger.acknowledge(
@@ -203,9 +240,9 @@ public final class WorkflowEvidenceUploadCoordinator {
         return target;
     }
 
-    private static byte[] read(File file) throws IOException {
+    private static byte[] read(File file, int maximumBytes) throws IOException {
         long length = file.length();
-        if (length < 1L || length > MAX_PHOTO_BYTES) {
+        if (length < 1L || length > maximumBytes) {
             throw new IOException("workflow evidence file size is invalid");
         }
         byte[] bytes = new byte[(int) length];

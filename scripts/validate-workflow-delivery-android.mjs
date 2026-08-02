@@ -25,7 +25,9 @@ for (const contract of [
   /ManagedWorkflowPublicKeySource\.fromManagedJson\(managedKeySet\)/,
   /new WorkflowPackageVerifier\(\s*publicKeys,\s*BuildConfig\.VERSION_CODE,\s*1,/,
   /handlers\.put\("camera\.photo",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
+  /handlers\.put\("camera\.video",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
   /beginWorkflowPhotoCapture\(request, callback\)/,
+  /beginWorkflowVideoCapture\(request, callback\)/,
   /new WorkflowCapabilityRegistry\(handlers\)/,
   /new WorkflowAssignmentRepository\(/,
   /new WorkflowAssignmentSyncCoordinator\(client, repository, packageCache, 4\)/,
@@ -47,8 +49,8 @@ for (const contract of [
 
 assert.equal(
   (main.match(/handlers\.put\(/g) ?? []).length,
-  1,
-  "only the implemented camera.photo capability may be advertised",
+  2,
+  "only the implemented camera.photo and camera.video capabilities may be advertised",
 );
 assert.match(main, /workflowNavigationBackAction\(/);
 assert.match(

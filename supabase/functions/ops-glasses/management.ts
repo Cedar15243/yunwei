@@ -322,7 +322,7 @@ export function createManagementGateway(supabase: any): ManagementGateway {
       const [eventsResult, mediaResult] = await Promise.all([
         supabase.from("task_events").select("id, event_type, payload, created_at")
           .eq("task_id", taskId).eq("organization_id", identity.organizationId).order("created_at", { ascending: true }),
-        supabase.from("media_assets").select("id, event_id, kind, content_type, storage_bucket, file_path, upload_status, failure_reason, captured_at, created_at")
+        supabase.from("media_assets").select("id, event_id, kind, content_type, storage_bucket, file_path, duration_seconds, upload_status, failure_reason, captured_at, created_at")
           .eq("task_id", taskId).eq("organization_id", identity.organizationId).order("created_at", { ascending: true }),
       ]);
       if (eventsResult.error) throw eventsResult.error;

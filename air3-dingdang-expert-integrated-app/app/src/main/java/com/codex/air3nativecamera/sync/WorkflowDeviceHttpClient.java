@@ -22,6 +22,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
     private static final long MAX_SAFE_INTEGER = 9_007_199_254_740_991L;
     private static final int MAX_WORKFLOW_PHOTO_BYTES = 5 * 1024 * 1024;
+    private static final int MAX_WORKFLOW_VIDEO_BYTES = 8 * 1024 * 1024;
     private static final Set<String> ASSIGNMENT_MODES = set("required", "optional", "none");
     private static final Set<String> ASSIGNMENT_STATUSES = set(
             "queued", "notified", "delivered", "verified", "ready",
@@ -346,6 +347,9 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
             String localEvidenceId,
             String nodeId,
             String evidenceKey,
+            String kind,
+            String contentType,
+            int durationSeconds,
             byte[] bytes,
             String capturedAt
     ) throws IOException {
@@ -359,8 +363,18 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
                 nodeId, "workflow node identifier is invalid");
         String key = requiredShortIdentifier(
                 evidenceKey, "workflow evidence key is invalid");
+        String mediaKind = clean(kind);
+        String mediaContentType = clean(contentType);
+        boolean photo = "photo".equals(mediaKind)
+                && "image/jpeg".equals(mediaContentType)
+                && durationSeconds == 0;
+        boolean video = "video".equals(mediaKind)
+                && "video/mp4".equals(mediaContentType)
+                && durationSeconds >= 1 && durationSeconds <= 15;
+        int maximumBytes = video ? MAX_WORKFLOW_VIDEO_BYTES : MAX_WORKFLOW_PHOTO_BYTES;
         String captured = clean(capturedAt);
-        if (bytes == null || bytes.length < 1 || bytes.length > MAX_WORKFLOW_PHOTO_BYTES
+        if ((!photo && !video)
+                || bytes == null || bytes.length < 1 || bytes.length > maximumBytes
                 || captured.isEmpty() || captured.length() > 100) {
             throw new IllegalArgumentException("workflow evidence payload is invalid");
         }
@@ -373,8 +387,9 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
                     .put("localEvidenceId", localId)
                     .put("nodeId", node)
                     .put("evidenceKey", key)
-                    .put("kind", "photo")
-                    .put("contentType", "image/jpeg")
+                    .put("kind", mediaKind)
+                    .put("contentType", mediaContentType)
+                    .put("durationSeconds", durationSeconds)
                     .put("byteSize", bytes.length)
                     .put("sha256", digest)
                     .put("dataBase64", Base64.getEncoder().encodeToString(bytes))
@@ -391,8 +406,12 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
         String uploadStatus = clean(response.optString("uploadStatus", ""));
         String remoteDigest = clean(response.optString("sha256", ""));
         long byteSize = exactNonNegativeLong(response.opt("byteSize"));
+        long remoteDuration = response.has("durationSeconds")
+                ? exactNonNegativeLong(response.opt("durationSeconds"))
+                : (photo ? 0L : -1L);
         if (!validUuid(assetId) || !"synced".equals(uploadStatus)
-                || byteSize != bytes.length || !digest.equals(remoteDigest)) {
+                || byteSize != bytes.length || remoteDuration != durationSeconds
+                || !digest.equals(remoteDigest)) {
             throw new IOException("workflow_evidence_response_invalid");
         }
         return assetId;

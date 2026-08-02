@@ -79,6 +79,19 @@ Deno.test("uses unique typed fields and fixed HUD contracts", () => {
   );
   assertEquals(photo?.pageTemplate, "evidence_capture");
   assertEquals(photo?.requiredCapability, "camera.photo");
+
+  const video = WORKFLOW_NODE_CATALOG.find((node) =>
+    node.type === "video_capture"
+  );
+  assertEquals(video?.requiredCapability, "camera.video");
+  assertEquals(
+    video?.fields.find((field) => field.key === "minDurationSeconds")?.max,
+    15,
+  );
+  assertEquals(
+    video?.fields.find((field) => field.key === "maxDurationSeconds")?.max,
+    15,
+  );
 });
 
 Deno.test("public catalog contains no executable or credential transport fields", () => {

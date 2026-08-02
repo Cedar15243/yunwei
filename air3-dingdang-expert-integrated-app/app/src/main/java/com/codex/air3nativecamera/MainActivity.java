@@ -31,6 +31,7 @@ import android.media.ExifInterface;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaRecorder;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -119,6 +120,7 @@ import com.codex.air3nativecamera.workflow.WorkflowPackageVerifier;
 import com.codex.air3nativecamera.workflow.WorkflowRuntimeState;
 import com.codex.air3nativecamera.workflow.WorkflowSnapshot;
 import com.codex.air3nativecamera.workflow.WorkflowStepContext;
+import com.codex.air3nativecamera.workflow.WorkflowVideoCapturePlan;
 import com.codex.expertcollab.ExpertCollabCoordinator;
 import com.codex.expertcollab.CollabServiceHealth;
 
@@ -428,6 +430,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private boolean pendingSceneVideoCapture;
     private String sceneVideoReturnSurface = "standby";
     private Runnable sceneVideoStopRunnable;
+    private long sceneVideoStartedAtMs;
 
     private AudioRecord voiceRecorder;
     private Thread voiceRecordThread;
@@ -455,6 +458,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private String activeWorkflowAssignmentId = "";
     private boolean workflowCapturePending;
     private WorkflowCapabilityRegistry.Callback workflowPhotoCallback;
+    private WorkflowVideoCapturePlan workflowVideoCapturePlan;
+    private WorkflowCapabilityRegistry.Callback workflowVideoCallback;
     private Bundle managedRestrictions;
     private ManagedRuntimeConfiguration runtimeConfiguration;
     private final HoneywellTempHumiditySkill honeywellTempHumiditySkill = new HoneywellTempHumiditySkill();
@@ -661,6 +666,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     });
                 }
             });
+            handlers.put("camera.video", new WorkflowCapabilityRegistry.Handler() {
+                @Override
+                public void execute(
+                        final WorkflowCapabilityRegistry.Request request,
+                        final WorkflowCapabilityRegistry.Callback callback
+                ) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            beginWorkflowVideoCapture(request, callback);
+                        }
+                    });
+                }
+            });
             WorkflowCapabilityRegistry capabilityRegistry = new WorkflowCapabilityRegistry(handlers);
             Set<String> supportedCapabilities = capabilityRegistry.supportedCapabilities();
             WorkflowPackageVerifier verifier = new WorkflowPackageVerifier(
@@ -729,6 +747,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                                             evidence.localEvidenceId(),
                                             evidence.nodeId(),
                                             evidence.evidenceKey(),
+                                            evidence.kind(),
+                                            evidence.contentType(),
+                                            evidence.durationSeconds(),
                                             bytes,
                                             capturedAt);
                                 }
@@ -786,6 +807,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private void resetManagedWorkflowRuntime() {
         workflowCapturePending = false;
         workflowPhotoCallback = null;
+        cancelWorkflowVideoCapture("workflow_video_runtime_reset");
         activeWorkflowAssignmentId = "";
         workflowExecutionCoordinator = null;
         workflowEvidenceUploadCoordinator = null;
@@ -813,17 +835,24 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             if (state == null || state.executionId().isEmpty()) continue;
             for (WorkflowEvidenceReference evidence : state.evidenceReferences()) {
                 if (!evidence.remoteAssetId().isEmpty()
-                        || evidence.type() != WorkflowStepContext.EvidenceType.PHOTO) {
+                        || (evidence.type() != WorkflowStepContext.EvidenceType.PHOTO
+                        && evidence.type() != WorkflowStepContext.EvidenceType.VIDEO)) {
                     continue;
                 }
                 try {
+                    WorkflowEvidenceUploadCoordinator.MediaKind mediaKind =
+                            evidence.type() == WorkflowStepContext.EvidenceType.VIDEO
+                                    ? WorkflowEvidenceUploadCoordinator.MediaKind.VIDEO
+                                    : WorkflowEvidenceUploadCoordinator.MediaKind.PHOTO;
                     pending.add(new WorkflowEvidenceUploadCoordinator.PendingEvidence(
                             assignment.assignmentId(),
                             state.executionId(),
                             evidence.localEvidenceId(),
                             evidence.nodeId(),
                             evidence.evidenceKey(),
-                            evidence.localReference()));
+                            mediaKind,
+                            evidence.localReference(),
+                            evidence.durationSeconds()));
                 } catch (IllegalArgumentException exception) {
                     Log.w(KEY_LOG_TAG, "Invalid pending workflow evidence", exception);
                 }
@@ -977,6 +1006,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             pendingSceneVideoCapture = false;
             sceneVideoStarting = false;
             cameraStatusText.setText("相机权限未开启，请在系统设置中授权后再拍摄");
+            failWorkflowVideoCaptureAndReturn(
+                    "workflow_video_camera_permission_denied",
+                    "相机权限未授权，工作流录像未开始");
         }
     }
 
@@ -2032,6 +2064,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             dispatchWorkflowPhotoCapture();
             return;
         }
+        if ("workflow_capture_video".equals(value)) {
+            dispatchWorkflowVideoCapture();
+            return;
+        }
         if ("workflow_next".equals(value)) {
             advanceActiveWorkflow(false, "");
             return;
@@ -2276,6 +2312,86 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         hideCapabilityCenter();
         enterCameraScreen("workflow-capture");
         setChatStatus("请拍摄当前工作流要求的照片");
+    }
+
+    private void dispatchWorkflowVideoCapture() {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        if (workflowCapabilityRegistry == null || snapshot == null) {
+            setChatStatus("工作流录像能力不可用");
+            return;
+        }
+        WorkflowRuntimeState state = snapshot.runtimeState();
+        WorkflowPackage.Node node = snapshot.workflowPackage().node(state.currentNodeId());
+        if (state.executionId().isEmpty() || node == null
+                || !"video_capture".equals(node.type())) {
+            setChatStatus("当前步骤不允许录像");
+            return;
+        }
+        WorkflowCapabilityRegistry.Request request;
+        try {
+            request = new WorkflowCapabilityRegistry.Request(
+                    activeWorkflowAssignmentId,
+                    state.executionId(),
+                    state.stepAttempt(node.nodeId()) + 1,
+                    new JSONObject());
+        } catch (RuntimeException exception) {
+            setChatStatus("工作流录像请求无效");
+            return;
+        }
+        WorkflowCapabilityRegistry.Dispatch dispatch = workflowCapabilityRegistry.dispatch(
+                node,
+                request,
+                new WorkflowCapabilityRegistry.Callback() {
+                    @Override
+                    public void complete(final WorkflowCapabilityRegistry.Result result) {
+                        mainHandler.post(new Runnable() {
+                            @Override public void run() {
+                                if (result == null
+                                        || result.status()
+                                        == WorkflowCapabilityRegistry.Result.Status.FAILED) {
+                                    Log.w(KEY_LOG_TAG, "Workflow video capture did not complete");
+                                }
+                            }
+                        });
+                    }
+                });
+        if (dispatch != WorkflowCapabilityRegistry.Dispatch.STARTED) {
+            setChatStatus("工作流录像能力未启用");
+        }
+    }
+
+    private void beginWorkflowVideoCapture(
+            WorkflowCapabilityRegistry.Request request,
+            WorkflowCapabilityRegistry.Callback callback
+    ) {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        WorkflowVideoCapturePlan plan;
+        try {
+            plan = WorkflowVideoCapturePlan.from(
+                    node, (int) (SCENE_VIDEO_MAX_DURATION_MS / 1000L));
+        } catch (RuntimeException exception) {
+            plan = null;
+        }
+        if (request == null || callback == null || workflowVideoCapturePlan != null
+                || sceneVideoRecording || sceneVideoStarting || pendingSceneVideoCapture
+                || state == null || node == null || plan == null
+                || !activeWorkflowAssignmentId.equals(request.assignmentId())
+                || !state.executionId().equals(request.executionId())) {
+            if (callback != null) {
+                callback.complete(WorkflowCapabilityRegistry.Result.failed(
+                        "workflow_video_state_invalid"));
+            }
+            setChatStatus("当前工作流录像状态或时长配置无效");
+            return;
+        }
+        workflowVideoCapturePlan = plan;
+        workflowVideoCallback = callback;
+        setChatStatus("请录制当前工作流要求的视频，最长 "
+                + plan.maximumDurationSeconds() + " 秒");
+        startSceneVideoCapture();
     }
 
     private void selectActiveWorkflowChoice(String action) {
@@ -5937,6 +6053,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 performHudOperation("workflow_capture_photo");
                 return true;
             }
+            if (command == VoiceCommandRouter.Command.VIDEO_START) {
+                performHudOperation("workflow_capture_video");
+                return true;
+            }
             if (command == VoiceCommandRouter.Command.NEXT) {
                 performHudOperation("workflow_next");
                 return true;
@@ -8854,6 +8974,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             pendingSceneVideoCapture = false;
             cameraStatusText.setText("相机权限未开启，请授权后再开始短视频取证");
+            failWorkflowVideoCaptureAndReturn(
+                    "workflow_video_camera_permission_missing",
+                    "相机权限未开启，工作流录像未开始");
             return;
         }
         if (cameraDevice == null || previewSize == null || videoSize == null
@@ -8866,12 +8989,18 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         try {
             sceneVideoStarting = true;
             releaseSceneVideoRecorder();
-            File evidenceDirectory = new File(getFilesDir(), "evidence");
+            boolean workflowVideo = workflowVideoCapturePlan != null;
+            File evidenceDirectory = new File(
+                    getFilesDir(), workflowVideo ? "task-evidence" : "evidence");
             if (!evidenceDirectory.exists() && !evidenceDirectory.mkdirs()) {
                 throw new IOException("无法创建现场证据目录");
             }
             sceneVideoFile = new File(evidenceDirectory,
-                    "scene-" + System.currentTimeMillis() + ".mp4");
+                    (workflowVideo
+                            ? activeWorkflowAssignmentId + "-"
+                            + workflowVideoCapturePlan.nodeId() + "-"
+                            : "scene-")
+                            + System.currentTimeMillis() + ".mp4");
             sceneVideoRecorder = new MediaRecorder();
             sceneVideoRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
             sceneVideoRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
@@ -8892,7 +9021,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }
             sceneVideoFile = null;
             cameraStatusText.setText("短视频启动失败：" + safeMessage(error));
-            scheduleForegroundVoiceListening("scene-video-failed");
+            if (workflowVideoCapturePlan != null) {
+                failWorkflowVideoCaptureAndReturn(
+                        "workflow_video_start_failed",
+                        "工作流录像启动失败，请重试");
+            } else {
+                scheduleForegroundVoiceListening("scene-video-failed");
+            }
         }
     }
 
@@ -8935,6 +9070,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                             pendingSceneVideoCapture = false;
                             sceneVideoStarting = false;
                             sceneVideoRecording = true;
+                            sceneVideoStartedAtMs = SystemClock.elapsedRealtime();
                             mainHandler.post(new Runnable() {
                                 @Override public void run() {
                                     cameraStatusText.setText("正在记录现场短视频，确认键可停止");
@@ -8946,7 +9082,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                                         }
                                     };
                                     mainHandler.postDelayed(
-                                            sceneVideoStopRunnable, SCENE_VIDEO_MAX_DURATION_MS);
+                                            sceneVideoStopRunnable,
+                                            sceneVideoMaximumDurationMillis());
                                 }
                             });
                         } catch (Exception error) {
@@ -8972,8 +9109,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                                 sceneVideoStarting = false;
                                 cameraStatusText.setText("短视频相机会话创建失败");
                                 releaseSceneVideoRecorder();
-                                createPreviewSession();
-                                scheduleForegroundVoiceListening("scene-video-session-failed");
+                                if (workflowVideoCapturePlan != null) {
+                                    failWorkflowVideoCaptureAndReturn(
+                                            "workflow_video_session_failed",
+                                            "工作流录像相机会话创建失败，请重试");
+                                } else {
+                                    createPreviewSession();
+                                    scheduleForegroundVoiceListening(
+                                            "scene-video-session-failed");
+                                }
                             }
                         });
                     }
@@ -8995,6 +9139,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         pendingSceneVideoCapture = false;
         boolean wasRecording = sceneVideoRecording;
+        WorkflowVideoCapturePlan completedWorkflowPlan = workflowVideoCapturePlan;
+        WorkflowCapabilityRegistry.Callback completedWorkflowCallback = workflowVideoCallback;
         sceneVideoRecording = false;
         sceneVideoStarting = false;
         File completedVideo = sceneVideoFile;
@@ -9010,7 +9156,25 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             completedVideo = null;
             Log.w(KEY_LOG_TAG, "Scene video recorder stop failed reason=" + reason, error);
         }
+        int completedDurationSeconds = completedWorkflowPlan == null
+                ? 0
+                : completedSceneVideoDurationSeconds(
+                        completedVideo, completedWorkflowPlan);
         releaseSceneVideoRecorder();
+        sceneVideoFile = null;
+        sceneVideoStartedAtMs = 0L;
+        if (completedWorkflowPlan != null) {
+            workflowVideoCapturePlan = null;
+            workflowVideoCallback = null;
+            sceneVideoReturnSurface = "standby";
+            handleCompletedWorkflowVideo(
+                    completedWorkflowPlan,
+                    completedWorkflowCallback,
+                    completedVideo,
+                    wasRecording,
+                    completedDurationSeconds);
+            return;
+        }
         if (retainCompletedSceneVideo(completedVideo)) {
             MaintenanceTask task = ensureMaintenanceTask("请结合现场短视频和语音描述继续分析设备异常");
             TaskSession session = taskSessionManager.active();
@@ -9029,7 +9193,6 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         } else if (wasRecording) {
             completionMessage = "短视频未保存，请重新录制";
         }
-        sceneVideoFile = null;
         // Video evidence is complete. Return ownership of Camera2 before going back to the
         // voice-first HUD so ASR and expert collaboration never compete with a hidden preview.
         closeCamera();
@@ -9048,6 +9211,205 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         offlineWakeSuppressedUntilMs = SystemClock.elapsedRealtime()
                 + MEDIA_WAKE_REARM_COOLDOWN_MS;
         scheduleForegroundVoiceListening("scene-video-complete");
+    }
+
+    private void handleCompletedWorkflowVideo(
+            WorkflowVideoCapturePlan plan,
+            WorkflowCapabilityRegistry.Callback callback,
+            File completedVideo,
+            boolean wasRecording,
+            int durationSeconds
+    ) {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        if (!wasRecording || !retainCompletedSceneVideo(completedVideo)
+                || durationSeconds < plan.minimumDurationSeconds()) {
+            if (completedVideo != null && completedVideo.exists()) completedVideo.delete();
+            String failureCode = durationSeconds <= 0
+                    ? "workflow_video_duration_unverified"
+                    : (durationSeconds < plan.minimumDurationSeconds()
+                    ? "workflow_video_too_short" : "workflow_video_invalid");
+            completeWorkflowVideoCallback(
+                    callback,
+                    WorkflowCapabilityRegistry.Result.failed(failureCode));
+            returnFromWorkflowVideoCapture(
+                    durationSeconds <= 0
+                            ? "无法验证录像时长，请重新录制"
+                            : durationSeconds < plan.minimumDurationSeconds()
+                            ? "录像不足 " + plan.minimumDurationSeconds() + " 秒，请重新录制"
+                            : "工作流录像未保存，请重新录制");
+            return;
+        }
+        if (node == null || !plan.nodeId().equals(node.nodeId())
+                || !"video_capture".equals(node.type())
+                || workflowExecutionCoordinator == null) {
+            if (!completedVideo.delete()) {
+                Log.w(KEY_LOG_TAG, "Unable to remove stale workflow video "
+                        + completedVideo.getName());
+            }
+            completeWorkflowVideoCallback(
+                    callback,
+                    WorkflowCapabilityRegistry.Result.failed(
+                            "workflow_video_state_changed"));
+            returnFromWorkflowVideoCapture("工作流步骤已变化，录像未登记");
+            return;
+        }
+
+        WorkflowEvidenceReference evidence;
+        try {
+            evidence = new WorkflowEvidenceReference(
+                    "workflow-video-" + UUID.randomUUID(),
+                    node.nodeId(),
+                    plan.evidenceKey(),
+                    WorkflowStepContext.EvidenceType.VIDEO,
+                    "task-evidence/" + completedVideo.getName(),
+                    "",
+                    durationSeconds);
+        } catch (RuntimeException exception) {
+            if (!completedVideo.delete()) {
+                Log.w(KEY_LOG_TAG, "Unable to remove invalid workflow video "
+                        + completedVideo.getName());
+            }
+            completeWorkflowVideoCallback(
+                    callback,
+                    WorkflowCapabilityRegistry.Result.failed(
+                            "workflow_video_reference_invalid"));
+            returnFromWorkflowVideoCapture("工作流录像引用无效，请重新录制");
+            return;
+        }
+
+        WorkflowExecutionCoordinator.ActionResult recorded =
+                workflowExecutionCoordinator.recordEvidence(
+                        activeWorkflowAssignmentId, evidence);
+        if (recorded.code() != WorkflowExecutionCoordinator.ActionCode.RECORDED) {
+            if (!completedVideo.delete()) {
+                Log.w(KEY_LOG_TAG, "Unable to remove rejected workflow video "
+                        + completedVideo.getName());
+            }
+            completeWorkflowVideoCallback(
+                    callback,
+                    WorkflowCapabilityRegistry.Result.failed(
+                            "workflow_video_record_failed"));
+            returnFromWorkflowVideoCapture(
+                    "工作流录像未登记：" + recorded.reason());
+            return;
+        }
+
+        int capturedCount = 0;
+        for (WorkflowEvidenceReference item : recorded.state().evidenceReferences()) {
+            if (node.nodeId().equals(item.nodeId())
+                    && item.type() == WorkflowStepContext.EvidenceType.VIDEO) {
+                capturedCount++;
+            }
+        }
+        JSONObject output = taskSyncPayload(
+                "capturedCount", capturedCount,
+                "durationSeconds", durationSeconds);
+        WorkflowExecutionCoordinator.ActionResult advanced =
+                workflowExecutionCoordinator.advance(
+                        activeWorkflowAssignmentId,
+                        new WorkflowStepContext(),
+                        new JSONObject(),
+                        output);
+        completeWorkflowVideoCallback(
+                callback,
+                advanced.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED
+                        || advanced.code() == WorkflowExecutionCoordinator.ActionCode.BLOCKED
+                        ? WorkflowCapabilityRegistry.Result.completed(output)
+                        : WorkflowCapabilityRegistry.Result.failed(
+                                "workflow_video_advance_failed"));
+        closeCamera();
+        stopCameraThread();
+        renderChatScreen();
+        showHudOperationDetail(
+                "workflow",
+                workflowHudPresenter.actionResult(activeWorkflowAssignmentId, advanced),
+                false);
+        if (workflowEvidenceUploadCoordinator != null) {
+            workflowEvidenceUploadCoordinator.request();
+        }
+        if (advanced.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED) {
+            setChatStatus("录像已本地保存，等待安全上传");
+        } else if (advanced.code() == WorkflowExecutionCoordinator.ActionCode.BLOCKED) {
+            setChatStatus("录像已保存，请继续补全当前步骤");
+        } else {
+            setChatStatus("录像已保存，但工作流未推进：" + advanced.reason());
+        }
+        offlineWakeSuppressedUntilMs = SystemClock.elapsedRealtime()
+                + MEDIA_WAKE_REARM_COOLDOWN_MS;
+        scheduleForegroundVoiceListening("workflow-video-complete");
+    }
+
+    private void returnFromWorkflowVideoCapture(String message) {
+        closeCamera();
+        stopCameraThread();
+        renderChatScreen();
+        openWorkflowExecution(activeWorkflowAssignmentId, false);
+        setChatStatus(message);
+        offlineWakeSuppressedUntilMs = SystemClock.elapsedRealtime()
+                + MEDIA_WAKE_REARM_COOLDOWN_MS;
+        scheduleForegroundVoiceListening("workflow-video-return");
+    }
+
+    private long sceneVideoMaximumDurationMillis() {
+        WorkflowVideoCapturePlan plan = workflowVideoCapturePlan;
+        return plan == null ? SCENE_VIDEO_MAX_DURATION_MS : plan.maximumDurationMillis();
+    }
+
+    private int completedSceneVideoDurationSeconds(
+            File videoFile,
+            WorkflowVideoCapturePlan plan
+    ) {
+        if (videoFile == null || !videoFile.isFile() || plan == null) return 0;
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(videoFile.getAbsolutePath());
+            String rawDuration = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_DURATION);
+            long durationMillis = rawDuration == null ? 0L : Long.parseLong(rawDuration);
+            return (int) Math.min(
+                    plan.maximumDurationSeconds(),
+                    Math.max(0L, durationMillis / 1000L));
+        } catch (RuntimeException exception) {
+            Log.w(KEY_LOG_TAG, "Unable to verify workflow video duration", exception);
+            return 0;
+        } finally {
+            try {
+                retriever.release();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void failWorkflowVideoCaptureAndReturn(String reason, String message) {
+        if (workflowVideoCapturePlan == null && workflowVideoCallback == null) return;
+        cancelWorkflowVideoCapture(reason);
+        pendingSceneVideoCapture = false;
+        sceneVideoStarting = false;
+        sceneVideoRecording = false;
+        sceneVideoStartedAtMs = 0L;
+        releaseSceneVideoRecorder();
+        if (sceneVideoFile != null && sceneVideoFile.exists()) sceneVideoFile.delete();
+        sceneVideoFile = null;
+        returnFromWorkflowVideoCapture(message);
+    }
+
+    private void cancelWorkflowVideoCapture(String reason) {
+        WorkflowCapabilityRegistry.Callback callback = workflowVideoCallback;
+        workflowVideoCallback = null;
+        workflowVideoCapturePlan = null;
+        if (callback != null) {
+            callback.complete(WorkflowCapabilityRegistry.Result.failed(reason));
+        }
+    }
+
+    private static void completeWorkflowVideoCallback(
+            WorkflowCapabilityRegistry.Callback callback,
+            WorkflowCapabilityRegistry.Result result
+    ) {
+        if (callback != null) callback.complete(result);
     }
 
     static boolean retainCompletedSceneVideo(File videoFile) {
@@ -9351,11 +9713,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }
         }
         sceneVideoRecording = false;
+        sceneVideoStartedAtMs = 0L;
         releaseSceneVideoRecorder();
         if (sceneVideoFile != null && sceneVideoFile.exists()) {
             sceneVideoFile.delete();
         }
         sceneVideoFile = null;
+        cancelWorkflowVideoCapture("workflow_video_interrupted");
     }
 
     private static String safeMessage(Exception error) {
