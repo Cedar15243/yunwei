@@ -665,6 +665,7 @@ for (const marker of [
   }
 }
 const externalAcceptanceInitializer = mustFile("security/init-v9-external-acceptance.mjs");
+mustFile("security/refresh-v9-external-acceptance.mjs");
 const externalAttestationRecorder = mustFile("security/record-v9-external-attestation.mjs");
 const externalApprovalSignatureAttacher = mustFile(
   "security/attach-v9-external-approval-signature.mjs",

@@ -23,7 +23,7 @@
     "test:v9-gateway-delivery-contract": "node scripts/test-v9-gateway-delivery-contract.mjs",
     "test:v9-security": "node scripts/test-v9-sbom.mjs && node scripts/test-v9-security-audit.mjs",
     "test:v9-operational-readiness": "node scripts/test-v9-operational-readiness.mjs",
-    "test:v9-external-acceptance": "node scripts/test-v9-external-acceptance-init.mjs && node scripts/test-v9-external-attestation-record.mjs && node scripts/test-v9-external-approval-signature.mjs && node scripts/test-v9-external-acceptance.mjs",
+    "test:v9-external-acceptance": "node scripts/test-v9-external-acceptance-init.mjs && node scripts/test-v9-external-acceptance-refresh.mjs && node scripts/test-v9-external-attestation-record.mjs && node scripts/test-v9-external-approval-signature.mjs && node scripts/test-v9-external-acceptance.mjs",
     "init:v9-external-acceptance": "node scripts/init-v9-external-acceptance.mjs",
     "record:v9-external-attestation": "node scripts/record-v9-external-attestation.mjs",
     "attach:v9-external-approval-signature": "node scripts/attach-v9-external-approval-signature.mjs",

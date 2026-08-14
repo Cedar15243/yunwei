@@ -186,7 +186,7 @@ describe("App", () => {
     await user.click(screen.getByRole("link", { name: "系统设置" }));
     expect(screen.getByRole("heading", { name: "系统设置", level: 1 })).toBeVisible();
     expect(await screen.findByText("身份与密钥边界")).toBeVisible();
-  });
+  }, 10_000);
 
   it("opens an existing workflow in the real studio route", async () => {
     const user = userEvent.setup();

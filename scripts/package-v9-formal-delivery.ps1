@@ -422,6 +422,7 @@ Copy-RequiredFile (Join-Path $repoRoot "scripts\validate-v9-dast-report.mjs") "s
 Copy-RequiredFile (Join-Path $repoRoot "scripts\verify-v9-delivery.ps1") "security\verify-v9-delivery.ps1"
 Copy-RequiredFile (Join-Path $repoRoot "scripts\v9-external-acceptance.mjs") "security\v9-external-acceptance.mjs"
 Copy-RequiredFile (Join-Path $repoRoot "scripts\init-v9-external-acceptance.mjs") "security\init-v9-external-acceptance.mjs"
+Copy-RequiredFile (Join-Path $repoRoot "scripts\refresh-v9-external-acceptance.mjs") "security\refresh-v9-external-acceptance.mjs"
 Copy-RequiredFile (Join-Path $repoRoot "scripts\record-v9-external-attestation.mjs") "security\record-v9-external-attestation.mjs"
 Copy-RequiredFile (Join-Path $repoRoot "scripts\attach-v9-external-approval-signature.mjs") "security\attach-v9-external-approval-signature.mjs"
 
@@ -477,6 +478,8 @@ if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -Path (Join-Path $deliveryRoot "*") -DestinationPath $zip -CompressionLevel Optimal
 $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToUpperInvariant()
 "$zipHash  $(Split-Path -Leaf $zip)" | Set-Content -LiteralPath (Join-Path $outputRoot "DingdangAI-V9-9.0.0-formal-delivery.zip.sha256") -Encoding ASCII
+& node (Join-Path $repoRoot "scripts\refresh-v9-external-acceptance.mjs") $repoRoot "evidence/v9-external-acceptance"
+if ($LASTEXITCODE -ne 0) { throw "V9 external acceptance workspace refresh failed; formal ZIP was not released" }
 
 Write-Output "DeliveryDirectory=$deliveryRoot"
 Write-Output "DeliveryZip=$zip"
