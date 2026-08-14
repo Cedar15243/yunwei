@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "<ISO-8601 timestamp>",
+  "release": {
+    "applicationId": "com.codex.air3nativecamera.dingdangexpert.v9",
+    "versionCode": 900000,
+    "versionName": "9.0.0",
+    "apkSha256": "<64-character SHA-256>",
+    "deliveryZipSha256": "<64-character SHA-256>",
+    "generatedAt": "<release-manifest builtAt>"
+  },
+  "gates": {
+    "production_supabase": {
+      "status": "pending",
+      "environment": "production",
+      "completedAt": "<ISO-8601 timestamp after release build>",
+      "approver": "<approver or approval ticket>",
+      "attestation": {
+        "path": "files/production-supabase-attestation.json",
+        "sha256": "<64-character SHA-256>",
+        "bytes": 0
+      },
+      "evidence": [
+        {
+          "path": "files/production-supabase-attestation.json",
+          "sha256": "<64-character SHA-256>",
+          "bytes": 0
+        }
+      ]
+    }
+  },
+  "signatures": []
+}

@@ -85,11 +85,11 @@ if ($DirectAi) {
   $env:DIRECT_GPT_BASE_URL = Read-ConfigOrEnv `
     -Name "DIRECT_GPT_BASE_URL" `
     -FileName "direct_gpt_base_url.local" `
-    -DefaultValue "https://api.openai.com/v1"
+    -DefaultValue "https://dashscope.aliyuncs.com/compatible-mode/v1"
   $env:DIRECT_GPT_MODEL = Read-ConfigOrEnv `
     -Name "DIRECT_GPT_MODEL" `
     -FileName "direct_gpt_model.local" `
-    -DefaultValue "gpt-4.1-mini"
+    -DefaultValue "qwen3-vl-plus"
   $env:DIRECT_ASR_API_KEY = Read-ConfigOrEnv `
     -Name "DIRECT_ASR_API_KEY" `
     -FileName "direct_asr_api_key.local" `

@@ -17,18 +17,21 @@ public final class ManagedRuntimeConfiguration {
     private final String iflytekAppId;
     private final String iflytekApiKey;
     private final String iflytekApiSecret;
+    private final boolean localActivation;
 
     private ManagedRuntimeConfiguration(
             String backendBaseUrl,
             String backendCredential,
             String iflytekAppId,
             String iflytekApiKey,
-            String iflytekApiSecret) {
+            String iflytekApiSecret,
+            boolean localActivation) {
         this.backendBaseUrl = backendBaseUrl;
         this.backendCredential = backendCredential;
         this.iflytekAppId = iflytekAppId;
         this.iflytekApiKey = iflytekApiKey;
         this.iflytekApiSecret = iflytekApiSecret;
+        this.localActivation = localActivation;
     }
 
     public static ManagedRuntimeConfiguration resolve(
@@ -39,6 +42,28 @@ public final class ManagedRuntimeConfiguration {
             String generatedIflytekApiKey,
             String generatedIflytekApiSecret,
             Map<String, String> managedValues) {
+        return resolve(
+                secureRuntime,
+                generatedBackendBaseUrl,
+                generatedBackendCredential,
+                generatedIflytekAppId,
+                generatedIflytekApiKey,
+                generatedIflytekApiSecret,
+                managedValues,
+                null,
+                System.currentTimeMillis());
+    }
+
+    public static ManagedRuntimeConfiguration resolve(
+            boolean secureRuntime,
+            String generatedBackendBaseUrl,
+            String generatedBackendCredential,
+            String generatedIflytekAppId,
+            String generatedIflytekApiKey,
+            String generatedIflytekApiSecret,
+            Map<String, String> managedValues,
+            DeviceActivationRecord localActivation,
+            long nowMillis) {
         Map<String, String> safeManaged = managedValues == null
                 ? Collections.<String, String>emptyMap()
                 : managedValues;
@@ -48,15 +73,36 @@ public final class ManagedRuntimeConfiguration {
                     clean(generatedBackendCredential),
                     clean(generatedIflytekAppId),
                     clean(generatedIflytekApiKey),
-                    clean(generatedIflytekApiSecret));
+                    clean(generatedIflytekApiSecret),
+                    false);
         }
-        String managedBaseUrl = validHttpsUrl(safeManaged.get(BACKEND_BASE_URL));
+        String rawManagedBaseUrl = clean(safeManaged.get(BACKEND_BASE_URL));
+        String rawManagedCredential = clean(safeManaged.get(BACKEND_DEVICE_TOKEN));
+        boolean managedBackendPresent = rawManagedBaseUrl.length() > 0
+                || rawManagedCredential.length() > 0;
+        String backendBaseUrl;
+        String backendCredential;
+        boolean usesLocalActivation = false;
+        if (managedBackendPresent) {
+            backendBaseUrl = validHttpsUrl(rawManagedBaseUrl);
+            backendCredential = backendBaseUrl.length() > 0
+                    && rawManagedCredential.length() > 0
+                    ? rawManagedCredential : "";
+        } else if (localActivation != null && localActivation.isValidAt(nowMillis)) {
+            backendBaseUrl = localActivation.backendBaseUrl();
+            backendCredential = localActivation.bootstrapCredential();
+            usesLocalActivation = true;
+        } else {
+            backendBaseUrl = validHttpsUrl(generatedBackendBaseUrl);
+            backendCredential = "";
+        }
         return new ManagedRuntimeConfiguration(
-                managedBaseUrl.length() > 0 ? managedBaseUrl : validHttpsUrl(generatedBackendBaseUrl),
-                clean(safeManaged.get(BACKEND_DEVICE_TOKEN)),
+                backendBaseUrl,
+                backendCredential,
                 clean(safeManaged.get(IFLYTEK_APP_ID)),
                 clean(safeManaged.get(IFLYTEK_API_KEY)),
-                clean(safeManaged.get(IFLYTEK_API_SECRET)));
+                clean(safeManaged.get(IFLYTEK_API_SECRET)),
+                usesLocalActivation);
     }
 
     public String backendBaseUrl() {
@@ -85,6 +131,10 @@ public final class ManagedRuntimeConfiguration {
 
     public boolean hasIflytekCredentials() {
         return iflytekAppId.length() > 0 && iflytekApiKey.length() > 0 && iflytekApiSecret.length() > 0;
+    }
+
+    public boolean usesLocalActivation() {
+        return localActivation;
     }
 
     private static String validHttpsUrl(String value) {

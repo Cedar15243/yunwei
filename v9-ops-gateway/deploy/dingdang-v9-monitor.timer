@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the Dingdang V9 independent monitor every minute
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=1m
+AccuracySec=5s
+Persistent=true
+Unit=dingdang-v9-monitor.service
+
+[Install]
+WantedBy=timers.target

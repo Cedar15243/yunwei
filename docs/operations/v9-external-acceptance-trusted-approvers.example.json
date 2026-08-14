@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "keys": [
+    {
+      "keyId": "release-key-1",
+      "algorithm": "ed25519",
+      "role": "release_manager",
+      "status": "active",
+      "publicKeyPem": "<Ed25519 SPKI public key PEM>"
+    },
+    {
+      "keyId": "security-key-1",
+      "algorithm": "ed25519",
+      "role": "security_approver",
+      "status": "active",
+      "publicKeyPem": "<Ed25519 SPKI public key PEM>"
+    }
+  ]
+}

@@ -48,6 +48,8 @@ tmp/*.txt
 # Local analysis/cache artifacts
 _repo_analysis/
 cache.db
+__pycache__/
+*.py[cod]
 mihomo-*.yaml
 .superpowers/
 .worktrees/

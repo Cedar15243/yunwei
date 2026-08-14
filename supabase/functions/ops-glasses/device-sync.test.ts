@@ -30,7 +30,10 @@ function gateway(overrides: Partial<SessionGateway> = {}): SessionGateway {
   };
 }
 
-function eventRequest(token = "access-token"): Request {
+function eventRequest(
+  token = "access-token",
+  overrides: Record<string, unknown> = {},
+): Request {
   return new Request("https://ops/device-sync/events", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -43,6 +46,7 @@ function eventRequest(token = "access-token"): Request {
       payload: { text: "开始检查" },
       occurredAt: "2026-07-31T04:00:00.000Z",
       idempotencyKey: "event-a",
+      ...overrides,
     }),
   });
 }
@@ -217,44 +221,110 @@ Deno.test("persists closed task events with closed task status", async () => {
   assertEquals(await persistedTaskStatus("task_closed"), "closed");
 });
 
-async function persistedTaskStatus(eventType: string): Promise<string> {
-  let taskStatus = "";
-  const emptySelection = {
-    eq() {
-      return this;
-    },
-    maybeSingle: async () => ({ data: null, error: null }),
-  };
-  const supabase = {
-    from(table: string) {
-      if (table === "ops_projects") {
-        return {
-          upsert: () => ({
-            select: () => ({ single: async () => ({ data: { id: "project-a" }, error: null }) }),
-          }),
-        };
-      }
-      if (table === "maintenance_tasks") {
-        return {
-          upsert: (record: Record<string, unknown>) => {
-            taskStatus = String(record.status ?? "");
-            return {
-              select: () => ({ single: async () => ({ data: { id: "task-a" }, error: null }) }),
-            };
-          },
-        };
-      }
-      if (table === "task_events") {
-        return {
-          select: () => emptySelection,
-          insert: async () => ({ error: null }),
-        };
-      }
-      throw new Error(`Unexpected table ${table}`);
-    },
-  };
+Deno.test("refuses to reactivate a closed authoritative project from a device event", async () => {
+  const database = authorizationSupabase({ projectStatus: "closed" });
+  const persistedGateway = createDeviceSyncGateway(database.client);
+  const response = await routeDeviceSync(eventRequest(), gateway({
+    appendEvent: persistedGateway.appendEvent,
+  }));
 
-  await createDeviceSyncGateway(supabase).appendEvent(identity, {
+  assertEquals(response.status, 409);
+  assertEquals(await response.json(), { ok: false, error: "project_inactive" });
+  assertEquals(database.projectUpserts, 0);
+});
+
+Deno.test("rejects device events after the project membership is revoked", async () => {
+  const database = authorizationSupabase({ membershipStatus: "revoked" });
+  const persistedGateway = createDeviceSyncGateway(database.client);
+  const response = await routeDeviceSync(eventRequest(), gateway({
+    appendEvent: persistedGateway.appendEvent,
+  }));
+
+  assertEquals(response.status, 403);
+  assertEquals(await response.json(), { ok: false, error: "project_access_forbidden" });
+});
+
+Deno.test("rejects device events when the active binding targets another project", async () => {
+  const database = authorizationSupabase({ bindingProjectId: "project-other" });
+  const persistedGateway = createDeviceSyncGateway(database.client);
+  const response = await routeDeviceSync(eventRequest(), gateway({
+    appendEvent: persistedGateway.appendEvent,
+  }));
+
+  assertEquals(response.status, 403);
+  assertEquals(await response.json(), { ok: false, error: "project_access_forbidden" });
+});
+
+Deno.test("creates a new project and engineer membership through one atomic registration RPC", async () => {
+  const database = authorizationSupabase({ existingProject: false });
+  const persistedGateway = createDeviceSyncGateway(database.client);
+  const response = await routeDeviceSync(eventRequest("access-token", {
+    eventType: "task_started",
+    idempotencyKey: "event-start-a",
+  }), gateway({ appendEvent: persistedGateway.appendEvent }));
+
+  assertEquals(response.status, 202);
+  assertEquals(database.projectRegistrationCalls, 1);
+  assertEquals(database.projectUpserts, 0);
+  assertEquals(database.membershipInserts, 0);
+  assertEquals(database.registrationArgs, {
+    target_organization_id: "org-a",
+    target_actor_profile_id: "profile-a",
+    target_device_id: "device-a",
+    target_local_project_id: "project-local-a",
+    target_project_title: "机房巡检",
+  });
+});
+
+Deno.test("does not create a missing project from a non-start event", async () => {
+  const database = authorizationSupabase({ existingProject: false });
+  const persistedGateway = createDeviceSyncGateway(database.client);
+  const response = await routeDeviceSync(
+    eventRequest(),
+    gateway({ appendEvent: persistedGateway.appendEvent }),
+  );
+
+  assertEquals(response.status, 409);
+  assertEquals(await response.json(), { ok: false, error: "project_not_registered" });
+  assertEquals(database.projectRegistrationCalls, 0);
+  assertEquals(database.projectUpserts, 0);
+  assertEquals(database.membershipInserts, 0);
+});
+
+Deno.test("does not resolve a same-name local project from another organization", async () => {
+  const database = authorizationSupabase({ existingProject: false, includeForeignProject: true });
+  const persistedGateway = createDeviceSyncGateway(database.client);
+  const response = await routeDeviceSync(eventRequest("access-token", {
+    eventType: "task_started",
+    idempotencyKey: "event-cross-org-start",
+  }), gateway({ appendEvent: persistedGateway.appendEvent }));
+
+  assertEquals(response.status, 202);
+  assertEquals(database.projectRegistrationCalls, 1);
+  assertEquals(database.registrationArgs.target_organization_id, "org-a");
+});
+
+Deno.test("does not bootstrap a new project from a project-scoped device binding", async () => {
+  const database = authorizationSupabase({
+    existingProject: false,
+    bindingProjectId: "project-other",
+  });
+  const persistedGateway = createDeviceSyncGateway(database.client);
+  const response = await routeDeviceSync(eventRequest("access-token", {
+    eventType: "task_started",
+    idempotencyKey: "event-project-bound-start",
+  }), gateway({ appendEvent: persistedGateway.appendEvent }));
+
+  assertEquals(response.status, 403);
+  assertEquals(await response.json(), { ok: false, error: "project_access_forbidden" });
+  assertEquals(database.projectRegistrationCalls, 0);
+  assertEquals(database.projectUpserts, 0);
+});
+
+async function persistedTaskStatus(eventType: string): Promise<string> {
+  const database = authorizationSupabase();
+
+  await createDeviceSyncGateway(database.client).appendEvent(identity, {
     localProjectId: "project-local-a",
     projectTitle: "机房巡检",
     localTaskId: "task-local-a",
@@ -264,5 +334,156 @@ async function persistedTaskStatus(eventType: string): Promise<string> {
     occurredAt: "2026-07-31T04:00:00.000Z",
     idempotencyKey: `event-${eventType}`,
   });
-  return taskStatus;
+  return database.taskStatus;
+}
+
+function authorizationSupabase(options: {
+  projectStatus?: "active" | "closed" | "archived";
+  membershipStatus?: "active" | "revoked";
+  bindingProjectId?: string | null;
+  existingProject?: boolean;
+  includeForeignProject?: boolean;
+} = {}) {
+  let projectStatus = options.projectStatus ?? "active";
+  let projectUpserts = 0;
+  let membershipInserts = 0;
+  let projectRegistrationCalls = 0;
+  let registrationArgs: Record<string, unknown> = {};
+  let persistedTaskStatus = "";
+  const rows: Record<string, Array<Record<string, unknown>>> = {
+    ops_projects: [
+      ...(options.existingProject === false ? [] : [{
+        id: "project-a",
+        organization_id: "org-a",
+        local_project_id: "project-local-a",
+        status: projectStatus,
+      }]),
+      ...(options.includeForeignProject ? [{
+        id: "project-foreign",
+        organization_id: "org-b",
+        local_project_id: "project-local-a",
+        status: "active",
+      }] : []),
+    ],
+    ops_project_memberships: options.membershipStatus === "revoked" || options.existingProject === false
+      ? []
+      : [{
+        id: "membership-a",
+        organization_id: "org-a",
+        project_id: "project-a",
+        profile_id: "profile-a",
+        status: "active",
+      }],
+    device_bindings: [{
+      id: "binding-a",
+      organization_id: "org-a",
+      device_id: "device-a",
+      profile_id: "profile-a",
+      project_id: options.bindingProjectId ?? null,
+      status: "active",
+    }],
+    task_events: [],
+  };
+
+  const client = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      if (name !== "register_device_project_from_task_start") {
+        return { data: null, error: { message: `unexpected rpc ${name}` } };
+      }
+      projectRegistrationCalls += 1;
+      registrationArgs = args;
+      rows.ops_projects.push({
+        id: "project-a",
+        organization_id: "org-a",
+        local_project_id: "project-local-a",
+        status: "active",
+      });
+      rows.ops_project_memberships.push({
+        id: "membership-a",
+        organization_id: "org-a",
+        project_id: "project-a",
+        profile_id: "profile-a",
+        status: "active",
+      });
+      return {
+        data: [{ project_id: "project-a", project_status: "active" }],
+        error: null,
+      };
+    },
+    from(table: string) {
+      const filters = new Map<string, unknown>();
+      let mutation: { kind: "insert" | "upsert"; value: Record<string, unknown> } | null = null;
+      const builder: any = {
+        select() {
+          return builder;
+        },
+        eq(field: string, value: unknown) {
+          filters.set(field, value);
+          return builder;
+        },
+        upsert(value: Record<string, unknown>) {
+          mutation = { kind: "upsert", value };
+          if (table === "ops_projects") {
+            projectUpserts += 1;
+            if (typeof value.status === "string") projectStatus = value.status as typeof projectStatus;
+          }
+          if (table === "maintenance_tasks") {
+            persistedTaskStatus = String(value.status ?? "");
+          }
+          return builder;
+        },
+        insert(value: Record<string, unknown>) {
+          mutation = { kind: "insert", value };
+          if (table === "ops_project_memberships") membershipInserts += 1;
+          return builder;
+        },
+        async maybeSingle() {
+          const result = execute();
+          return { data: result.data[0] ?? null, error: result.error };
+        },
+        async single() {
+          const result = execute();
+          return { data: result.data[0] ?? null, error: result.error };
+        },
+        then(resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) {
+          return Promise.resolve(execute()).then(resolve, reject);
+        },
+      };
+
+      function execute(): { data: Array<Record<string, unknown>>; error: null } {
+        if (mutation) {
+          if (table === "ops_projects") {
+            return { data: [{ id: "project-a", status: projectStatus }], error: null };
+          }
+          if (table === "maintenance_tasks") return { data: [{ id: "task-a" }], error: null };
+          return { data: [], error: null };
+        }
+        const filtered = (rows[table] ?? []).filter((row) =>
+          Array.from(filters.entries()).every(([field, value]) => row[field] === value)
+        );
+        return { data: filtered, error: null };
+      }
+
+      return builder;
+    },
+  };
+
+  return {
+    client,
+    get projectUpserts() {
+      return projectUpserts;
+    },
+    get taskStatus() {
+      return persistedTaskStatus;
+    },
+    get membershipInserts() {
+      return membershipInserts;
+    },
+    get projectRegistrationCalls() {
+      return projectRegistrationCalls;
+    },
+    get registrationArgs() {
+      return registrationArgs;
+    },
+  };
 }

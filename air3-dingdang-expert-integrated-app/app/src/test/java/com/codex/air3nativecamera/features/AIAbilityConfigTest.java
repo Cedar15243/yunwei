@@ -63,12 +63,13 @@ public final class AIAbilityConfigTest {
     }
 
     @Test
-    public void localOperationDetailsUseTheirExistingRoutes() {
+    public void implementedOperationDetailsUseAnExplicitRoute() {
         for (AIAbilityConfig config : AIAbilityConfig.defaultConfigs()) {
             if ("agent_center".equals(config.id())) {
                 assertEquals(AIAbilityConfig.Route.AGENT_CENTER, config.route());
-            } else if (config.status() == AIAbilityConfig.Status.LOCAL) {
-                assertEquals(AIAbilityConfig.Route.PLACEHOLDER, config.route());
+            } else if (config.route() != AIAbilityConfig.Route.DIAGNOSIS
+                    && config.route() != AIAbilityConfig.Route.EXPERT_COLLAB) {
+                assertEquals(AIAbilityConfig.Route.OPERATION_DETAIL, config.route());
             }
         }
         assertFalse(AIAbilityConfig.defaultConfigs().isEmpty());

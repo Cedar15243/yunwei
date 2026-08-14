@@ -1,15 +1,29 @@
 services:
   ops-management-web:
-    build:
-      context: .
-      args:
-        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
-        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
-        VITE_OPS_API_BASE_URL: ${VITE_OPS_API_BASE_URL}
+    image: ${OPS_MANAGEMENT_IMAGE:?OPS_MANAGEMENT_IMAGE is required}
     container_name: dingdang-ops-management-web
+    entrypoint: ["nginx", "-g", "daemon off;"]
     restart: unless-stopped
     ports:
       - "127.0.0.1:${OPS_MANAGEMENT_PORT:-8788}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    tmpfs:
+      - /var/cache/nginx:size=16m,mode=0755
+      - /var/run:size=1m,mode=0755
+      - /tmp:size=8m,mode=1777
     mem_limit: 128m
     cpus: "0.30"
-

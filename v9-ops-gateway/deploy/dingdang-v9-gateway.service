@@ -1,0 +1,28 @@
+[Unit]
+Description=Dingdang V9 managed AI gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+EnvironmentFile=/etc/dingdang-v9-gateway.env
+EnvironmentFile=/etc/dingdang-v9-voiceprint.env
+WorkingDirectory=/opt/dingdang-v9-gateway/current
+ExecStart=/opt/dingdang-v9-gateway/current/.venv/bin/python /opt/dingdang-v9-gateway/current/gateway.py
+Restart=on-failure
+RestartSec=3
+StateDirectory=dingdang-v9-gateway
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -37,10 +37,14 @@ public final class VoiceCommandRouterTest {
         assertRoute("记录", VoiceCommandRouter.Command.RECORD);
         assertRoute("设备", VoiceCommandRouter.Command.DEVICE);
         assertRoute("设备记忆", VoiceCommandRouter.Command.DEVICE);
+        assertRoute("项目记忆", VoiceCommandRouter.Command.PROJECT_MEMORY);
+        assertRoute("查看历史项目", VoiceCommandRouter.Command.PROJECT_MEMORY);
+        assertRoute("查看之前的项目记录", VoiceCommandRouter.Command.PROJECT_MEMORY);
+        assertRoute("继续之前的项目", VoiceCommandRouter.Command.PROJECT_MEMORY);
         assertRoute("知识库", VoiceCommandRouter.Command.KNOWLEDGE);
         assertRoute("华方知识库", VoiceCommandRouter.Command.KNOWLEDGE);
-        assertRoute("技能中心", VoiceCommandRouter.Command.SKILL_CENTER);
-        assertRoute("AI技能中心", VoiceCommandRouter.Command.SKILL_CENTER);
+        assertRoute("技能中心", VoiceCommandRouter.Command.AGENT_CENTER);
+        assertRoute("AI技能中心", VoiceCommandRouter.Command.AGENT_CENTER);
         assertRoute("智能体中心", VoiceCommandRouter.Command.AGENT_CENTER);
         assertRoute("Agent中心", VoiceCommandRouter.Command.AGENT_CENTER);
         assertRoute("AI Agent中心", VoiceCommandRouter.Command.AGENT_CENTER);
@@ -140,6 +144,7 @@ public final class VoiceCommandRouterTest {
         assertRoute("小叮当，启用环境诊断", VoiceCommandRouter.Command.ENABLE_ENVIRONMENT_AGENT);
         assertRoute("小叮当，停用环境诊断", VoiceCommandRouter.Command.DISABLE_ENVIRONMENT_AGENT);
         assertRoute("小叮当，打开AI运维技能", VoiceCommandRouter.Command.AGENT_CENTER);
+        assertRoute("小叮当，打开项目记忆", VoiceCommandRouter.Command.PROJECT_MEMORY);
         assertRoute("小叮当，回首页", VoiceCommandRouter.Command.HOME);
         assertRoute("小叮当，返回首页", VoiceCommandRouter.Command.HOME);
         assertRoute("小叮当，请返回首页", VoiceCommandRouter.Command.HOME);

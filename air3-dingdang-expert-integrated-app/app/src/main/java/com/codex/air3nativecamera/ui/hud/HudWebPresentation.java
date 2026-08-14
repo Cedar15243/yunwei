@@ -13,6 +13,7 @@ import android.webkit.WebViewClient;
  */
 public final class HudWebPresentation {
     public interface Actions {
+        void toggleMenu();
         void openCapabilities();
         void capturePhoto();
         void captureVideo();
@@ -42,6 +43,9 @@ public final class HudWebPresentation {
     private final WebView webView;
     private boolean pageReady;
     private String pendingState = "standby";
+    private String pendingStandbyNotice = "";
+    private String pendingStandbyLabel = "语音待命";
+    private String pendingStandbyAvailabilityNotice = "";
     private String pendingTranscript = "";
     private String pendingAnalysisInput = "";
     private String pendingImageStatus = "未上传";
@@ -51,6 +55,7 @@ public final class HudWebPresentation {
     private String pendingConversation = "";
     private int pendingConversationPage = 1;
     private int pendingConversationPageCount = 1;
+    private boolean pendingGuidanceActive;
     private String pendingTaskEvidenceText = "";
     private String pendingTaskImagePreview = "";
     private String pendingTaskDetectionMarkers = "[]";
@@ -68,6 +73,7 @@ public final class HudWebPresentation {
     private String pendingErrorActionLabel = "语音重试";
     private String pendingAbilityTitle = "";
     private String pendingGuideContext = "home";
+    private String pendingVoiceMode = "wake";
     private int pendingTutorialPage = 1;
     private String pendingAbilityDescription = "";
     private String pendingAbilityCommand = "";
@@ -82,6 +88,7 @@ public final class HudWebPresentation {
     private String pendingOperationSecondaryLabel = "";
     private int pendingOperationPage = 1;
     private int pendingOperationPageCount = 1;
+    private boolean pendingManagedMenuEnabled;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     public HudWebPresentation(WebView webView, Actions actions) {
@@ -127,6 +134,26 @@ public final class HudWebPresentation {
         execute("window.HudPresentation.showState(" + quote(pendingState) + ");");
     }
 
+    public void setStandbyNotice(String notice) {
+        pendingStandbyNotice = safeText(notice);
+        execute("window.HudPresentation.setStandbyNotice("
+                + quote(pendingStandbyNotice) + ");");
+    }
+
+    public void setStandbyAvailability(String label, String notice) {
+        pendingStandbyLabel = safeText(label);
+        pendingStandbyAvailabilityNotice = safeText(notice);
+        execute("window.HudPresentation.setStandbyAvailability("
+                + quote(pendingStandbyLabel) + ","
+                + quote(pendingStandbyAvailabilityNotice) + ");");
+    }
+
+    public void setManagedMenuEnabled(boolean enabled) {
+        pendingManagedMenuEnabled = enabled;
+        execute("window.HudPresentation.setManagedMenuEnabled("
+                + pendingManagedMenuEnabled + ");");
+    }
+
     public void setTranscript(String transcript) {
         pendingTranscript = safeText(transcript);
         execute("window.HudPresentation.setTranscript(" + quote(pendingTranscript) + ");");
@@ -153,6 +180,7 @@ public final class HudWebPresentation {
 
     public void setConversation(String detail) {
         pendingConversation = safeText(detail);
+        pendingGuidanceActive = false;
         execute("window.HudPresentation.setConversation(" + quote(pendingConversation) + ");");
     }
 
@@ -160,6 +188,7 @@ public final class HudWebPresentation {
         pendingConversation = safeText(detail);
         pendingConversationPage = Math.max(1, page);
         pendingConversationPageCount = Math.max(1, pageCount);
+        pendingGuidanceActive = false;
         execute("window.HudPresentation.setConversationPage(" + quote(pendingConversation) + ","
                 + pendingConversationPage + "," + pendingConversationPageCount + ");");
     }
@@ -213,6 +242,7 @@ public final class HudWebPresentation {
         pendingGuidanceStepCount = Math.max(1, total);
         pendingGuidanceStep = Math.max(1, Math.min(pendingGuidanceStepCount, step));
         pendingGuidanceAction = safeText(action);
+        pendingGuidanceActive = true;
         execute("window.HudPresentation.setGuidanceStep(" + pendingGuidanceStep + ","
                 + pendingGuidanceStepCount + "," + quote(pendingGuidanceAction) + ");");
     }
@@ -247,6 +277,11 @@ public final class HudWebPresentation {
         pendingGuideContext = safeGuideContext(context);
         execute("window.HudPresentation.ensureGuideContent();");
         execute("window.HudPresentation.setVoiceGuideContext(" + quote(pendingGuideContext) + ");");
+    }
+
+    public void setVoiceMode(String mode) {
+        pendingVoiceMode = safeVoiceMode(mode);
+        execute("window.HudPresentation.setVoiceMode(" + quote(pendingVoiceMode) + ");");
     }
 
     public void setTutorialPage(int page) {
@@ -299,30 +334,39 @@ public final class HudWebPresentation {
     }
 
     private void applyPendingState() {
+        boolean replayGuidance = pendingGuidanceActive;
         showState(pendingState);
+        setStandbyAvailability(pendingStandbyLabel, pendingStandbyAvailabilityNotice);
+        setStandbyNotice(pendingStandbyNotice);
         setTranscript(pendingTranscript);
         setAnalysisInput(pendingAnalysisInput);
         setInputStatus(pendingImageStatus, pendingVoiceStatus);
         setResponse(pendingResponseTitle, pendingResponseDetail);
-        setConversationPage(pendingConversation, pendingConversationPage, pendingConversationPageCount);
         setTaskEvidence(pendingTaskEvidenceText, pendingTaskImagePreview);
         setTaskDetectionMarkers(pendingTaskDetectionMarkers);
         setTaskVoiceState(pendingTaskVoiceState, pendingTaskVoiceLabel);
         setResponsePage(pendingResponseTitle, pendingResponseDetail, pendingResponsePage,
                 pendingResponsePageCount, pendingConfidence);
         setCollabStatus(pendingCollabStatus);
-        setGuidanceStep(pendingGuidanceStep, pendingGuidanceStepCount, pendingGuidanceAction);
+        if (replayGuidance) {
+            setGuidanceStep(pendingGuidanceStep, pendingGuidanceStepCount, pendingGuidanceAction);
+        } else {
+            setConversationPage(pendingConversation, pendingConversationPage,
+                    pendingConversationPageCount);
+        }
         setError(pendingErrorMessage);
         execute("window.HudPresentation.setErrorAction(" + quote(pendingErrorAction) + ","
                 + quote(pendingErrorActionLabel) + ");");
         setAbilityDetail(pendingAbilityTitle, pendingAbilityDescription, pendingAbilityCommand);
         setVoiceGuideContext(pendingGuideContext);
+        setVoiceMode(pendingVoiceMode);
         setTutorialPage(pendingTutorialPage);
         setOperationDetail(pendingOperationTag, pendingOperationTitle, pendingOperationDescription,
                 pendingOperationItems, pendingOperationItemActions,
                 pendingOperationPrimaryAction, pendingOperationPrimaryLabel,
                 pendingOperationSecondaryAction, pendingOperationSecondaryLabel);
         setOperationPage(pendingOperationPage, pendingOperationPageCount);
+        setManagedMenuEnabled(pendingManagedMenuEnabled);
     }
 
     private void execute(String script) {
@@ -363,6 +407,14 @@ public final class HudWebPresentation {
         return "home";
     }
 
+    private static String safeVoiceMode(String value) {
+        if ("voiceprint".equals(value) || "passive".equals(value)
+                || "unavailable".equals(value)) {
+            return value;
+        }
+        return "wake";
+    }
+
     private static int safeTutorialPage(int page) {
         return Math.max(1, Math.min(4, page));
     }
@@ -394,6 +446,7 @@ public final class HudWebPresentation {
             this.actions = actions;
         }
 
+        @JavascriptInterface public void toggleMenu(String ignored) { actions.toggleMenu(); }
         @JavascriptInterface public void openCapabilities(String ignored) { actions.openCapabilities(); }
         @JavascriptInterface public void capturePhoto(String ignored) { actions.capturePhoto(); }
         @JavascriptInterface public void captureVideo(String ignored) { actions.captureVideo(); }

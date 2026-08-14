@@ -36,4 +36,39 @@ public final class HudWebPresentationTest {
 
         assertEquals(void.class, markerMethod.getReturnType());
     }
+
+    @Test
+    public void voiceGuideModeIncludesAnExplicitUnavailableState() throws Exception {
+        Method safeMode = HudWebPresentation.class.getDeclaredMethod("safeVoiceMode", String.class);
+        safeMode.setAccessible(true);
+
+        assertEquals("wake", safeMode.invoke(null, "wake"));
+        assertEquals("voiceprint", safeMode.invoke(null, "voiceprint"));
+        assertEquals("passive", safeMode.invoke(null, "passive"));
+        assertEquals("unavailable", safeMode.invoke(null, "unavailable"));
+        assertEquals("wake", safeMode.invoke(null, "unknown"));
+    }
+
+    @Test
+    public void standbyAvailabilityCanReplaceTheReadyLabelWithoutChangingPages() throws Exception {
+        Method availability = HudWebPresentation.class.getDeclaredMethod(
+                "setStandbyAvailability", String.class, String.class);
+
+        assertEquals(void.class, availability.getReturnType());
+    }
+
+    @Test
+    public void hamburgerMenuHasADedicatedToggleBridge() throws Exception {
+        Method toggleMenu = HudWebPresentation.Actions.class.getDeclaredMethod("toggleMenu");
+
+        assertEquals(void.class, toggleMenu.getReturnType());
+    }
+
+    @Test
+    public void taskEndReceiptCanReplaceTheStandbyPromptWithoutAddingANewPage() throws Exception {
+        Method notice = HudWebPresentation.class.getDeclaredMethod(
+                "setStandbyNotice", String.class);
+
+        assertEquals(void.class, notice.getReturnType());
+    }
 }

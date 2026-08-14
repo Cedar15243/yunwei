@@ -1,17 +1,55 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { ensureSchema } from "./automigrate.ts";
 import { createDeviceSyncGateway, routeDeviceSync } from "./device-sync.ts";
+import {
+  createDeviceMemoryGateway,
+  isDeviceMemoryPath,
+  routeDeviceMemory,
+} from "./device-memory.ts";
+import {
+  createDeviceActivationGateway,
+  deviceActivationConfigurationError,
+  routeDeviceActivation,
+} from "./device-activation.ts";
 import { createManagementGateway, routeManagement } from "./management.ts";
 import { authorizeGlassesRequest } from "./device-auth.ts";
+import {
+  createSkillKnowledgeDeviceGateway,
+  isSkillKnowledgeDevicePath,
+  routeSkillKnowledgeDevice,
+} from "./skill-knowledge-device.ts";
+import {
+  createSkillKnowledgeManagementGateway,
+  isSkillKnowledgeManagementPath,
+  routeSkillKnowledgeManagement,
+} from "./skill-knowledge-management.ts";
+import { createKnowledgeDocumentParserClient } from "./knowledge-document-parser-client.ts";
+import {
+  createSkillKnowledgeSyncGateway,
+  isSkillKnowledgeSyncPath,
+  routeSkillKnowledgeSync,
+} from "./skill-knowledge-sync.ts";
 import {
   createWorkflowManagementGateway,
   routeWorkflowManagement,
 } from "./workflow-management.ts";
 import { createEd25519WorkflowSigner } from "./workflow-signing.ts";
+import { createVoiceprintAdminClient } from "./voiceprint-admin-client.ts";
 import {
   createWorkflowDeviceGateway,
   routeWorkflowDevice,
 } from "./workflow-device.ts";
+import {
+  assertRemoteProbeConfigured,
+  controlledConfigurationError,
+  isLegacyDemoAsset,
+  normalizeRemoteProbeMode,
+  type RemoteProbeMode,
+} from "./remote-probe-policy.ts";
+import {
+  assertV9ModelContract,
+  modelContractConfigurationError,
+} from "./model-contract.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
@@ -147,15 +185,25 @@ type Env = {
   DASHSCOPE_API_KEY?: string;
   DASHSCOPE_FUNASR_URL?: string;
   DASHSCOPE_FUNASR_MODEL?: string;
-  DEMO_ASSET_TAG: string;
-  DEMO_TARGET_HOST: string;
-  DEMO_TARGET_SSH_PORT: number;
-  DEMO_TARGET_APP_PORT?: number;
-  REMOTE_PROBE_MODE: "mock" | "tcp" | "http";
+  DEFAULT_ASSET_TAG: string;
+  DEFAULT_TARGET_SSH_PORT: number;
+  DEFAULT_TARGET_APP_PORT?: number;
+  REMOTE_PROBE_MODE: RemoteProbeMode;
   REMOTE_PROBE_URL?: string;
   OPS_GLASSES_API_KEY: string;
   WORKFLOW_SIGNING_PRIVATE_KEY_PKCS8?: string;
   WORKFLOW_SIGNING_KEY_ID?: string;
+  V9_GATEWAY_SYNC_TOKEN_SHA256?: string;
+  V9_GATEWAY_SYNC_ORGANIZATION_ID?: string;
+  V9_GATEWAY_SYNC_USER_ID?: string;
+  V9_GATEWAY_SYNC_DEVICE_ID?: string;
+  V9_VOICEPRINT_ADMIN_URL?: string;
+  V9_VOICEPRINT_ADMIN_TOKEN?: string;
+  V9_KNOWLEDGE_PARSER_URL?: string;
+  V9_KNOWLEDGE_PARSER_TOKEN?: string;
+  V9_DEVICE_ACTIVATION_BACKEND_BASE_URL: string;
+  V9_DEVICE_ACTIVATION_POLICY_VERSION: string;
+  OPS_ACCOUNT_RECOVERY_REDIRECT_URL: string;
   AUTO_MIGRATE: boolean;
   SUPABASE_DB_URL: string;
 };
@@ -187,12 +235,18 @@ Deno.serve(async (request) => {
     const path = urlPath(request);
     const managementRequest = path.startsWith("/management/");
     const workflowManagementRequest = isWorkflowManagementPath(path);
+    const skillKnowledgeManagementRequest = isSkillKnowledgeManagementPath(path);
+    const skillKnowledgeSyncRequest = isSkillKnowledgeSyncPath(path);
     const deviceSyncRequest = path.startsWith("/device-sync/");
+    const deviceMemoryRequest = isDeviceMemoryPath(path);
+    const deviceActivationRequest = path === "/device-activation/redeem";
     const workflowDeviceRequest = path.startsWith("/device-sync/workflows/");
+    const skillKnowledgeDeviceRequest = isSkillKnowledgeDevicePath(path);
     const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
-    if (path !== "/health" && !managementRequest && !deviceSyncRequest) {
+    if (path !== "/health" && !managementRequest && !deviceSyncRequest
+      && !deviceActivationRequest && !skillKnowledgeSyncRequest) {
       const authorization = await authorizeGlassesRequest(
         request,
         env.OPS_GLASSES_API_KEY,
@@ -208,6 +262,16 @@ Deno.serve(async (request) => {
       return json({ ok: true, service: "ops-glasses" });
     }
 
+    if (path === "/device-activation/redeem") {
+      return await routeDeviceActivation(
+        request,
+        createDeviceActivationGateway(supabase, {
+          backendBaseUrl: env.V9_DEVICE_ACTIVATION_BACKEND_BASE_URL,
+          policyVersion: env.V9_DEVICE_ACTIVATION_POLICY_VERSION,
+        }),
+      );
+    }
+
     if (workflowManagementRequest) {
       return await routeWorkflowManagement(
         request,
@@ -219,14 +283,79 @@ Deno.serve(async (request) => {
       );
     }
 
+    if (skillKnowledgeManagementRequest) {
+      return await routeSkillKnowledgeManagement(
+        request,
+        createSkillKnowledgeManagementGateway(
+          supabase,
+          createKnowledgeDocumentParserClient({
+            baseUrl: env.V9_KNOWLEDGE_PARSER_URL ?? "",
+            token: env.V9_KNOWLEDGE_PARSER_TOKEN ?? "",
+          }),
+        ),
+      );
+    }
+
+    if (skillKnowledgeSyncRequest) {
+      return await routeSkillKnowledgeSync(
+        request,
+        createSkillKnowledgeSyncGateway(supabase, {
+          tokenSha256: env.V9_GATEWAY_SYNC_TOKEN_SHA256 ?? "",
+          organizationId: env.V9_GATEWAY_SYNC_ORGANIZATION_ID ?? "",
+          userId: env.V9_GATEWAY_SYNC_USER_ID ?? "",
+          deviceId: env.V9_GATEWAY_SYNC_DEVICE_ID ?? "",
+        }),
+      );
+    }
+
     if (managementRequest) {
-      return await routeManagement(request, createManagementGateway(supabase));
+      return await routeManagement(
+        request,
+        createManagementGateway(
+          supabase,
+          createVoiceprintAdminClient({
+            baseUrl: env.V9_VOICEPRINT_ADMIN_URL ?? "",
+            token: env.V9_VOICEPRINT_ADMIN_TOKEN ?? "",
+          }),
+          {
+            contentSyncConfigured: Boolean(
+              env.V9_GATEWAY_SYNC_TOKEN_SHA256 &&
+                env.V9_GATEWAY_SYNC_ORGANIZATION_ID &&
+                env.V9_GATEWAY_SYNC_USER_ID &&
+                env.V9_GATEWAY_SYNC_DEVICE_ID,
+            ),
+            voiceprintAdminConfigured: Boolean(
+              env.V9_VOICEPRINT_ADMIN_URL && env.V9_VOICEPRINT_ADMIN_TOKEN,
+            ),
+            deviceActivationBackendConfigured: Boolean(
+              env.V9_DEVICE_ACTIVATION_BACKEND_BASE_URL,
+            ),
+          },
+          {
+            accountRecoveryRedirectUrl: env.OPS_ACCOUNT_RECOVERY_REDIRECT_URL,
+          },
+        ),
+      );
     }
 
     if (workflowDeviceRequest) {
       return await routeWorkflowDevice(
         request,
         createWorkflowDeviceGateway(supabase),
+      );
+    }
+
+    if (skillKnowledgeDeviceRequest) {
+      return await routeSkillKnowledgeDevice(
+        request,
+        createSkillKnowledgeDeviceGateway(supabase),
+      );
+    }
+
+    if (deviceMemoryRequest) {
+      return await routeDeviceMemory(
+        request,
+        createDeviceMemoryGateway(supabase),
       );
     }
 
@@ -279,6 +408,39 @@ Deno.serve(async (request) => {
 
     return json({ ok: false, error: "not_found" }, 404);
   } catch (error) {
+    const modelConfigurationError = modelContractConfigurationError(error);
+    if (modelConfigurationError) {
+      return json({
+        ok: false,
+        error: modelConfigurationError,
+        stage: "configuration",
+        networkStatus: "not_configured",
+        recoverableAction: "configure_previous_stable_models",
+      }, 503);
+    }
+    const activationConfigurationError = deviceActivationConfigurationError(error);
+    if (activationConfigurationError) {
+      return json({
+        ok: false,
+        error: activationConfigurationError,
+        stage: "device_activation",
+        networkStatus: "not_configured",
+        recoverableAction: "configure_device_activation_backend",
+      }, 503);
+    }
+    const controlledError = controlledConfigurationError(error);
+    if (controlledError) {
+      const remoteProbeFailure = controlledError.startsWith("remote_probe_");
+      return json({
+        ok: false,
+        error: controlledError,
+        stage: remoteProbeFailure ? "remote_probe" : "session_start",
+        networkStatus: remoteProbeFailure ? "not_configured" : "not_applicable",
+        recoverableAction: remoteProbeFailure
+          ? "configure_remote_probe"
+          : "configure_default_asset",
+      }, 503);
+    }
     console.error(error);
     return json(
       { ok: false, error: "internal_error", message: error instanceof Error ? error.message : String(error) },
@@ -558,10 +720,11 @@ async function handleProbe(
   { supabase, env, sessionId }: { supabase: Supabase; env: Env; sessionId: string },
 ): Promise<GlassesResponse> {
   const session = await mustGetSession(supabase, sessionId);
+  const metadata = objectOr(session.metadata, {});
   const probe = await probeTarget(env, {
-    host: String(session.target_host || env.DEMO_TARGET_HOST),
-    sshPort: Number(env.DEMO_TARGET_SSH_PORT || 22),
-    appPort: env.DEMO_TARGET_APP_PORT,
+    host: String(session.target_host || ""),
+    sshPort: validPort(numberOr(metadata.sshPort, env.DEFAULT_TARGET_SSH_PORT), 22),
+    appPort: optionalPort(metadata.appPort ?? env.DEFAULT_TARGET_APP_PORT),
   });
   const result = classifyProbe(probe);
 
@@ -655,14 +818,23 @@ async function loadOrCreateSession(supabase: Supabase, env: Env, sessionId: stri
     return await mustGetSession(supabase, sessionId);
   }
 
+  if (!env.DEFAULT_ASSET_TAG) {
+    throw new Error("default_asset_not_configured");
+  }
   const { data: asset, error: assetError } = await supabase.from("ops_assets")
-    .select("id, asset_tag, host, ssh_port, app_port")
-    .eq("asset_tag", env.DEMO_ASSET_TAG)
+    .select("id, asset_tag, display_name, host, ssh_port, app_port")
+    .eq("asset_tag", env.DEFAULT_ASSET_TAG)
     .maybeSingle();
   throwIf(assetError);
+  if (!asset) {
+    throw new Error("default_asset_not_found");
+  }
+  if (isLegacyDemoAsset(asset)) {
+    throw new Error("legacy_demo_asset_forbidden");
+  }
 
-  const targetAsset = asset?.asset_tag ?? env.DEMO_ASSET_TAG;
-  const targetHost = asset?.host ?? env.DEMO_TARGET_HOST;
+  const targetAsset = String(asset.asset_tag);
+  const targetHost = String(asset.host);
 
   const text = [
     `服务器 ${targetAsset} 远程 SSH 不可达。`,
@@ -671,12 +843,15 @@ async function loadOrCreateSession(supabase: Supabase, env: Env, sessionId: stri
   ].join("\n");
 
   const { data, error } = await supabase.from("ops_sessions").insert({
-    target_asset_id: asset?.id ?? null,
+    target_asset_id: asset.id,
     target_asset: targetAsset,
     target_host: targetHost,
     current_step: "locate_server",
     last_instruction: text,
-    metadata: { sshPort: asset?.ssh_port ?? env.DEMO_TARGET_SSH_PORT, appPort: asset?.app_port ?? env.DEMO_TARGET_APP_PORT },
+    metadata: {
+      sshPort: validPort(numberOr(asset.ssh_port, env.DEFAULT_TARGET_SSH_PORT), 22),
+      appPort: optionalPort(asset.app_port ?? env.DEFAULT_TARGET_APP_PORT) ?? null,
+    },
   }).select("*").single();
   throwIf(error);
   return data;
@@ -1638,51 +1813,15 @@ function extractJsonObject(value: string): string {
 }
 
 async function transcribeAudio(env: Env, bytes: Uint8Array, contentType: string, promptHint = ""): Promise<string> {
-  const errors: string[] = [];
-  try {
-    const primary = await transcribeAudioWithModel(env, env.OPENAI_TRANSCRIBE_MODEL, bytes, contentType, promptHint);
-    if (primary) return primary;
-    errors.push("primary-stt:transcript_empty");
-  } catch (error) {
-    errors.push(`primary-stt:${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  if (isOfficialOpenAiTranscribe(env) && env.OPENAI_TRANSCRIBE_MODEL !== "whisper-1") {
-    try {
-      const fallback = await transcribeAudioWithModel(env, "whisper-1", bytes, contentType, promptHint);
-      if (fallback) return fallback;
-    } catch (error) {
-      errors.push(`whisper-stt:${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  if (canFallbackToMainProviderTranscribe(env)) {
-    try {
-      const mainProvider = mainProviderTranscribeEnv(env);
-      const fallback = await transcribeAudioWithModel(
-        mainProvider,
-        "gpt-4o-mini-transcribe",
-        bytes,
-        contentType,
-        promptHint,
-      );
-      if (fallback) return fallback;
-    } catch (error) {
-      errors.push(`main-provider-stt:${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  if (canFallbackToOfficialTranscribe(env)) {
-    try {
-      const official = officialOpenAiTranscribeEnv(env);
-      const fallback = await transcribeAudioWithModel(official, "gpt-4o-mini-transcribe", bytes, contentType, promptHint);
-      if (fallback) return fallback;
-    } catch (error) {
-      errors.push(`official-stt:${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  throw new Error(errors.length ? errors.join(" | ") : "transcript_empty");
+  const transcript = await transcribeAudioWithModel(
+    env,
+    env.OPENAI_TRANSCRIBE_MODEL,
+    bytes,
+    contentType,
+    promptHint,
+  );
+  if (!transcript) throw new Error("transcript_empty");
+  return transcript;
 }
 
 async function transcribeAudioWithModel(
@@ -1720,48 +1859,15 @@ async function transcribeAudioWithModel(
 }
 
 function shouldSendTranscribeModelField(env: Env): boolean {
-  return isOfficialOpenAiTranscribe(env) || env.OPENAI_TRANSCRIBE_MODEL === "paraformer-zh-streaming";
+  return Boolean(env.OPENAI_TRANSCRIBE_MODEL.trim());
 }
 
 function shouldSendOpenAiTranscribeFields(env: Env): boolean {
-  return isOfficialOpenAiTranscribe(env);
+  return env.OPENAI_TRANSCRIBE_MODEL === "fun-asr-realtime";
 }
 
 function hasTranscribeCredentials(env: Env): boolean {
   return Boolean(env.OPENAI_TRANSCRIBE_API_KEY || env.OPENAI_API_KEY || env.OPENAI_OFFICIAL_TRANSCRIBE_API_KEY);
-}
-
-function canFallbackToOfficialTranscribe(env: Env): boolean {
-  return !isOfficialOpenAiTranscribe(env) && Boolean(officialTranscribeApiKey(env));
-}
-
-function officialTranscribeApiKey(env: Env): string {
-  if (env.OPENAI_OFFICIAL_TRANSCRIBE_API_KEY) {
-    return env.OPENAI_OFFICIAL_TRANSCRIBE_API_KEY;
-  }
-  return isOfficialOpenAiMainProvider(env) ? env.OPENAI_API_KEY || "" : "";
-}
-
-function canFallbackToMainProviderTranscribe(env: Env): boolean {
-  return Boolean(env.OPENAI_API_KEY) && env.OPENAI_BASE_URL !== env.OPENAI_TRANSCRIBE_BASE_URL;
-}
-
-function mainProviderTranscribeEnv(env: Env): Env {
-  return {
-    ...env,
-    OPENAI_TRANSCRIBE_API_KEY: env.OPENAI_API_KEY,
-    OPENAI_TRANSCRIBE_BASE_URL: env.OPENAI_BASE_URL,
-    OPENAI_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe",
-  };
-}
-
-function officialOpenAiTranscribeEnv(env: Env): Env {
-  return {
-    ...env,
-    OPENAI_TRANSCRIBE_API_KEY: officialTranscribeApiKey(env),
-    OPENAI_TRANSCRIBE_BASE_URL: "https://api.openai.com/v1",
-    OPENAI_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe",
-  };
 }
 
 function sttPrompt(promptHint = ""): string {
@@ -1812,6 +1918,7 @@ function englishWordCount(value: string): number {
 }
 
 async function probeTarget(env: Env, target: { host: string; sshPort: number; appPort?: number }) {
+  assertRemoteProbeConfigured(env.REMOTE_PROBE_MODE, env.REMOTE_PROBE_URL ?? "");
   if (env.REMOTE_PROBE_MODE === "http" && env.REMOTE_PROBE_URL) {
     const response = await fetch(env.REMOTE_PROBE_URL, {
       method: "POST",
@@ -1822,21 +1929,6 @@ async function probeTarget(env: Env, target: { host: string; sshPort: number; ap
       throw new Error(`remote_probe_http_failed:${response.status}`);
     }
     return await response.json();
-  }
-
-  if (env.REMOTE_PROBE_MODE === "mock") {
-    const sshReachable = Deno.env.get("MOCK_SSH_REACHABLE") === "true";
-    const appPortReachable = target.appPort ? Deno.env.get("MOCK_APP_PORT_REACHABLE") === "true" : null;
-    return {
-      host: target.host,
-      sshPort: target.sshPort,
-      appPort: target.appPort,
-      pingReachable: sshReachable || Boolean(appPortReachable),
-      sshReachable,
-      appPortReachable,
-      checkedAt: new Date().toISOString(),
-      mode: "mock",
-    };
   }
 
   const sshReachable = await tcpProbe(target.host, target.sshPort, 1800);
@@ -2554,40 +2646,62 @@ function readEnv(): Env {
   if (!supabaseUrl || !serviceRoleKey || !opsGlassesApiKey) {
     throw new Error("SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY and OPS_GLASSES_API_KEY are required");
   }
-  return {
+  const env: Env = {
     SUPABASE_URL: supabaseUrl,
     SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
     OPENAI_API_KEY: Deno.env.get("OPENAI_API_KEY") ?? "",
-    OPENAI_BASE_URL: normalizeOpenAiBaseUrl(Deno.env.get("OPENAI_BASE_URL") ?? "https://api.openai.com/v1"),
+    OPENAI_BASE_URL: normalizeOpenAiBaseUrl(
+      Deno.env.get("OPENAI_BASE_URL") ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    ),
     OPENAI_TRANSCRIBE_API_KEY: Deno.env.get("OPENAI_TRANSCRIBE_API_KEY") ?? "",
     OPENAI_OFFICIAL_TRANSCRIBE_API_KEY: Deno.env.get("OPENAI_OFFICIAL_TRANSCRIBE_API_KEY") ?? "",
     OPENAI_TRANSCRIBE_BASE_URL: normalizeOpenAiBaseUrl(
-      Deno.env.get("OPENAI_TRANSCRIBE_BASE_URL") ?? "https://api.openai.com/v1",
+      Deno.env.get("OPENAI_TRANSCRIBE_BASE_URL") ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
     ),
-    OPENAI_VISION_MODEL: Deno.env.get("OPENAI_VISION_MODEL") ?? "gpt-4.1-mini",
-    OPENAI_TRANSCRIBE_MODEL: Deno.env.get("OPENAI_TRANSCRIBE_MODEL") ?? "gpt-4o-mini-transcribe",
+    OPENAI_VISION_MODEL: Deno.env.get("OPENAI_VISION_MODEL") ?? "qwen3-vl-plus",
+    OPENAI_TRANSCRIBE_MODEL: Deno.env.get("OPENAI_TRANSCRIBE_MODEL") ?? "fun-asr-realtime",
     DASHSCOPE_API_KEY: Deno.env.get("DASHSCOPE_API_KEY") ?? "",
     DASHSCOPE_FUNASR_URL: Deno.env.get("DASHSCOPE_FUNASR_URL") ??
       "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
     DASHSCOPE_FUNASR_MODEL: Deno.env.get("DASHSCOPE_FUNASR_MODEL") ?? "fun-asr-realtime",
-    DEMO_ASSET_TAG: Deno.env.get("DEMO_ASSET_TAG") ?? "ASSET-CONSOLE-001",
-    DEMO_TARGET_HOST: Deno.env.get("DEMO_TARGET_HOST") ?? "192.168.1.50",
-    DEMO_TARGET_SSH_PORT: Number(Deno.env.get("DEMO_TARGET_SSH_PORT") ?? 22),
-    DEMO_TARGET_APP_PORT: Deno.env.get("DEMO_TARGET_APP_PORT") ? Number(Deno.env.get("DEMO_TARGET_APP_PORT")) : undefined,
-    REMOTE_PROBE_MODE: normalizeProbeMode(Deno.env.get("REMOTE_PROBE_MODE")),
+    DEFAULT_ASSET_TAG: (Deno.env.get("DEFAULT_ASSET_TAG") ?? "").trim(),
+    DEFAULT_TARGET_SSH_PORT: Number(Deno.env.get("DEFAULT_TARGET_SSH_PORT") ?? 22),
+    DEFAULT_TARGET_APP_PORT: Deno.env.get("DEFAULT_TARGET_APP_PORT")
+      ? Number(Deno.env.get("DEFAULT_TARGET_APP_PORT"))
+      : undefined,
+    REMOTE_PROBE_MODE: normalizeRemoteProbeMode(Deno.env.get("REMOTE_PROBE_MODE")),
     REMOTE_PROBE_URL: Deno.env.get("REMOTE_PROBE_URL") ?? "",
     OPS_GLASSES_API_KEY: opsGlassesApiKey,
     WORKFLOW_SIGNING_PRIVATE_KEY_PKCS8: Deno.env.get(
       "WORKFLOW_SIGNING_PRIVATE_KEY_PKCS8",
     ) ?? "",
     WORKFLOW_SIGNING_KEY_ID: Deno.env.get("WORKFLOW_SIGNING_KEY_ID") ?? "",
+    V9_GATEWAY_SYNC_TOKEN_SHA256: Deno.env.get("V9_GATEWAY_SYNC_TOKEN_SHA256") ?? "",
+    V9_GATEWAY_SYNC_ORGANIZATION_ID: Deno.env.get("V9_GATEWAY_SYNC_ORGANIZATION_ID") ?? "",
+    V9_GATEWAY_SYNC_USER_ID: Deno.env.get("V9_GATEWAY_SYNC_USER_ID") ?? "",
+    V9_GATEWAY_SYNC_DEVICE_ID: Deno.env.get("V9_GATEWAY_SYNC_DEVICE_ID") ?? "",
+    V9_VOICEPRINT_ADMIN_URL: Deno.env.get("V9_VOICEPRINT_ADMIN_URL") ?? "",
+    V9_VOICEPRINT_ADMIN_TOKEN: Deno.env.get("V9_VOICEPRINT_ADMIN_TOKEN") ?? "",
+    V9_KNOWLEDGE_PARSER_URL: Deno.env.get("V9_KNOWLEDGE_PARSER_URL") ?? "",
+    V9_KNOWLEDGE_PARSER_TOKEN: Deno.env.get("V9_KNOWLEDGE_PARSER_TOKEN") ?? "",
+    V9_DEVICE_ACTIVATION_BACKEND_BASE_URL: Deno.env.get(
+      "V9_DEVICE_ACTIVATION_BACKEND_BASE_URL",
+    ) ?? "",
+    V9_DEVICE_ACTIVATION_POLICY_VERSION: Deno.env.get(
+      "V9_DEVICE_ACTIVATION_POLICY_VERSION",
+    ) ?? "",
+    OPS_ACCOUNT_RECOVERY_REDIRECT_URL: Deno.env.get(
+      "OPS_ACCOUNT_RECOVERY_REDIRECT_URL",
+    ) ?? "",
     AUTO_MIGRATE: Deno.env.get("AUTO_MIGRATE") === "true",
     SUPABASE_DB_URL: Deno.env.get("SUPABASE_DB_URL") ?? Deno.env.get("OPS_DB_URL") ?? "",
   };
-}
-
-function normalizeProbeMode(value: string | undefined): "mock" | "tcp" | "http" {
-  return value === "tcp" || value === "http" ? value : "mock";
+  assertV9ModelContract({
+    aiModel: env.OPENAI_VISION_MODEL,
+    asrModel: env.OPENAI_TRANSCRIBE_MODEL,
+    dashScopeAsrModel: env.DASHSCOPE_FUNASR_MODEL,
+  });
+  return env;
 }
 
 function normalizeOpenAiBaseUrl(value: string): string {
@@ -2601,14 +2715,6 @@ function openAiUrl(env: Env, path: string): string {
 
 function openAiTranscribeUrl(env: Env, path: string): string {
   return `${env.OPENAI_TRANSCRIBE_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
-}
-
-function isOfficialOpenAiTranscribe(env: Env): boolean {
-  return env.OPENAI_TRANSCRIBE_BASE_URL.includes("api.openai.com");
-}
-
-function isOfficialOpenAiMainProvider(env: Env): boolean {
-  return env.OPENAI_BASE_URL.includes("api.openai.com");
 }
 
 function urlPath(request: Request): string {
@@ -2653,6 +2759,18 @@ function objectOr(value: unknown, fallback: Record<string, unknown>): Record<str
 function numberOr(value: unknown, fallback: number): number {
   const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function validPort(value: number, fallback: number): number {
+  const port = Math.trunc(value);
+  return port > 0 && port < 65_536 ? port : fallback;
+}
+
+function optionalPort(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const numeric = numberOr(value, Number.NaN);
+  const port = Math.trunc(numeric);
+  return port > 0 && port < 65_536 ? port : undefined;
 }
 
 function safeSocketSend(socket: WebSocket, payload: Record<string, unknown>) {

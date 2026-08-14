@@ -1,7 +1,9 @@
 param(
   [string]$Serial = "YM00FCF3NW0031",
-  [string]$Package = "com.codex.air3nativecamera.dingdangops",
+  [string]$Package = "com.codex.air3nativecamera.dingdangexpert.v9",
   [string]$Activity = "com.codex.air3nativecamera.MainActivity",
+  [int]$ExpectedVersionCode = 900000,
+  [string]$ExpectedVersionName = "9.0.0",
   [string]$BackendBaseUrl = "",
   [int]$WaitSeconds = 30,
   [int]$VoiceCaptureSeconds = 8,
@@ -22,15 +24,49 @@ $OutputEncoding = $utf8NoBom
 [Console]::InputEncoding = $utf8NoBom
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+function Resolve-AdbPath {
+  $candidates = New-Object System.Collections.Generic.List[string]
+  $candidates.Add((Join-Path $repoRoot "tmp\tools\platform-tools\adb.exe"))
+  try {
+    $gitCommonDirValue = (& git -C $repoRoot rev-parse --git-common-dir 2>$null | Select-Object -First 1)
+    if ($LASTEXITCODE -eq 0 -and $gitCommonDirValue) {
+      $gitCommonDir = if ([System.IO.Path]::IsPathRooted($gitCommonDirValue)) {
+        $gitCommonDirValue
+      } else {
+        Join-Path $repoRoot $gitCommonDirValue
+      }
+      $mainRepoRoot = Split-Path -Parent ([System.IO.Path]::GetFullPath($gitCommonDir))
+      $candidates.Add((Join-Path $mainRepoRoot "tmp\tools\platform-tools\adb.exe"))
+    }
+  } catch {
+  }
+  foreach ($sdk in @(
+      $env:ANDROID_SDK_ROOT,
+      $env:ANDROID_HOME,
+      "C:\Users\59979\UnityEditors\2022.3.62f3c1\Editor\Data\PlaybackEngines\AndroidPlayer\SDK")) {
+    if ($sdk) {
+      $candidates.Add((Join-Path $sdk "platform-tools\adb.exe"))
+    }
+  }
+  foreach ($candidate in ($candidates | Select-Object -Unique)) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+      return $candidate
+    }
+  }
+  $pathCommand = Get-Command adb.exe -ErrorAction SilentlyContinue
+  if ($pathCommand) {
+    return $pathCommand.Source
+  }
+  throw "adb.exe was not found in the worktree, main repository, Android SDK, or PATH."
+}
+
 if (-not $OutDir) {
   $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
   $OutDir = Join-Path $repoRoot "tmp\real-live-smoke-$stamp"
 }
 
-$adb = Join-Path $repoRoot "tmp\tools\platform-tools\adb.exe"
-if (-not (Test-Path -LiteralPath $adb)) {
-  $adb = "adb"
-}
+$adb = Resolve-AdbPath
 
 function Invoke-AdbText {
   param([string[]]$Arguments)
@@ -52,36 +88,32 @@ function Get-ElapsedMs {
   return [int][Math]::Round(((Get-Date) - $Start).TotalMilliseconds)
 }
 
-function Convert-LogTimestamp {
-  param([string]$Value)
-  try {
-    $year = (Get-Date).Year
-    return [datetime]::ParseExact(
-      "$year-$Value",
-      "yyyy-MM-dd HH:mm:ss.fff",
-      [Globalization.CultureInfo]::InvariantCulture
-    )
-  } catch {
-    return $null
-  }
-}
-
-function Get-LatencyBetweenLogLines {
-  param([string]$LogText, [string]$StartPattern, [string]$EndPattern)
-  $startTime = $null
-  foreach ($line in ($LogText -split "`r?`n")) {
-    if (-not $startTime -and $line -match "^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}).*$StartPattern") {
-      $startTime = Convert-LogTimestamp -Value $matches[1]
-      continue
-    }
-    if ($startTime -and $line -match "^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}).*$EndPattern") {
-      $endTime = Convert-LogTimestamp -Value $matches[1]
-      if ($endTime) {
-        return [int][Math]::Round(($endTime - $startTime).TotalMilliseconds)
-      }
-    }
+function Get-VoiceStageLatencyMs {
+  param([string]$LogText, [string]$Stage)
+  $pattern = "Voice latency stage=$([regex]::Escape($Stage))[^`r`n]*asrElapsedMs=(\d+)"
+  $stageMatches = [regex]::Matches($LogText, $pattern)
+  if ($stageMatches.Count -gt 0) {
+    return [int]$stageMatches[$stageMatches.Count - 1].Groups[1].Value
   }
   return $null
+}
+
+function Get-AsrProviderSource {
+  param([string]$LogText)
+  $sourceMatches = [regex]::Matches($LogText, "Realtime ASR selected source=([^\s]+)")
+  if ($sourceMatches.Count -gt 0) {
+    return $sourceMatches[$sourceMatches.Count - 1].Groups[1].Value
+  }
+  return ""
+}
+
+function Get-PhotoContextImageId {
+  param([string]$LogText)
+  $photoMatches = [regex]::Matches($LogText, "Photo context ready imageId=([^\s]+)")
+  if ($photoMatches.Count -gt 0) {
+    return $photoMatches[$photoMatches.Count - 1].Groups[1].Value
+  }
+  return ""
 }
 
 function Get-GptFirstDeltaLatencyMs {
@@ -100,11 +132,11 @@ function New-Text {
 
 if ($DryRun) {
   Write-Output "Dry run for Dingdang real provider live smoke."
-  Write-Output "Would verify adb device $Serial and installed package $Package."
+  Write-Output "Would verify adb device $Serial and installed package $Package $ExpectedVersionCode/$ExpectedVersionName."
   Write-Output "Would optionally call <backend-base-url>/health when -BackendBaseUrl is provided."
   Write-Output "Would launch $Package/$Activity, use FOCUS/F9 style camera entry, capture photo, then open voice capture."
   Write-Output "Would wait $VoiceCaptureSeconds seconds for a human to speak during real Fun-ASR capture."
-  Write-Output "Would collect UI dumps, logcat, activity focus, ASR partial/final evidence, and GPT first delta latency."
+  Write-Output "Would collect UI dumps, activity focus, server photo context, cloud ASR source/stage latency, and GPT first delta latency."
   Write-Output "Would write evidence to $OutDir."
   Write-Output "No API key or secret value is read or printed by this script."
   return
@@ -120,8 +152,19 @@ if ($devices -notmatch [regex]::Escape($Serial)) {
 
 $packageDump = Invoke-AdbText -Arguments @("-s", $Serial, "shell", "dumpsys", "package", $Package)
 $packageDump | Set-Content -LiteralPath (Join-Path $OutDir "package.txt") -Encoding UTF8
-if ($packageDump -notmatch "versionCode=602") {
-  throw "Dingdang package versionCode 602 is not installed."
+if ($packageDump -notmatch "versionCode=$ExpectedVersionCode" -or
+    $packageDump -notmatch "versionName=$([regex]::Escape($ExpectedVersionName))") {
+  throw "Formal V9 package $ExpectedVersionCode/$ExpectedVersionName is not installed."
+}
+
+$resolvedText = Invoke-AdbText -Arguments @(
+  "-s", $Serial, "shell", "cmd", "package", "resolve-activity", "--brief", $Package)
+$resolvedRows = @($resolvedText -split "`r?`n" |
+  Where-Object { $_ -match "^$([regex]::Escape($Package))/" } |
+  Select-Object -Last 1)
+$resolvedComponent = if ($resolvedRows.Count -gt 0) { $resolvedRows[0].Trim() } else { "" }
+if (-not $resolvedComponent -or $resolvedComponent -ne "$Package/$Activity") {
+  throw "Formal V9 launcher activity did not resolve: $resolvedText"
 }
 
 $healthOk = $null
@@ -136,19 +179,18 @@ if ($BackendBaseUrl) {
 
 Invoke-AdbQuiet -Arguments @("-s", $Serial, "shell", "am", "force-stop", $Package)
 Start-Sleep -Milliseconds 300
-Invoke-AdbQuiet -Arguments @("-s", $Serial, "shell", "am", "start", "--display", "0", "-n", "$Package/$Activity")
+Invoke-AdbQuiet -Arguments @("-s", $Serial, "shell", "am", "start", "--display", "0", "-n", $resolvedComponent)
 Start-Sleep -Milliseconds 1200
 & $adb -s $Serial logcat -c
 
-$cameraPromptMarker = New-Text @(0x5BF9, 0x51C6, 0x73B0, 0x573A, 0x540E, 0x62CD, 0x7167)
-$returnChatMarker = New-Text @(0x8FD4, 0x56DE, 0x804A, 0x5929)
-$chatHistoryMarker = New-Text @(0x4F1A, 0x8BDD, 0x8BB0, 0x5F55)
-$dingdangLabelMarker = (New-Text @(0x53EE, 0x5F53, 0x8FD0, 0x7EF4)) + "AI"
-$sceneImageMarker = New-Text @(0x73B0, 0x573A, 0x56FE, 0x7247)
-$imageMarker = New-Text @(0x56FE, 0x7247)
-$photoMarker = New-Text @(0x7167, 0x7247)
+$cameraReadyMarker = New-Text @(0x53D6, 0x666F, 0x4E2D)
+$cameraBackMarker = New-Text @(0x8FD4, 0x56DE, 0x20, 0x41, 0x49, 0x20, 0x5BF9, 0x8BDD)
+$assistantTitleMarker = New-Text @(0x53EE, 0x5F53, 0x20, 0x41, 0x49, 0x20, 0x8FD0, 0x7EF4, 0x52A9, 0x624B)
+$fieldInputMarker = New-Text @(0x73B0, 0x573A, 0x8F93, 0x5165)
+$fieldImageMarker = New-Text @(0x73B0, 0x573A, 0x8F93, 0x5165, 0x20, 0xB7, 0x20, 0x56FE, 0x7247)
+$imageAttachedMarker = New-Text @(0x73B0, 0x573A, 0x56FE, 0x7247, 0x5DF2, 0x9644, 0x52A0)
+$photoPendingMarker = New-Text @(0x7167, 0x7247, 0x5F85, 0x53D1, 0x9001)
 $listeningMarker = New-Text @(0x6B63, 0x5728, 0x542C)
-$finishVoiceMarker = New-Text @(0x70B9, 0x4E00, 0x4E0B, 0x7ED3, 0x675F)
 
 $interactionStart = Get-Date
 
@@ -189,8 +231,10 @@ $finalUi = Get-Content -Raw -Encoding UTF8 (Join-Path $OutDir "04-final-ui.xml")
 $activity = Get-Content -Raw -Encoding UTF8 (Join-Path $OutDir "activity.txt")
 $logcat = Get-Content -Raw -Encoding UTF8 (Join-Path $OutDir "logcat.txt")
 
-$asrPartialLogMs = Get-LatencyBetweenLogLines -LogText $logcat -StartPattern "Realtime ASR start" -EndPattern "Realtime ASR partial"
-$asrFinalLogMs = Get-LatencyBetweenLogLines -LogText $logcat -StartPattern "Realtime ASR start" -EndPattern "Realtime ASR final"
+$asrPartialLogMs = Get-VoiceStageLatencyMs -LogText $logcat -Stage "asr_first_partial"
+$asrFinalLogMs = Get-VoiceStageLatencyMs -LogText $logcat -Stage "asr_final"
+$asrProviderSource = Get-AsrProviderSource -LogText $logcat
+$photoContextImageId = Get-PhotoContextImageId -LogText $logcat
 $gptFirstDeltaLogMs = Get-GptFirstDeltaLatencyMs -LogText $logcat
 
 $asrPartialMs = if ($null -ne $asrPartialLogMs) { $asrPartialLogMs } else { $asrPartialUiMs }
@@ -216,13 +260,20 @@ $latency = [pscustomobject]@{
   gptFirstDeltaSource = if ($null -ne $gptFirstDeltaLogMs) { "logcat" } else { "ui" }
 }
 
-$cameraUiVisible = ($cameraUi.Contains($cameraPromptMarker) -or $cameraUi.Contains($returnChatMarker))
-$returnedToChatAfterPhoto = ($photoUi.Contains($chatHistoryMarker) -and $photoUi.Contains($dingdangLabelMarker))
-$imageAttached = ($photoUi.Contains($sceneImageMarker) -or $photoUi.Contains($imageMarker) -or $photoUi.Contains($photoMarker))
-$asrPartialVisible = ($partialUi.Contains($listeningMarker) -or $partialUi.Contains($finishVoiceMarker) -or $logcat.Contains("Realtime ASR partial"))
-$asrFinalVisible = ($finalUi.Contains($finishVoiceMarker) -or $logcat.Contains("Realtime ASR final"))
+$photoContextReady = ($photoContextImageId.Length -gt 0 -and $photoContextImageId -ne "local-photo")
+$asrFinalSourceObserved = ($asrProviderSource.Length -gt 0)
+$asrFinalFromCloud = ($asrProviderSource -eq "cloud")
+$cameraUiVisible = ($cameraUi.Contains($cameraReadyMarker) -or $cameraUi.Contains($cameraBackMarker))
+$returnedToChatAfterPhoto = ($photoUi.Contains($assistantTitleMarker) -or
+  $photoUi.Contains($fieldInputMarker) -or $photoContextReady)
+$imageAttached = ($photoUi.Contains($fieldImageMarker) -or
+  $photoUi.Contains($imageAttachedMarker) -or
+  $photoUi.Contains($photoPendingMarker) -or $photoContextReady)
+$asrPartialVisible = ($partialUi.Contains($listeningMarker) -or
+  $logcat.Contains("Voice latency stage=asr_first_partial"))
+$asrFinalVisible = ($logcat.Contains("Voice latency stage=asr_final") -and $asrFinalSourceObserved)
 $gptFirstDeltaObserved = ($null -ne $gptFirstDeltaLogMs)
-$inDingdang = ($activity -match "topResumedActivity=.*com\.codex\.air3nativecamera\.dingdangops")
+$inDingdang = ($activity -match "topResumedActivity=.*$([regex]::Escape($Package))")
 $latencyWithinBudget = (
   $latency.cameraUi -le $latencyBudgets.cameraUi -and
   $latency.photoReturn -le $latencyBudgets.photoReturn -and
@@ -233,13 +284,22 @@ $latencyWithinBudget = (
 
 $summary = [pscustomobject]@{
   provider = "real"
+  packageName = $Package
+  versionCode = $ExpectedVersionCode
+  versionName = $ExpectedVersionName
+  resolvedComponent = $resolvedComponent
   backendBaseUrlProvided = [bool]$BackendBaseUrl
   healthOk = $healthOk
   cameraUiVisible = [bool]$cameraUiVisible
   returnedToChatAfterPhoto = [bool]$returnedToChatAfterPhoto
   imageAttached = [bool]$imageAttached
+  photoContextReady = [bool]$photoContextReady
+  photoContextImageId = $photoContextImageId
   asrPartialVisible = [bool]$asrPartialVisible
   asrFinalVisible = [bool]$asrFinalVisible
+  asrFinalSourceObserved = [bool]$asrFinalSourceObserved
+  asrFinalFromCloud = [bool]$asrFinalFromCloud
+  asrProviderSource = $asrProviderSource
   gptFirstDeltaObserved = [bool]$gptFirstDeltaObserved
   inDingdang = [bool]$inDingdang
   latencyMs = $latency
@@ -256,8 +316,11 @@ $requiredChecks = @(
   "cameraUiVisible",
   "returnedToChatAfterPhoto",
   "imageAttached",
+  "photoContextReady",
   "asrPartialVisible",
   "asrFinalVisible",
+  "asrFinalSourceObserved",
+  "asrFinalFromCloud",
   "gptFirstDeltaObserved",
   "inDingdang",
   "latencyWithinBudget"

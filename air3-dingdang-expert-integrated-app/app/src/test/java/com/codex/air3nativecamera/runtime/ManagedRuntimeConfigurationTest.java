@@ -106,4 +106,98 @@ public final class ManagedRuntimeConfigurationTest {
         assertEquals("", configuration.backendBaseUrl());
         assertFalse(configuration.isBackendProvisioned());
     }
+
+    @Test
+    public void secureRuntimeUsesAValidLocalActivationWhenMdmIsAbsent() {
+        DeviceActivationRecord local = DeviceActivationRecord.create(
+                "https://activation.example.com/v9-ops",
+                "abcdefghijklmnopqrstuvwxyz_1234567890-ABCDE",
+                2_000_000L,
+                "device-a",
+                "organization-a",
+                "policy-a");
+
+        ManagedRuntimeConfiguration configuration = ManagedRuntimeConfiguration.resolve(
+                true, "https://generated.example.com/v9-ops", "", "", "", "",
+                new HashMap<String, String>(), local, 1_000_000L);
+
+        assertEquals("https://activation.example.com/v9-ops", configuration.backendBaseUrl());
+        assertEquals(local.bootstrapCredential(), configuration.backendCredential());
+        assertTrue(configuration.isBackendProvisioned());
+        assertTrue(configuration.usesLocalActivation());
+    }
+
+    @Test
+    public void completeMdmPairOverridesTheLocalActivation() {
+        Map<String, String> managed = new HashMap<>();
+        managed.put(ManagedRuntimeConfiguration.BACKEND_BASE_URL,
+                "https://mdm.example.com/v9-ops");
+        managed.put(ManagedRuntimeConfiguration.BACKEND_DEVICE_TOKEN,
+                "managed-device-bootstrap-token-12345");
+        DeviceActivationRecord local = DeviceActivationRecord.create(
+                "https://activation.example.com/v9-ops",
+                "abcdefghijklmnopqrstuvwxyz_1234567890-ABCDE",
+                2_000_000L,
+                "device-a",
+                "organization-a",
+                "policy-a");
+
+        ManagedRuntimeConfiguration configuration = ManagedRuntimeConfiguration.resolve(
+                true, "https://generated.example.com/v9-ops", "", "", "", "",
+                managed, local, 1_000_000L);
+
+        assertEquals("https://mdm.example.com/v9-ops", configuration.backendBaseUrl());
+        assertEquals("managed-device-bootstrap-token-12345",
+                configuration.backendCredential());
+        assertFalse(configuration.usesLocalActivation());
+    }
+
+    @Test
+    public void partialMdmConfigurationFailsClosedInsteadOfMixingLocalValues() {
+        Map<String, String> managed = new HashMap<>();
+        managed.put(ManagedRuntimeConfiguration.BACKEND_BASE_URL,
+                "https://mdm.example.com/v9-ops");
+        DeviceActivationRecord local = DeviceActivationRecord.create(
+                "https://activation.example.com/v9-ops",
+                "abcdefghijklmnopqrstuvwxyz_1234567890-ABCDE",
+                2_000_000L,
+                "device-a",
+                "organization-a",
+                "policy-a");
+
+        ManagedRuntimeConfiguration configuration = ManagedRuntimeConfiguration.resolve(
+                true, "https://generated.example.com/v9-ops", "", "", "", "",
+                managed, local, 1_000_000L);
+
+        assertEquals("https://mdm.example.com/v9-ops", configuration.backendBaseUrl());
+        assertEquals("", configuration.backendCredential());
+        assertFalse(configuration.isBackendProvisioned());
+    }
+
+    @Test
+    public void expiredLocalActivationNeverRestoresAnApkCredential() {
+        DeviceActivationRecord expired = DeviceActivationRecord.create(
+                "https://activation.example.com/v9-ops",
+                "abcdefghijklmnopqrstuvwxyz_1234567890-ABCDE",
+                2_000_000L,
+                "device-a",
+                "organization-a",
+                "policy-a");
+
+        ManagedRuntimeConfiguration configuration = ManagedRuntimeConfiguration.resolve(
+                true,
+                "https://generated.example.com/v9-ops",
+                "generated-secret-must-not-return",
+                "generated-app",
+                "generated-key",
+                "generated-secret",
+                new HashMap<String, String>(),
+                expired,
+                2_000_000L);
+
+        assertEquals("https://generated.example.com/v9-ops", configuration.backendBaseUrl());
+        assertEquals("", configuration.backendCredential());
+        assertEquals("", configuration.iflytekApiSecret());
+        assertFalse(configuration.isBackendProvisioned());
+    }
 }

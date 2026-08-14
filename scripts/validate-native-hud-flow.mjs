@@ -593,6 +593,10 @@ const integratedHudPresentation = fs.readFileSync(path.join(
   integratedRoot,
   "java/com/codex/air3nativecamera/ui/hud/HudWebPresentation.java",
 ), "utf8");
+const integratedMaintenanceTask = fs.readFileSync(path.join(
+  integratedRoot,
+  "java/com/codex/air3nativecamera/task/MaintenanceTask.java",
+), "utf8");
 const integratedVoiceRouter = fs.readFileSync(path.join(
   integratedRoot,
   "java/com/codex/air3nativecamera/voice/VoiceCommandRouter.java",
@@ -682,6 +686,17 @@ const capabilitySection = integratedHud.slice(
   integratedHud.indexOf('<section id="capabilities"'),
   integratedHud.indexOf("</section>", integratedHud.indexOf('<section id="capabilities"')),
 );
+if (!integratedHud.includes('class="menu" data-a="toggleMenu" aria-label="菜单"') ||
+    !integratedHud.includes("setManagedMenuEnabled")) {
+  throw new Error("hamburger menu must use a dedicated first-open second-close bridge");
+}
+if (!capabilitySection.includes('class="capability-shortcuts" hidden') ||
+    !capabilitySection.includes('data-r="project_memory"') ||
+    !capabilitySection.includes('<span>项目记忆</span>') ||
+    !capabilitySection.includes('data-r="settings"') ||
+    !capabilitySection.includes('<span>设置</span>')) {
+  throw new Error("managed V9 menu must expose project memory and settings without replacing capability tiles");
+}
 const capabilityOrder = [
   "AI 故障诊断", "专家协同", "现场拍照", "短视频取证", "巡检任务",
   "维修任务", "华方知识库", "设备记忆", "AI运维技能",
@@ -715,12 +730,16 @@ if (!integratedHud.includes("#standby .core:after{") ||
   throw new Error("standby microphone must use one symmetric vector icon inside the approved breathing core");
 }
 if (!integratedHud.includes("var LOW_POWER_HUD_TICK_MS=250") ||
+    !integratedHud.includes("var LOW_POWER_HUD_ACTIVE_STATES={listening:true,analysis:true}") ||
     !integratedHud.includes("setInterval(updateLowPowerHudMotion,LOW_POWER_HUD_TICK_MS)") ||
     !integratedHud.includes("document.visibilityState!=='visible'") ||
+    !integratedHud.includes("if(!active||!LOW_POWER_HUD_ACTIVE_STATES[active.id])") ||
+    !integratedHud.includes("new MutationObserver(syncLowPowerHudMotion)") ||
     !integratedHud.includes("animation:none!important") ||
-    !integratedHud.includes("--hud-breathe-scale") ||
-    !integratedHud.includes("--hud-pulse-opacity")) {
-  throw new Error("HUD motion must use a visibility-aware 250 ms low-power clock");
+    integratedHud.includes("root.style.setProperty('--hud-breathe-scale'") ||
+    integratedHud.includes("root.style.setProperty('--hud-task-scale'") ||
+    integratedHud.includes("root.style.setProperty('--hud-pulse-opacity'")) {
+  throw new Error("HUD motion must stay off while idle and only update active listening or analysis feedback");
 }
 for (const continuousAnimation of [
   "animation:standby-core-breathe",
@@ -751,6 +770,9 @@ if (!integratedHud.includes('<section id="voiceGuide"') ||
     !integratedHud.includes('<b>眼镜使用教学</b><small>唤醒后说“眼镜教学”</small>') ||
     !integratedHud.includes("开始实训室设备巡检") ||
     !integratedHud.includes("进入第一个选项") ||
+    !integratedHud.includes("结束当前任务 · 关闭当前任务并返回首页") ||
+    !integratedHud.includes("以后在这个项目遇到……先……") ||
+    !integratedHud.includes("确认执行 · 取消") ||
     !integratedHud.includes("启用环境诊断技能 · 停用环境诊断技能") ||
     !integratedHud.includes("['巡检与技能','巡检任务 · 进入第一个选项','开始实训室设备巡检 · AI运维技能','启用环境诊断技能 · 停用环境诊断技能'") ||
     integratedHud.includes("霍尼韦尔工单") ||
@@ -840,20 +862,133 @@ function integratedMethod(signature) {
 }
 
 const integratedSync = integratedMethod("private void syncHudPresentation(");
+if (!integratedActivity.includes("HudTextNormalizer.normalize(")) {
+  throw new Error("integrated AI surfaces must normalize Markdown before HUD display");
+}
+if (!integratedMaintenanceTask.includes("HudTextNormalizer.normalize(")) {
+  throw new Error("maintenance response pagination must normalize Markdown before HUD display");
+}
 if (integratedSync.indexOf("shouldKeepEstablishedTaskSurface(") >
     integratedSync.indexOf('showState("listening")')) {
   throw new Error("established task workspace must take priority over full-screen listening");
+}
+if (!integratedSync.includes("hudRestoredTaskAwaitingInput")) {
+  throw new Error("an explicitly restored empty task must stay visible instead of falling back to standby");
+}
+if (!integratedSync.includes("任务已恢复，请继续描述现场情况。")) {
+  throw new Error("a restored empty task must show a truthful continuation prompt");
+}
+if (!integratedHud.includes("setStandbyNotice") ||
+    !integratedActivity.includes("hudPresentation.setStandbyNotice(")) {
+  throw new Error("task completion must leave a visible receipt on the existing standby page");
+}
+const integratedManagedOperation = integratedMethod("private void performManagedExecutionOperation(");
+for (const marker of [
+  'managed_governance_switch_end:',
+  'managed_governance_review_memory',
+  'managed_governance_call_expert',
+]) {
+  if (!integratedManagedOperation.includes(marker)) {
+    throw new Error(`task end review action is not routed: ${marker}`);
+  }
 }
 const integratedHome = integratedMethod("private void returnToHudStandby(");
 if (!integratedHome.includes("hudTaskWorkspaceActive = false") ||
     !integratedHome.includes("hudTaskMessageStartIndex = chatMessages.size()")) {
   throw new Error("global home navigation must leave the foreground task surface");
 }
+if (!integratedHome.includes('leaveVoiceprintSettingsIfNeeded("home")')) {
+  throw new Error("integrated HUD home must stop voiceprint enrollment and reject late settings callbacks");
+}
 if (!integratedHome.includes("if (hudPresentation != null && screenMode == ScreenMode.CHAT)") ||
     !integratedHome.includes('hudPresentation.showState("standby")') ||
     integratedHome.indexOf('hudPresentation.showState("standby")') >
       integratedHome.indexOf("renderChatScreen();")) {
   throw new Error("HUD home navigation must show standby first without rebuilding the hidden native chat tree");
+}
+for (const marker of [
+  "VoiceprintAsyncRequestGate",
+  "voiceprintSettingsRequestGate.begin()",
+  "voiceprintSettingsRequestGate.isCurrent(",
+  "voiceprintSettingsRequestGate.invalidate()",
+  "voiceprintSettingsRequestGate.close()",
+]) {
+  if (!integratedActivity.includes(marker)) {
+    throw new Error(`integrated voiceprint lifecycle missing marker: ${marker}`);
+  }
+}
+for (const marker of [
+  "private void showManagedProjectCatalog()",
+  "private void showManagedProjectDetail(",
+  "private void performManagedProjectInstructionOperation(",
+  "private void showManagedProjectInstruction(",
+  "private void requestManagedProjectInstructionRevision(",
+  "private void showManagedSkillCatalog()",
+  "private void performManagedSkillOperation(",
+  "executionContextDeviceClient.listProjects()",
+  "executionContextDeviceClient.getProject(projectId)",
+  "executionContextDeviceClient.listSkills(session.projectId(), session.id())",
+  "requestManagedTaskRestore(projectId, taskId)",
+  "private void confirmPendingManagedTaskRestore()",
+  "executionContextDeviceClient.getProject(draft.localProjectId())",
+  "draft.matchesFreshState(",
+  "resumeTaskWorkspace(draft.localTaskId())",
+  "usesLegacyLocalSkillRuntime(SECURE_RUNTIME)",
+]) {
+  if (!integratedActivity.includes(marker)) {
+    throw new Error(`managed execution-context HUD missing marker: ${marker}`);
+  }
+}
+for (const marker of [
+  "managed_project_instruction_open:",
+  "managed_project_instruction_edit:",
+  "managed_project_instruction_disable:",
+  "managed_project_instruction_enable:",
+  "managed_project_instruction_delete:",
+  "managed_project_instruction_refresh:",
+]) {
+  if (!integratedManagedOperation.includes(marker) &&
+      !integratedActivity.includes(marker)) {
+    throw new Error(`project-instruction lifecycle action is not routed: ${marker}`);
+  }
+}
+const integratedGovernanceSubmit = integratedMethod(
+  "private void executePendingProjectGovernance(",
+);
+if (!integratedGovernanceSubmit.includes("draft.instructionStatus()") ||
+    !integratedGovernanceSubmit.includes("draft.instructionExceptions()") ||
+    integratedGovernanceSubmit.includes('draft.expectedInstructionVersion(),\n                                "active"')) {
+  throw new Error("project-instruction writes must submit the reviewed status and exceptions");
+}
+const integratedGovernanceFailure = integratedMethod(
+  "private void showProjectGovernanceFailure(",
+);
+if (!integratedGovernanceFailure.includes("project_instruction_version_conflict") &&
+    !integratedGovernanceFailure.includes("ProjectInstructionLifecyclePolicy.isVersionConflict")) {
+  throw new Error("project-instruction conflicts must be recognized explicitly");
+}
+if (!integratedGovernanceFailure.includes("managed_project_instruction_refresh:") ||
+    !integratedGovernanceFailure.includes("旧草稿已丢弃") ||
+    integratedGovernanceFailure.includes("requestManagedProjectInstructionRevision(")) {
+  throw new Error("project-instruction conflicts must refresh authority without replaying the stale draft");
+}
+const integratedGovernanceVoice = integratedMethod(
+  "private boolean handleProjectGovernanceVoice(",
+);
+if (integratedGovernanceVoice.indexOf("managedProjectInstructionEditPending") < 0 ||
+    integratedGovernanceVoice.indexOf("managedProjectInstructionEditPending") >
+      integratedGovernanceVoice.indexOf("pendingManagedTaskRestoreDraft") ||
+    !integratedGovernanceVoice.includes("ProjectInstructionLifecyclePolicy.classifyEditVoice") ||
+    !integratedGovernanceVoice.includes("project-instruction-edit-invalid")) {
+  throw new Error("project-instruction edit voice must be consumed before task or AI routing");
+}
+const integratedHudOperation = integratedMethod("private void performHudOperation(");
+if (!integratedHudOperation.includes('value.startsWith("managed_task_restore_")')) {
+  throw new Error("managed task restore confirmation actions must reach the execution-context router");
+}
+const integratedTaskResume = integratedMethod("private void resumeTaskWorkspace(");
+if (!integratedTaskResume.includes("hudRestoredTaskAwaitingInput = true")) {
+  throw new Error("explicit task restore must mark the empty task workspace as user-visible");
 }
 const integratedVoiceInteraction = integratedMethod("private boolean handleVoicePreviewInteraction(");
 const integratedVoiceHomeIndex = integratedVoiceInteraction.indexOf("Command.HOME");

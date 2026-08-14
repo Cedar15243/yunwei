@@ -219,7 +219,7 @@ public final class OperationDetailFactory {
         items.add("现场证据：" + task.evidenceLabels().size() + "项");
         if (task.repairStepCount() > 0) {
             items.add("维修进度：" + task.currentRepairStepNumber() + "/" + task.repairStepCount());
-            items.add("当前步骤：" + task.currentRepairStep());
+            items.add("当前步骤：" + task.currentRepairStepForHud());
         } else {
             items.add("维修步骤：等待 AI 生成");
         }

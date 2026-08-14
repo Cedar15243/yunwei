@@ -1,6 +1,8 @@
 package com.codex.air3nativecamera.sync;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -52,6 +54,33 @@ public final class TaskSyncReporterTest {
     }
 
     @Test
+    public void exposesDurableQueueErrorsToTheHost() throws Exception {
+        java.io.File queueFile = temporaryFolder.newFile("corrupt-events.json");
+        java.nio.file.Files.write(queueFile.toPath(), "not-json".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        TaskSyncClient client = new TaskSyncClient(queueFile, event -> { });
+        TaskSyncReporter reporter = new TaskSyncReporter(client, Runnable::run);
+
+        assertTrue(reporter.persistenceError().contains("queue"));
+    }
+
+    @Test
+    public void criticalTaskStartIsPersistedBeforeBackgroundDeliveryRuns() throws Exception {
+        List<Runnable> jobs = new ArrayList<>();
+        AtomicReference<TaskSyncEvent> delivered = new AtomicReference<>();
+        TaskSyncClient client = new TaskSyncClient(
+                temporaryFolder.newFile("critical-events.json"), delivered::set);
+        TaskSyncReporter reporter = new TaskSyncReporter(client, jobs::add);
+
+        reporter.recordCritical(event("task-a:task_started"));
+
+        assertEquals(1, client.pendingCount());
+        assertEquals(1, jobs.size());
+        jobs.remove(0).run();
+        assertEquals("task-a:task_started", delivered.get().idempotencyKey());
+        assertEquals(0, client.pendingCount());
+    }
+
+    @Test
     public void buildsAnEventFromThePersistedTaskIdentity() throws Exception {
         TaskSession session = new TaskSessionManager().startNew("project-local-a", "温湿度异常");
 
@@ -70,6 +99,28 @@ public final class TaskSyncReporterTest {
         assertEquals("开始检查", new JSONObject(event.payload()).getString("text"));
     }
 
+    @Test
+    public void normalizesLongMultilineTitlesWithoutDroppingTheFullProblem() throws Exception {
+        String problem = "服务器无法启动。\n" + repeat("需要核对电源、日志和诊断码。", 30);
+        String projectTitle = "值班交接\n" + repeat("现场项目", 40);
+        TaskSession session = new TaskSessionManager().startNew("project-local-long", problem);
+
+        TaskSyncEvent event = TaskSyncEventFactory.create(
+                session,
+                projectTitle,
+                "task_started",
+                new JSONObject().put("problem", problem),
+                1722400000000L,
+                "event-long-title");
+
+        assertTrue(event.projectTitle().length() <= 240);
+        assertTrue(event.taskTitle().length() <= 240);
+        assertFalse(event.projectTitle().contains("\n"));
+        assertFalse(event.taskTitle().contains("\n"));
+        assertEquals(problem, new JSONObject(event.payload()).getString("problem"));
+        assertEquals(problem, session.maintenanceTask().initialProblem());
+    }
+
     private static TaskSyncEvent event(String idempotencyKey) {
         return new TaskSyncEvent(
                 "project-a",
@@ -80,5 +131,13 @@ public final class TaskSyncReporterTest {
                 "{\"problem\":\"温湿度异常\"}",
                 1722400000000L,
                 idempotencyKey);
+    }
+
+    private static String repeat(String value, int count) {
+        StringBuilder result = new StringBuilder();
+        for (int index = 0; index < count; index++) {
+            result.append(value);
+        }
+        return result.toString();
     }
 }

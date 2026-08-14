@@ -182,6 +182,46 @@ public final class MaintenanceTaskTest {
     }
 
     @Test
+    public void consecutiveBlankLinesNeverCreateAnEmptyHudPage() {
+        MaintenanceTask task = MaintenanceTask.start("服务器无法启动");
+        StringBuilder reply = new StringBuilder();
+        for (int index = 0; index < 88; index++) reply.append('甲');
+        reply.append("\n\n");
+        for (int index = 0; index < 80; index++) reply.append('乙');
+        task.addTurn("AI", reply.toString());
+
+        int pageSize = 112;
+        assertEquals(2, task.conversationPageCount(pageSize));
+        for (int page = 0; page < task.conversationPageCount(pageSize); page++) {
+            assertFalse(task.conversationPage(page, pageSize).trim().isEmpty());
+        }
+    }
+
+    @Test
+    public void hudPagesNormalizeMarkdownButPersistTheOriginalAiReply() throws Exception {
+        MaintenanceTask task = MaintenanceTask.start("传感器没有输出");
+        String reply = "## 处理建议\n- **检查** `TEMP_SENSOR_1`\n- 确认 4*20mA 信号";
+        task.addTurn("AI", reply);
+        task.setDiagnosis("处理建议", reply, 82);
+
+        assertEquals("处理建议\n• 检查 TEMP_SENSOR_1\n• 确认 4*20mA 信号",
+                task.conversationPage(0, 300));
+        assertEquals(task.conversationPage(0, 300), task.responsePage(0, 300));
+        assertTrue(task.toJson().toString().contains("## 处理建议"));
+        assertTrue(task.buildPromptMemory(6).contains("**检查**"));
+    }
+
+    @Test
+    public void repairStepHudTextIsNormalizedWithoutChangingTheStoredStep() {
+        MaintenanceTask task = MaintenanceTask.start("传感器没有输出");
+        task.replaceRepairSteps(new String[]{"**检查** `TEMP_SENSOR_1`"});
+
+        assertEquals("检查 TEMP_SENSOR_1", task.currentRepairStepForHud());
+        assertEquals("**检查** `TEMP_SENSOR_1`", task.currentRepairStep());
+        assertTrue(task.toJson().toString().contains("**检查**"));
+    }
+
+    @Test
     public void taskRoundTripRetainsEvidenceConversationDiagnosisAndRepairProgress() throws Exception {
         MaintenanceTask task = MaintenanceTask.start("温湿度传感器数据异常");
         task.putFact("设备型号", "Honeywell T7350");

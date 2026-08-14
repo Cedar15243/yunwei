@@ -1,0 +1,31 @@
+groups:
+  - name: dingdang-v9-availability
+    interval: 30s
+    rules:
+      - alert: DingdangV9GatewayUnavailable
+        expr: probe_success{job="dingdang-v9-gateway-health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: dingdang-v9-gateway
+        annotations:
+          summary: V9 网关存活探针失败
+          runbook: docs/operations/v9-observability-alerting-contract.md
+      - alert: DingdangV9GatewayReadinessFailed
+        expr: probe_success{job="dingdang-v9-gateway-ready"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: dingdang-v9-gateway
+        annotations:
+          summary: V9 网关本地存储未就绪
+          runbook: docs/operations/v9-observability-alerting-contract.md
+      - alert: DingdangV9ProbeLatencyHigh
+        expr: probe_duration_seconds{job=~"dingdang-v9-gateway-(health|ready)"} > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: dingdang-v9-gateway
+        annotations:
+          summary: V9 网关探针延迟超过 1 秒
+          runbook: docs/operations/v9-observability-alerting-contract.md

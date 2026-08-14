@@ -492,7 +492,9 @@ public final class ExpertCollabCoordinator implements
             stateMachine.onFailure();
             endCurrentCall(true);
             renderState();
-            statusText.setText(reason == null || reason.isEmpty() ? "音视频连接失败" : reason);
+            String status = reason == null || reason.isEmpty() ? "音视频连接失败" : reason;
+            statusText.setText(status);
+            host.showExpertStatus(status);
         });
     }
 

@@ -4,18 +4,70 @@ plugins {
 
 // The public reverse proxy is exposed on 2305; port 443 is not available on the deployment host.
 def collabServerUrl = project.findProperty("collabServerUrl") ?: "https://bb.chinacedar.top:2305"
-def previewApplicationId = project.findProperty("previewApplicationId") ?: "com.codex.air3nativecamera.dingdangexpert.follow.preview"
-def previewVersionCode = (project.findProperty("previewVersionCode") ?: "627") as int
-def previewVersionName = project.findProperty("previewVersionName") ?: "6.2.7-expert-preview"
-def previewAppLabel = project.findProperty("previewAppLabel") ?: "叮当AI运维专家·协同测试"
+def formalRelease = project.findProperty("formalRelease")?.toString()?.trim()?.toBoolean() ?: false
+def formalReleaseApplicationId = "com.codex.air3nativecamera.dingdangexpert.v9"
+def formalReleaseVersionCode = 900000
+def formalReleaseVersionName = "9.0.0"
+def previewApplicationId = formalRelease
+        ? formalReleaseApplicationId
+        : project.findProperty("previewApplicationId") ?: "com.codex.air3nativecamera.dingdangexpert.follow.preview"
+def previewVersionCode = formalRelease
+        ? formalReleaseVersionCode
+        : (project.findProperty("previewVersionCode") ?: "627") as int
+def previewVersionName = formalRelease
+        ? formalReleaseVersionName
+        : project.findProperty("previewVersionName") ?: "6.2.7-expert-preview"
+def previewAppLabel = formalRelease
+        ? "叮当AI V9"
+        : project.findProperty("previewAppLabel") ?: "叮当AI运维专家·协同测试"
 def generatedConfigDir = layout.buildDirectory.dir("generated/source/dingdang")
 def secureRuntime = (project.findProperty("secureRuntime")?.toString()?.trim()?.toBoolean() ?: false) ||
         System.getenv("AIR3_APK_SECURE_RUNTIME")?.trim() == "1"
+def v9PackageRequested = previewApplicationId.tokenize('.').contains('v9')
 def directGptEnabled = !secureRuntime && System.getenv("AIR3_APK_DIRECT_GPT")?.trim() == "1"
 def iflytekOfflineWakeEnabled = System.getenv("AIR3_APK_IFLYTEK_OFFLINE_WAKE")?.trim() == "1"
 def iflytekAikitRoot = System.getenv("IFLYTEK_AIKIT_ROOT")?.trim()
 def localAsrFallbackEnabled = System.getenv("AIR3_APK_LOCAL_ASR_FALLBACK")?.trim() == "1"
 def sherpaOnnxRoot = System.getenv("SHERPA_ONNX_ROOT")?.trim()
+def debugPrivateProvisioningEnabled = project.findProperty("debugPrivateProvisioning")
+        ?.toString()?.trim()?.toBoolean() ?: false
+def releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.toLowerCase().contains("release")
+}
+if (v9PackageRequested && !secureRuntime) {
+    throw new GradleException("V9 builds require secureRuntime")
+}
+if (formalRelease && !secureRuntime) {
+    throw new GradleException("formalRelease requires secureRuntime")
+}
+if (debugPrivateProvisioningEnabled && !secureRuntime) {
+    throw new GradleException("debugPrivateProvisioning requires secureRuntime")
+}
+if (formalRelease && debugPrivateProvisioningEnabled) {
+    throw new GradleException("formalRelease forbids debugPrivateProvisioning")
+}
+if (debugPrivateProvisioningEnabled && releaseTaskRequested) {
+    throw new GradleException("debugPrivateProvisioning is forbidden for release builds")
+}
+
+def releaseKeystorePath = System.getenv("V9_RELEASE_KEYSTORE")?.trim()
+def releaseKeyAlias = System.getenv("V9_RELEASE_KEY_ALIAS")?.trim()
+def releaseStorePassword = System.getenv("V9_RELEASE_STORE_PASSWORD")
+def releaseKeyPassword = System.getenv("V9_RELEASE_KEY_PASSWORD")
+if (formalRelease && releaseTaskRequested) {
+    if (!releaseKeystorePath || !file(releaseKeystorePath).isFile()) {
+        throw new GradleException("V9_RELEASE_KEYSTORE is required for formal release builds")
+    }
+    if (!releaseKeyAlias) {
+        throw new GradleException("V9_RELEASE_KEY_ALIAS is required for formal release builds")
+    }
+    if (!releaseStorePassword) {
+        throw new GradleException("V9_RELEASE_STORE_PASSWORD is required for formal release builds")
+    }
+    if (!releaseKeyPassword) {
+        throw new GradleException("V9_RELEASE_KEY_PASSWORD is required for formal release builds")
+    }
+}
 
 def requiredEnvironment = { String name ->
     def value = System.getenv(name)?.trim()
@@ -39,6 +91,10 @@ android {
     compileSdk 34
     buildToolsVersion "34.0.0"
 
+    buildFeatures {
+        buildConfig true
+    }
+
     defaultConfig {
         applicationId previewApplicationId
         minSdk 34
@@ -53,12 +109,28 @@ android {
         buildConfigField "String", "COLLAB_SERVER_URL", "\"${collabServerUrl}\""
     }
 
+    signingConfigs {
+        release {
+            if (formalRelease && releaseTaskRequested) {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+                enableV1Signing false
+                enableV2Signing true
+            }
+        }
+    }
+
     buildTypes {
         debug {
             debuggable true
         }
         release {
             minifyEnabled false
+            if (formalRelease) {
+                signingConfig signingConfigs.release
+            }
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
@@ -68,6 +140,7 @@ android {
         if (iflytekOfflineWakeEnabled) {
             main.java.srcDir "src/offlineWake/java"
             main.assets.srcDir new File(iflytekAikitRoot, "resource")
+            test.java.srcDir "src/offlineWakeTest/java"
         }
         if (localAsrFallbackEnabled) {
             if (!sherpaOnnxRoot) {
@@ -82,6 +155,7 @@ android {
             main.java.srcDir "src/localAsr/java"
             main.assets.srcDir sherpaAssets
             main.jniLibs.srcDir sherpaJniLibs
+            test.java.srcDir "src/localAsrTest/java"
         }
     }
 
@@ -98,6 +172,7 @@ tasks.register("generateDingdangConfig") {
     inputs.property("secureRuntime", secureRuntime)
     inputs.property("iflytekOfflineWakeEnabled", iflytekOfflineWakeEnabled)
     inputs.property("localAsrFallbackEnabled", localAsrFallbackEnabled)
+    inputs.property("debugPrivateProvisioningEnabled", debugPrivateProvisioningEnabled)
     outputs.dir generatedConfigDir
     outputs.upToDateWhen { false }
     doLast {
@@ -110,9 +185,12 @@ tasks.register("generateDingdangConfig") {
                 ? requiredEnvironment("DIRECT_GPT_API_KEY")
                 : optionalEnvironment("DIRECT_GPT_API_KEY", ""))
         def directGptBaseUrl = secureRuntime ? ""
-                : optionalEnvironment("DIRECT_GPT_BASE_URL", "https://api.openai.com/v1")
+                : optionalEnvironment("DIRECT_GPT_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
         def directGptModel = secureRuntime ? ""
-                : optionalEnvironment("DIRECT_GPT_MODEL", "gpt-4.1-mini")
+                : optionalEnvironment("DIRECT_GPT_MODEL", "qwen3-vl-plus")
+        if (directGptEnabled && directGptModel != "qwen3-vl-plus") {
+            throw new GradleException("direct_gpt_model_not_previous_stable")
+        }
         def directGptReasoningEffort = secureRuntime ? ""
                 : optionalEnvironment("DIRECT_GPT_REASONING_EFFORT", "")
         def directAsrEndpoint = secureRuntime ? "" : (directGptEnabled
@@ -136,6 +214,9 @@ tasks.register("generateDingdangConfig") {
         def backendBaseUrl = optionalEnvironment(
                 "DINGDANG_BACKEND_BASE_URL",
                 eventsEndpoint.replaceFirst(/\/sessions\/events$/, ""))
+        def deviceActivationBaseUrl = optionalEnvironment(
+                "V9_DEVICE_ACTIVATION_BASE_URL",
+                eventsEndpoint.replaceFirst(/\/sessions\/events$/, ""))
         def packageDir = generatedConfigDir.get().dir("com/codex/air3nativecamera").asFile
         packageDir.mkdirs()
         new File(packageDir, "GeneratedConfig.java").setText("""package com.codex.air3nativecamera;
@@ -147,6 +228,7 @@ final class GeneratedConfig {
     static final String OPS_GLASSES_API_KEY = "${javaString(opsKey)}";
     static final String DINGDANG_BACKEND_BASE_URL = "${javaString(backendBaseUrl)}";
     static final String DINGDANG_BACKEND_API_KEY = "${javaString(opsKey)}";
+    static final String DEVICE_ACTIVATION_BASE_URL = "${javaString(deviceActivationBaseUrl)}";
     static final boolean SECURE_RUNTIME = ${secureRuntime};
     static final boolean FAST_UPLOAD = false;
     static final boolean DIRECT_GPT_ENABLED = ${directGptEnabled};
@@ -158,6 +240,7 @@ final class GeneratedConfig {
     static final String DIRECT_ASR_API_KEY = "${javaString(directAsrApiKey)}";
     static final boolean IFLYTEK_OFFLINE_WAKE_ENABLED = ${iflytekOfflineWakeEnabled};
     static final boolean LOCAL_ASR_FALLBACK_ENABLED = ${localAsrFallbackEnabled};
+    static final boolean DEBUG_PRIVATE_PROVISIONING_ENABLED = ${debugPrivateProvisioningEnabled};
     static final String IFLYTEK_APP_ID = "${javaString(iflytekAppId)}";
     static final String IFLYTEK_API_KEY = "${javaString(iflytekApiKey)}";
     static final String IFLYTEK_API_SECRET = "${javaString(iflytekApiSecret)}";
@@ -176,6 +259,7 @@ tasks.named("preBuild").configure {
 dependencies {
     implementation "com.tencent.liteav:LiteAVSDK_TRTC:13.4.0.20477"
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    implementation "com.google.zxing:core:3.5.3"
     if (iflytekOfflineWakeEnabled) {
         if (!iflytekAikitRoot) {
             throw new GradleException("IFLYTEK_AIKIT_ROOT is required for the offline wake build")

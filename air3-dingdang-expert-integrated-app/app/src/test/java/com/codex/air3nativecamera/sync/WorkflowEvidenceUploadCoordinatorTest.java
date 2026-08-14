@@ -118,6 +118,121 @@ public final class WorkflowEvidenceUploadCoordinatorTest {
     }
 
     @Test
+    public void prefersResumableTransportWithoutLoadingTheWholeMediaIntoLegacyTransport() throws Exception {
+        File root = Files.createTempDirectory("workflow-resumable-evidence").toFile();
+        write(root, "task-evidence/clip.mp4", new byte[]{1, 2, 3, 4});
+        List<WorkflowEvidenceUploadCoordinator.PendingEvidence> pending = new ArrayList<>();
+        pending.add(new WorkflowEvidenceUploadCoordinator.PendingEvidence(
+                "assignment-video",
+                "11111111-1111-4111-8111-111111111111",
+                "local-video",
+                "video-a",
+                "control-panel",
+                WorkflowEvidenceUploadCoordinator.MediaKind.VIDEO,
+                "task-evidence/clip.mp4",
+                12));
+        List<Runnable> jobs = new ArrayList<>();
+        List<String> resumableCalls = new ArrayList<>();
+        WorkflowEvidenceUploadCoordinator coordinator =
+                new WorkflowEvidenceUploadCoordinator(
+                        root,
+                        () -> pending,
+                        new WorkflowEvidenceUploadCoordinator.ResumableTransport() {
+                            @Override
+                            public String upload(
+                                    WorkflowEvidenceUploadCoordinator.PendingEvidence evidence,
+                                    byte[] bytes,
+                                    String capturedAt
+                            ) {
+                                throw new AssertionError("legacy transport must not be used");
+                            }
+
+                            @Override
+                            public String uploadResumable(
+                                    WorkflowEvidenceUploadCoordinator.PendingEvidence evidence,
+                                    File file,
+                                    String capturedAt
+                            )
+                                    throws IOException {
+                                resumableCalls.add(file.getName());
+                                assertEquals(4L, file.length());
+                                return "77777777-7777-4777-8777-777777777777";
+                            }
+                        },
+                        (assignmentId, localEvidenceId, remoteAssetId) -> {
+                            pending.clear();
+                            return true;
+                        },
+                        jobs::add,
+                        () -> 1000L);
+
+        coordinator.request();
+        jobs.remove(0).run();
+
+        assertEquals(Arrays.asList("clip.mp4"), resumableCalls);
+        assertFalse(coordinator.isRunning());
+    }
+
+    @Test
+    public void cancellationSignalsTheActiveResumableUploadAndPreventsAcknowledgeOrRerun()
+            throws Exception {
+        File root = Files.createTempDirectory("workflow-cancel-evidence").toFile();
+        write(root, "task-evidence/cancel.jpg", new byte[]{1, 2, 3});
+        List<WorkflowEvidenceUploadCoordinator.PendingEvidence> pending =
+                new ArrayList<>();
+        pending.add(evidence("assignment-cancel", "local-cancel", "task-evidence/cancel.jpg"));
+        List<Runnable> jobs = new ArrayList<>();
+        List<String> acknowledged = new ArrayList<>();
+        boolean[] cancellationSignalled = {false};
+        WorkflowEvidenceUploadCoordinator[] coordinator =
+                new WorkflowEvidenceUploadCoordinator[1];
+        coordinator[0] = new WorkflowEvidenceUploadCoordinator(
+                root,
+                () -> new ArrayList<>(pending),
+                new WorkflowEvidenceUploadCoordinator.CancellableResumableTransport() {
+                    @Override
+                    public String upload(
+                            WorkflowEvidenceUploadCoordinator.PendingEvidence evidence,
+                            byte[] bytes,
+                            String capturedAt
+                    ) {
+                        throw new AssertionError("legacy transport must not be used");
+                    }
+
+                    @Override
+                    public String uploadResumable(
+                            WorkflowEvidenceUploadCoordinator.PendingEvidence evidence,
+                            File file,
+                            String capturedAt
+                    ) throws IOException {
+                        coordinator[0].cancel();
+                        assertTrue(cancellationSignalled[0]);
+                        throw new WorkflowEvidenceUploadCoordinator.UploadCancelledException();
+                    }
+
+                    @Override
+                    public void cancelActiveUpload() {
+                        cancellationSignalled[0] = true;
+                    }
+                },
+                (assignmentId, localEvidenceId, remoteAssetId) -> {
+                    acknowledged.add(localEvidenceId);
+                    return true;
+                },
+                jobs::add,
+                () -> 1000L);
+
+        coordinator[0].request();
+        jobs.remove(0).run();
+
+        assertTrue(cancellationSignalled[0]);
+        assertTrue(acknowledged.isEmpty());
+        assertFalse(coordinator[0].isRunning());
+        coordinator[0].request();
+        assertTrue(jobs.isEmpty());
+    }
+
+    @Test
     public void coalescesARequestDuringDeliveryIntoOneFollowUpRun() throws Exception {
         File root = Files.createTempDirectory("workflow-evidence-rerun").toFile();
         write(root, "task-evidence/a.jpg", new byte[]{1});

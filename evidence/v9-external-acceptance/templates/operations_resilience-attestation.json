@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "gateId": "operations_resilience",
+  "release": {
+    "applicationId": "com.codex.air3nativecamera.dingdangexpert.v9",
+    "versionCode": 900000,
+    "versionName": "9.0.0",
+    "apkSha256": "02DABEE95134D8FA9376F415880E08F7AA2872BC43BB2BDE92CA51BCF05806E5",
+    "deliveryZipSha256": "E28FEDCC960418EC85B514297BA1061B9C00CA25FA2115F8CC46CF8C67BD8AEC",
+    "generatedAt": "2026-08-12T20:22:03.2076647+00:00"
+  },
+  "environment": "production",
+  "executedAt": null,
+  "runner": "",
+  "result": "pending",
+  "checks": [
+    {
+      "id": "gateway_database_restore",
+      "status": "pending"
+    },
+    {
+      "id": "voiceprint_database_restore",
+      "status": "pending"
+    },
+    {
+      "id": "evidence_media_restore",
+      "status": "pending"
+    },
+    {
+      "id": "rpo_rto_met",
+      "status": "pending"
+    },
+    {
+      "id": "disk_full_recovery",
+      "status": "pending"
+    },
+    {
+      "id": "monitoring_notification",
+      "status": "pending"
+    },
+    {
+      "id": "object_storage_cleanup",
+      "status": "pending"
+    }
+  ]
+}

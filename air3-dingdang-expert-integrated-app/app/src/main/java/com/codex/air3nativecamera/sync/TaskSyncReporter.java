@@ -50,6 +50,17 @@ public final class TaskSyncReporter implements AutoCloseable {
         });
     }
 
+    public void recordCritical(final TaskSyncEvent event) {
+        if (client == null || event == null) return;
+        client.enqueue(event);
+        execute(new Runnable() {
+            @Override
+            public void run() {
+                deliverReadyEvents();
+            }
+        });
+    }
+
     public void flush() {
         if (client == null) return;
         execute(new Runnable() {
@@ -58,6 +69,11 @@ public final class TaskSyncReporter implements AutoCloseable {
                 deliverReadyEvents();
             }
         });
+    }
+
+    /** Makes durable queue corruption visible to the host HUD instead of hiding it in the outbox. */
+    public String persistenceError() {
+        return client == null ? "" : client.persistenceError();
     }
 
     @Override

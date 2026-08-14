@@ -2,6 +2,7 @@ package com.codex.air3nativecamera;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.RestrictionsManager;
 import android.content.SharedPreferences;
@@ -32,6 +33,8 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaRecorder;
 import android.media.MediaMetadataRetriever;
+import android.location.Location;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -39,6 +42,8 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.text.InputFilter;
+import android.text.InputType;
 import android.util.Base64;
 import android.util.Log;
 import android.util.Size;
@@ -52,10 +57,12 @@ import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 import android.webkit.WebView;
 import android.provider.Settings;
 
@@ -65,28 +72,55 @@ import com.codex.air3nativecamera.features.AIAgentConfig;
 import com.codex.air3nativecamera.features.AIAbilityConfig;
 import com.codex.air3nativecamera.features.AISkillConfig;
 import com.codex.air3nativecamera.features.operations.InspectionChecklist;
+import com.codex.air3nativecamera.features.operations.ExecutionContextHudPresenter;
 import com.codex.air3nativecamera.features.operations.OperationDetail;
 import com.codex.air3nativecamera.features.operations.OperationDetailFactory;
 import com.codex.air3nativecamera.features.inspection.InspectionAiBridge;
 import com.codex.air3nativecamera.features.inspection.InspectionCatalog;
 import com.codex.air3nativecamera.features.inspection.InspectionRun;
 import com.codex.air3nativecamera.features.inspection.InspectionTaskDefinition;
+import com.codex.air3nativecamera.governance.ProjectGovernanceDraft;
+import com.codex.air3nativecamera.governance.ProjectGovernancePolicy;
+import com.codex.air3nativecamera.governance.ProjectInstructionLifecyclePolicy;
+import com.codex.air3nativecamera.governance.ManagedTaskRestoreDraft;
 import com.codex.air3nativecamera.mode.IntegratedModeController;
+import com.codex.air3nativecamera.runtime.DebugPrivateProvisioning;
+import com.codex.air3nativecamera.runtime.DebugPrivateProvisioningReader;
+import com.codex.air3nativecamera.runtime.DebugPrivateWakeProvisioning;
+import com.codex.air3nativecamera.runtime.DebugPrivateWakeProvisioningReader;
+import com.codex.air3nativecamera.runtime.AndroidKeystoreDeviceCredentialStore;
+import com.codex.air3nativecamera.runtime.DeviceActivationClient;
+import com.codex.air3nativecamera.runtime.DeviceActivationQrCaptureState;
+import com.codex.air3nativecamera.runtime.DeviceActivationQrDecoder;
+import com.codex.air3nativecamera.runtime.DeviceActivationRecord;
+import com.codex.air3nativecamera.runtime.DeviceActivationUiPolicy;
+import com.codex.air3nativecamera.runtime.DeviceCredentialStore;
+import com.codex.air3nativecamera.runtime.DeviceInstallationIdentity;
 import com.codex.air3nativecamera.runtime.ManagedRuntimeConfiguration;
 import com.codex.air3nativecamera.task.MaintenanceTask;
 import com.codex.air3nativecamera.task.TaskSession;
 import com.codex.air3nativecamera.task.TaskSessionManager;
+import com.codex.air3nativecamera.text.HudTextNormalizer;
+import com.codex.air3nativecamera.sync.AiExecutionContext;
 import com.codex.air3nativecamera.sync.BackendAuthorization;
+import com.codex.air3nativecamera.sync.BackendDiagnosisRequest;
 import com.codex.air3nativecamera.sync.AndroidNetworkAvailabilityMonitor;
+import com.codex.air3nativecamera.sync.AndroidSkillKnowledgeManifestStorage;
 import com.codex.air3nativecamera.sync.AndroidWorkflowPackageStoreProvider;
 import com.codex.air3nativecamera.sync.DeviceAccessTokenProvider;
+import com.codex.air3nativecamera.sync.DeviceMemoryDeviceClient;
 import com.codex.air3nativecamera.sync.DeviceSessionManager;
 import com.codex.air3nativecamera.sync.DeviceSyncConfiguration;
+import com.codex.air3nativecamera.sync.ExecutionContextDeviceClient;
 import com.codex.air3nativecamera.sync.HttpDeviceSessionIssuer;
 import com.codex.air3nativecamera.sync.HttpTaskSyncTransport;
+import com.codex.air3nativecamera.sync.MvsWorkOrderDeviceClient;
+import com.codex.air3nativecamera.sync.SkillKnowledgeManifestClient;
 import com.codex.air3nativecamera.sync.TaskSyncClient;
+import com.codex.air3nativecamera.sync.TaskCompletionSyncPayload;
 import com.codex.air3nativecamera.sync.TaskSyncEventFactory;
 import com.codex.air3nativecamera.sync.TaskSyncReporter;
+import com.codex.air3nativecamera.sync.TaskStartRegistrationGate;
 import com.codex.air3nativecamera.sync.VerifiedWorkflowPackageCache;
 import com.codex.air3nativecamera.sync.WorkflowAssignmentRepository;
 import com.codex.air3nativecamera.sync.WorkflowAssignmentSyncCoordinator;
@@ -95,25 +129,38 @@ import com.codex.air3nativecamera.sync.WorkflowDeviceHttpClient;
 import com.codex.air3nativecamera.sync.WorkflowEvidenceUploadCoordinator;
 import com.codex.air3nativecamera.sync.WorkflowPackageSnapshotAccess;
 import com.codex.air3nativecamera.sync.WorkflowSyncTriggerCoordinator;
+import com.codex.air3nativecamera.sync.VoiceprintDeviceClient;
 import com.codex.air3nativecamera.skills.HoneywellTempHumiditySkill;
 import com.codex.air3nativecamera.skills.SceneReferenceGuide;
 import com.codex.air3nativecamera.skills.SceneSkillAiBridge;
 import com.codex.air3nativecamera.ui.hud.HudWebPresentation;
 import com.codex.air3nativecamera.voice.LegacyVoiceCommandRouter;
 import com.codex.air3nativecamera.voice.AsrProviderFailure;
+import com.codex.air3nativecamera.voice.AudioCaptureCoordinator;
 import com.codex.air3nativecamera.voice.LocalAsrEngine;
 import com.codex.air3nativecamera.voice.LocalAsrEngineFactory;
+import com.codex.air3nativecamera.voice.RealtimeAsrPendingAudio;
+import com.codex.air3nativecamera.voice.VoiceModeDoubleClickPolicy;
 import com.codex.air3nativecamera.voice.VoiceCommandRouter;
 import com.codex.air3nativecamera.voice.VoiceAsrSessionGate;
 import com.codex.air3nativecamera.voice.VoiceEventStateMachine;
+import com.codex.air3nativecamera.voice.VoiceprintAsyncRequestGate;
+import com.codex.air3nativecamera.voice.VoiceprintEnrollmentFlow;
+import com.codex.air3nativecamera.voice.VoiceprintPcmSegmenter;
 import com.codex.air3nativecamera.voice.WakeListeningSchedulePolicy;
 import com.codex.air3nativecamera.voice.WakeWordEngine;
 import com.codex.air3nativecamera.voice.WakeWordEngines;
 import com.codex.air3nativecamera.workflow.AndroidAtomicWorkflowSnapshotStorage;
 import com.codex.air3nativecamera.workflow.ManagedWorkflowPublicKeySource;
+import com.codex.air3nativecamera.workflow.MvsWorkOrderEvidenceCaptureState;
+import com.codex.air3nativecamera.workflow.MvsWorkOrderEvidenceDraftStore;
+import com.codex.air3nativecamera.workflow.MvsWorkOrderFormDraftStore;
+import com.codex.air3nativecamera.workflow.MvsWorkOrderHudPresenter;
+import com.codex.air3nativecamera.workflow.MvsWorkOrderNodeForm;
 import com.codex.air3nativecamera.workflow.WorkflowCapabilityRegistry;
 import com.codex.air3nativecamera.workflow.WorkflowEvidenceReference;
 import com.codex.air3nativecamera.workflow.WorkflowExecutionCoordinator;
+import com.codex.air3nativecamera.workflow.WorkflowFormVoiceInputSession;
 import com.codex.air3nativecamera.workflow.WorkflowHudPresenter;
 import com.codex.air3nativecamera.workflow.WorkflowPackage;
 import com.codex.air3nativecamera.workflow.WorkflowPackageVerifier;
@@ -149,8 +196,10 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
@@ -177,14 +226,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         NEXT_PROJECT,
         PREVIOUS_PROJECT,
         LATEST_PROJECT,
-        SHOW_RECORDS
+        SHOW_RECORDS,
+        OPEN_SETTINGS
     }
     private enum VoiceStreamState { IDLE, LISTENING, PARTIAL_READY, FINAL_READY, AI_PENDING, AI_DONE, VOICE_UNCLEAR }
     private enum VoiceSessionPurpose { NONE, WAKE, COMMAND, OFFLINE_WAKE_COMMAND, WORKFLOW_INPUT }
     private enum HudTaskProgress { NONE, GUIDANCE, COMPLETED }
 
     private interface ChatAiClient {
-        void send(String prompt, String imageId, byte[] jpegBytes, StreamingCallback callback);
+        void send(String prompt, String imageId, byte[] jpegBytes,
+                AiExecutionContext executionContext, StreamingCallback callback);
     }
 
     private interface BackendImageUploadCallback {
@@ -201,7 +252,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private interface RealtimeAsrCallback {
         void onPartial(String text);
-        void onFinal(String text);
+        void onFinal(String text, String source);
         void onUnclear(String diagnosticCode);
         void onError(Exception error);
     }
@@ -214,6 +265,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private static final int REQUEST_CAMERA = 1001;
     private static final int REQUEST_AUDIO = 1002;
+    private static final int REQUEST_MVS_LOCATION = 1003;
+    private static final long MVS_LOCATION_TIMEOUT_MS = 8_000L;
+    private static final long MVS_LOCATION_MAX_AGE_MS = 2 * 60 * 1_000L;
+    private static final float MVS_LOCATION_MAX_ACCURACY_METERS = 500f;
     private static final int KEYCODE_DVR = 173;
     private static final String KEY_LOG_TAG = "DingdangKey";
     private static final String JSON_CONTENT_TYPE = "application/json; charset=utf-8";
@@ -226,6 +281,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final String DIRECT_ASR_API_KEY = GeneratedConfig.DIRECT_ASR_API_KEY;
     private static final String DINGDANG_BACKEND_BASE_URL = GeneratedConfig.DINGDANG_BACKEND_BASE_URL;
     private static final String DINGDANG_BACKEND_API_KEY = GeneratedConfig.DINGDANG_BACKEND_API_KEY;
+    private static final String DEVICE_ACTIVATION_BASE_URL =
+            GeneratedConfig.DEVICE_ACTIVATION_BASE_URL;
     private static final String WORKFLOW_TRUSTED_PUBLIC_KEYS = "workflow_trusted_public_keys";
     private static final boolean SECURE_RUNTIME = GeneratedConfig.SECURE_RUNTIME;
     private static final String APP_ID = GeneratedConfig.APP_ID;
@@ -260,6 +317,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final long WAKE_PREFIX_GRACE_MS = 4000L;
     private static final long FOREGROUND_WAKE_RETRY_DELAY_MS = 900L;
     private static final long VOICE_EVENT_DESCRIPTION_TIMEOUT_MS = 30000L;
+    private static final long VOICE_MODE_DOUBLE_CLICK_MS = 320L;
+    private static final long VOICEPRINT_RETRY_DELAY_MS = 900L;
+    private static final String VOICEPRINT_CONSENT_VERSION = "2026-08-02.v1";
     private static final int MAX_VOICE_COMMAND_CHARS = 16;
     private static final int VOICE_SILENCE_RMS_THRESHOLD = 520;
     private static final int VOICE_SAMPLE_RATE_HZ = 16000;
@@ -267,6 +327,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private static final int VOICE_WAV_BITS_PER_SAMPLE = 16;
     private static final int VOICE_WAV_HEADER_BYTES = 44;
     private static final String CHAT_PROJECT_PREFS = "dingdang_chat_projects";
+    private static final String DEVICE_INSTALLATION_PREFS = "v9-device-installation";
     private static final String AGENT_AUTHORIZATIONS_JSON = "agent_authorizations_json";
     private static final String CHAT_PROJECTS_JSON = "projects_json";
     private static final String CURRENT_PROJECT_INDEX = "current_project_index";
@@ -356,10 +417,47 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private boolean inspectionAiInFlight;
     private long inspectionRequestGeneration;
     private final OperationDetailFactory operationDetailFactory = OperationDetailFactory.defaultFactory();
+    private final ExecutionContextHudPresenter executionContextHudPresenter =
+            new ExecutionContextHudPresenter();
     private final LegacyVoiceCommandRouter legacyVoiceCommandRouter = new LegacyVoiceCommandRouter();
     private final VoiceCommandRouter voiceCommandRouter = new VoiceCommandRouter();
     private final VoiceEventStateMachine voiceEventStateMachine = new VoiceEventStateMachine();
     private final VoiceAsrSessionGate voiceAsrSessionGate = new VoiceAsrSessionGate();
+    private final AudioCaptureCoordinator audioCaptureCoordinator = new AudioCaptureCoordinator();
+    private final VoiceModeDoubleClickPolicy voiceModeDoubleClickPolicy =
+            new VoiceModeDoubleClickPolicy(VOICE_MODE_DOUBLE_CLICK_MS);
+    private final VoiceprintAsyncRequestGate voiceprintSettingsRequestGate =
+            new VoiceprintAsyncRequestGate();
+    private final ExecutorService managedExecutionExecutor = Executors.newSingleThreadExecutor(
+            new ThreadFactory() {
+                @Override public Thread newThread(Runnable runnable) {
+                    Thread thread = new Thread(runnable, "DingdangExecutionContext");
+                    thread.setDaemon(true);
+                    return thread;
+                }
+            });
+    private final ExecutorService voiceprintExecutor = Executors.newSingleThreadExecutor(
+            new ThreadFactory() {
+                @Override public Thread newThread(Runnable runnable) {
+                    return new Thread(runnable, "DingdangVoiceprintGateway");
+                }
+            });
+    private final ExecutorService mvsWorkOrderExecutor = Executors.newSingleThreadExecutor(
+            new ThreadFactory() {
+                @Override public Thread newThread(Runnable runnable) {
+                    Thread thread = new Thread(runnable, "DingdangMvsWorkOrder");
+                    thread.setDaemon(true);
+                    return thread;
+                }
+            });
+    private final ExecutorService deviceActivationExecutor = Executors.newSingleThreadExecutor(
+            new ThreadFactory() {
+                @Override public Thread newThread(Runnable runnable) {
+                    Thread thread = new Thread(runnable, "DingdangDeviceActivation");
+                    thread.setDaemon(true);
+                    return thread;
+                }
+            });
 
     private ScreenMode screenMode = ScreenMode.CHAT;
     private FrameLayout root;
@@ -378,6 +476,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private OperationDetail hudOperationDetail;
     // Persisted messages are records, not an instruction to reopen a task on the next launch.
     private boolean hudTaskWorkspaceActive;
+    private boolean hudRestoredTaskAwaitingInput;
     private boolean requireNewTaskOnNextInput = true;
     private int hudTaskMessageStartIndex;
     private TextureView previewView;
@@ -445,8 +544,44 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private TaskSessionManager taskSessionManager = new TaskSessionManager();
     private TaskSyncClient taskSyncClient;
     private TaskSyncReporter taskSyncReporter;
+    private TaskStartRegistrationGate taskStartRegistrationGate;
     private DeviceSyncConfiguration deviceSyncConfiguration;
     private DeviceSessionManager deviceSessionManager;
+    private ExecutionContextDeviceClient executionContextDeviceClient;
+    private DeviceMemoryDeviceClient deviceMemoryDeviceClient;
+    private MvsWorkOrderDeviceClient mvsWorkOrderDeviceClient;
+    private MvsWorkOrderDeviceClient.WorkOrderPage mvsWorkOrderPage;
+    private MvsWorkOrderDeviceClient.WorkOrder activeMvsWorkOrder;
+    private MvsWorkOrderEvidenceDraftStore mvsWorkOrderEvidenceDraftStore;
+    private MvsWorkOrderFormDraftStore mvsWorkOrderFormDraftStore;
+    private MvsWorkOrderNodeForm activeMvsNodeForm;
+    private final MvsWorkOrderEvidenceCaptureState mvsWorkOrderEvidenceCaptureState =
+            new MvsWorkOrderEvidenceCaptureState();
+    private final MvsWorkOrderHudPresenter mvsWorkOrderHudPresenter =
+            new MvsWorkOrderHudPresenter();
+    private final Map<String, String> mvsCheckinIdempotencyKeys = new HashMap<>();
+    private final Map<String, String> mvsCheckinTraceIds = new HashMap<>();
+    private int mvsWorkOrderRequestGeneration;
+    private int mvsLocationRequestGeneration;
+    private String mvsWorkOrderView = "executing";
+    private String pendingMvsCheckinAction = "";
+    private String pendingMvsFormPhotoFieldKey = "";
+    private SkillKnowledgeManifestClient skillKnowledgeManifestClient;
+    private SkillKnowledgeManifestClient.Manifest managedContentManifest;
+    private DeviceMemoryDeviceClient.Catalog managedDeviceMemoryCatalog;
+    private ExecutionContextDeviceClient.ProjectCatalog managedProjectCatalog;
+    private ExecutionContextDeviceClient.ProjectDetail managedProjectDetail;
+    private ExecutionContextDeviceClient.ProjectInstruction managedProjectInstruction;
+    private String managedProjectInstructionProjectId = "";
+    private boolean managedProjectInstructionEditPending;
+    private ExecutionContextDeviceClient.SkillCatalog managedSkillCatalog;
+    private ProjectGovernanceDraft pendingProjectGovernanceDraft;
+    private ManagedTaskRestoreDraft pendingManagedTaskRestoreDraft;
+    private boolean projectGovernanceWriteInFlight;
+    private final Map<String, String> managedProjectTitles = new HashMap<>();
+    private int managedExecutionRequestGeneration;
+    private String managedNewTaskProjectId = "";
+    private VoiceprintDeviceClient voiceprintDeviceClient;
     private WorkflowDeliveryController workflowDeliveryController;
     private WorkflowAssignmentRepository workflowAssignmentRepository;
     private AndroidWorkflowPackageStoreProvider workflowPackageStoreProvider;
@@ -462,8 +597,30 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private WorkflowVideoCapturePlan workflowVideoCapturePlan;
     private WorkflowCapabilityRegistry.Callback workflowVideoCallback;
     private WorkflowVoiceInputSession workflowVoiceInputSession;
+    private WorkflowFormVoiceInputSession workflowFormVoiceInputSession;
     private WorkflowCapabilityRegistry.Callback workflowVoiceCallback;
+    private boolean workflowAiRequestInFlight;
+    private String workflowAiResponse = "";
+    private WorkflowCapabilityRegistry.Callback workflowAiCallback;
+    private boolean workflowExpertCallPending;
+    private String workflowExpertAssignmentId = "";
+    private WorkflowCapabilityRegistry.Callback workflowExpertCallback;
+    private boolean expertEntryConfirmationPending;
+    private boolean workflowExpertEntryConfirmationPending;
+    private boolean expertConfirmationReturnCapabilityVisible;
+    private boolean expertConfirmationReturnTaskWorkspaceActive;
+    private String expertConfirmationReturnAbilityId = "";
+    private OperationDetail expertConfirmationReturnDetail;
     private Bundle managedRestrictions;
+    private DeviceCredentialStore deviceCredentialStore;
+    private DeviceInstallationIdentity deviceInstallationIdentity;
+    private DeviceActivationRecord localActivationRecord;
+    private boolean deviceActivationRequestInFlight;
+    private final DeviceActivationQrCaptureState deviceActivationQrCaptureState =
+            new DeviceActivationQrCaptureState();
+    private long deviceActivationRequestGeneration;
+    private String deviceActivationMessage = "";
+    private String pendingDeviceActivationCode = "";
     private ManagedRuntimeConfiguration runtimeConfiguration;
     private final HoneywellTempHumiditySkill honeywellTempHumiditySkill = new HoneywellTempHumiditySkill();
     private MaintenanceTask.Snapshot taskSnapshotBeforeExpert;
@@ -486,6 +643,23 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private long wakePrefixGraceUntilMs;
     private long offlineWakeSuppressedUntilMs;
     private WakeWordEngine wakeWordEngine;
+    private AudioRecord voiceprintRecorder;
+    private Thread voiceprintRecordThread;
+    private VoiceprintPcmSegmenter voiceprintSegmenter;
+    private volatile boolean voiceprintRecording;
+    private boolean voiceprintVerifying;
+    private long voiceprintGeneration;
+    private Runnable voiceprintRestartRunnable;
+    private Runnable pendingVoiceModeSingleClickRunnable;
+    private final VoiceprintEnrollmentFlow voiceprintEnrollmentFlow =
+            new VoiceprintEnrollmentFlow();
+    private boolean voiceprintSettingsRequestInFlight;
+    private String voiceprintSettingsMessage = "";
+    private AudioRecord voiceprintEnrollmentRecorder;
+    private Thread voiceprintEnrollmentRecordThread;
+    private VoiceprintPcmSegmenter voiceprintEnrollmentSegmenter;
+    private volatile boolean voiceprintEnrollmentRecording;
+    private long voiceprintEnrollmentGeneration;
 
     private byte[] composerImageBytes;
     private String composerImageId = "";
@@ -529,14 +703,62 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         applyImmersiveSystemUi();
         managedRestrictions = readManagedRestrictions();
+        deviceInstallationIdentity = new DeviceInstallationIdentity(
+                getSharedPreferences(DEVICE_INSTALLATION_PREFS, MODE_PRIVATE));
+        localActivationRecord = loadLocalActivationRecord();
         runtimeConfiguration = resolveRuntimeConfiguration(managedRestrictions);
         deviceSyncConfiguration = resolveDeviceSyncConfiguration();
         if (SECURE_RUNTIME && deviceSyncConfiguration != null) {
-            deviceSessionManager = new DeviceSessionManager(
-                    deviceSyncConfiguration.bootstrapCredential(),
-                    new HttpDeviceSessionIssuer(deviceSyncConfiguration));
+            DeviceSessionManager.BootstrapCredentialProvider credentialProvider =
+                    createDeviceSessionCredentialProvider();
+            deviceSessionManager = credentialProvider == null
+                    ? new DeviceSessionManager(
+                            deviceSyncConfiguration.bootstrapCredential(),
+                            new HttpDeviceSessionIssuer(deviceSyncConfiguration))
+                    : new DeviceSessionManager(
+                            credentialProvider,
+                            new HttpDeviceSessionIssuer(deviceSyncConfiguration));
             deviceSessionManager.prewarm();
+            voiceprintDeviceClient = new VoiceprintDeviceClient(
+                    deviceSyncConfiguration, deviceSessionManager);
         }
+        executionContextDeviceClient = createExecutionContextDeviceClient(
+                SECURE_RUNTIME, deviceSyncConfiguration, deviceSessionManager);
+        deviceMemoryDeviceClient = createDeviceMemoryDeviceClient(
+                SECURE_RUNTIME, deviceSyncConfiguration, deviceSessionManager);
+        mvsWorkOrderDeviceClient = createMvsWorkOrderDeviceClient(
+                SECURE_RUNTIME, deviceSyncConfiguration, deviceSessionManager);
+        if (mvsWorkOrderDeviceClient != null) {
+            try {
+                mvsWorkOrderEvidenceDraftStore = new MvsWorkOrderEvidenceDraftStore(
+                        new AndroidAtomicWorkflowSnapshotStorage(
+                                new File(getFilesDir(), "mvs-work-order-evidence"),
+                                "drafts.json"));
+            } catch (IOException | RuntimeException exception) {
+                Log.e(KEY_LOG_TAG, "MVS evidence draft storage initialization failed", exception);
+                mvsWorkOrderEvidenceDraftStore = null;
+            }
+            try {
+                mvsWorkOrderFormDraftStore = new MvsWorkOrderFormDraftStore(
+                        new AndroidAtomicWorkflowSnapshotStorage(
+                                new File(getFilesDir(), "mvs-work-order-form-drafts"),
+                                "drafts.json"));
+            } catch (IOException | RuntimeException exception) {
+                Log.e(KEY_LOG_TAG, "MVS form draft storage initialization failed", exception);
+                mvsWorkOrderFormDraftStore = null;
+            }
+        }
+        if (executionContextDeviceClient != null) {
+            skillKnowledgeManifestClient = new SkillKnowledgeManifestClient(
+                    deviceSyncConfiguration,
+                    deviceSessionManager,
+                    new AndroidSkillKnowledgeManifestStorage(
+                            new File(getFilesDir(), "content-manifests")));
+        }
+        taskSyncClient = createManagedTaskSyncClient();
+        taskSyncReporter = taskSyncClient == null ? null : new TaskSyncReporter(taskSyncClient);
+        taskStartRegistrationGate = taskSyncClient == null
+                ? null : new TaskStartRegistrationGate(taskSyncClient);
         chatAiClient = createChatAiClient();
         directAsrClient = new DirectAsrClient(DIRECT_ASR_ENDPOINT, DIRECT_ASR_API_KEY);
         realtimeAsrClient = createRealtimeAsrClient();
@@ -546,8 +768,6 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 runtimeConfiguration.iflytekAppId(),
                 runtimeConfiguration.iflytekApiKey(),
                 runtimeConfiguration.iflytekApiSecret());
-        taskSyncClient = createManagedTaskSyncClient();
-        taskSyncReporter = taskSyncClient == null ? null : new TaskSyncReporter(taskSyncClient);
         workflowDeliveryController = createManagedWorkflowDeliveryController();
         if (workflowDeliveryController != null) {
             try {
@@ -639,6 +859,33 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 new HttpTaskSyncTransport(deviceSyncConfiguration, tokenProvider));
     }
 
+    static ExecutionContextDeviceClient createExecutionContextDeviceClient(
+            boolean secureRuntime,
+            DeviceSyncConfiguration configuration,
+            DeviceAccessTokenProvider tokenProvider
+    ) {
+        if (!secureRuntime || configuration == null || tokenProvider == null) return null;
+        return new ExecutionContextDeviceClient(configuration, tokenProvider);
+    }
+
+    static DeviceMemoryDeviceClient createDeviceMemoryDeviceClient(
+            boolean secureRuntime,
+            DeviceSyncConfiguration configuration,
+            DeviceAccessTokenProvider tokenProvider
+    ) {
+        if (!secureRuntime || configuration == null || tokenProvider == null) return null;
+        return new DeviceMemoryDeviceClient(configuration, tokenProvider);
+    }
+
+    static MvsWorkOrderDeviceClient createMvsWorkOrderDeviceClient(
+            boolean secureRuntime,
+            DeviceSyncConfiguration configuration,
+            DeviceAccessTokenProvider tokenProvider
+    ) {
+        if (!secureRuntime || configuration == null || tokenProvider == null) return null;
+        return new MvsWorkOrderDeviceClient(configuration, tokenProvider);
+    }
+
     private WorkflowDeliveryController createManagedWorkflowDeliveryController() {
         if (!SECURE_RUNTIME || deviceSyncConfiguration == null || deviceSessionManager == null) {
             Log.i(KEY_LOG_TAG, "Managed workflow delivery is not provisioned");
@@ -691,6 +938,32 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     mainHandler.post(new Runnable() {
                         @Override public void run() {
                             beginWorkflowVoiceInput(request, callback);
+                        }
+                    });
+                }
+            });
+            handlers.put("ai.execution_context", new WorkflowCapabilityRegistry.Handler() {
+                @Override
+                public void execute(
+                        final WorkflowCapabilityRegistry.Request request,
+                        final WorkflowCapabilityRegistry.Callback callback
+                ) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            beginWorkflowAiAssist(request, callback);
+                        }
+                    });
+                }
+            });
+            handlers.put("expert.video", new WorkflowCapabilityRegistry.Handler() {
+                @Override
+                public void execute(
+                        final WorkflowCapabilityRegistry.Request request,
+                        final WorkflowCapabilityRegistry.Callback callback
+                ) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            beginWorkflowExpertCall(request, callback);
                         }
                     });
                 }
@@ -750,7 +1023,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                                     return pendingWorkflowEvidence(repository, snapshotAccess);
                                 }
                             },
-                            new WorkflowEvidenceUploadCoordinator.Transport() {
+                            new WorkflowEvidenceUploadCoordinator.CancellableResumableTransport() {
                                 @Override
                                 public String upload(
                                         WorkflowEvidenceUploadCoordinator.PendingEvidence evidence,
@@ -768,6 +1041,20 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                                             evidence.durationSeconds(),
                                             bytes,
                                             capturedAt);
+                                }
+
+                                @Override
+                                public String uploadResumable(
+                                        WorkflowEvidenceUploadCoordinator.PendingEvidence evidence,
+                                        File file,
+                                        String capturedAt
+                                ) throws IOException {
+                                    return client.uploadResumable(evidence, file, capturedAt);
+                                }
+
+                                @Override
+                                public void cancelActiveUpload() {
+                                    client.cancelActiveUpload();
                                 }
                             },
                             new WorkflowEvidenceUploadCoordinator.Acknowledger() {
@@ -821,12 +1108,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void resetManagedWorkflowRuntime() {
+        clearPendingExpertConfirmations();
         workflowCapturePending = false;
         workflowPhotoCallback = null;
         cancelWorkflowVideoCapture("workflow_video_runtime_reset");
         cancelWorkflowVoiceInput("workflow_voice_runtime_reset");
         activeWorkflowAssignmentId = "";
         workflowExecutionCoordinator = null;
+        if (workflowEvidenceUploadCoordinator != null) {
+            workflowEvidenceUploadCoordinator.cancel();
+        }
         workflowEvidenceUploadCoordinator = null;
         workflowCapabilityRegistry = null;
         workflowDeviceHttpClient = null;
@@ -902,6 +1193,77 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 runtimeConfiguration.backendCredential());
     }
 
+    private DeviceSessionManager.BootstrapCredentialProvider
+            createDeviceSessionCredentialProvider() {
+        if (runtimeConfiguration == null || !runtimeConfiguration.usesLocalActivation()
+                || deviceCredentialStore == null) {
+            return null;
+        }
+        final DeviceCredentialStore store = deviceCredentialStore;
+        return new DeviceSessionManager.BootstrapCredentialProvider() {
+            @Override
+            public DeviceSessionManager.CredentialSnapshot current() throws IOException {
+                DeviceActivationRecord record = store.load();
+                return DeviceSessionManager.CredentialSnapshot.create(
+                        record == null ? "" : record.bootstrapCredential());
+            }
+
+            @Override
+            public void clearIfCurrent(
+                    final DeviceSessionManager.CredentialSnapshot snapshot,
+                    String errorCode) throws IOException {
+                DeviceActivationRecord record = store.load();
+                if (record == null || !snapshot.matches(record.bootstrapCredential())) return;
+                if (!store.clearIfCurrent(record.bootstrapCredential())) return;
+                mainHandler.post(() -> {
+                    DeviceActivationRecord active = localActivationRecord;
+                    if (active != null && snapshot.matches(active.bootstrapCredential())) {
+                        localActivationRecord = null;
+                    }
+                    deviceActivationMessage = "设备授权已被服务端撤销，需要重新激活";
+                    if ("voiceprint_settings".equals(hudOperationAbilityId)) {
+                        voiceprintSettingsMessage = "设备授权已失效，声纹服务未继续请求";
+                        showVoiceprintSettingsDetail(false);
+                    }
+                });
+            }
+        };
+    }
+
+    static boolean hasCompleteManagedBackend(String baseUrl, String credential) {
+        String endpoint = baseUrl == null ? "" : baseUrl.trim();
+        String token = credential == null ? "" : credential.trim();
+        if (endpoint.length() == 0 || token.length() == 0) return false;
+        try {
+            URI uri = URI.create(endpoint);
+            return "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null;
+        } catch (IllegalArgumentException error) {
+            return false;
+        }
+    }
+
+    static boolean hasManagedProvisioningAuthority(
+            boolean mdmComplete,
+            boolean debugProvisioningEnabled,
+            boolean runtimeProvisioned) {
+        return mdmComplete || (debugProvisioningEnabled && runtimeProvisioned);
+    }
+
+    private boolean hasCompleteManagedBackendAuthority() {
+        if (managedRestrictions == null) return false;
+        String baseUrl = managedRestrictions.getString(
+                ManagedRuntimeConfiguration.BACKEND_BASE_URL, "");
+        String credential = managedRestrictions.getString(
+                ManagedRuntimeConfiguration.BACKEND_DEVICE_TOKEN, "");
+        if (credential.trim().length() == 0) {
+            credential = managedRestrictions.getString("ops_device_sync_token", "");
+        }
+        return hasManagedProvisioningAuthority(
+                hasCompleteManagedBackend(baseUrl, credential),
+                GeneratedConfig.DEBUG_PRIVATE_PROVISIONING_ENABLED,
+                runtimeConfiguration != null && runtimeConfiguration.isBackendProvisioned());
+    }
+
     private Bundle readManagedRestrictions() {
         RestrictionsManager manager = (RestrictionsManager) getSystemService(RESTRICTIONS_SERVICE);
         Bundle restrictions = manager == null ? null : manager.getApplicationRestrictions();
@@ -926,6 +1288,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             managed.put(ManagedRuntimeConfiguration.IFLYTEK_API_SECRET,
                     restrictions.getString(ManagedRuntimeConfiguration.IFLYTEK_API_SECRET, ""));
         }
+        if (SECURE_RUNTIME && GeneratedConfig.DEBUG_PRIVATE_PROVISIONING_ENABLED) {
+            managed = DebugPrivateProvisioning.mergeAfterManaged(
+                    managed,
+                    DebugPrivateProvisioningReader.load(this, true));
+            managed = DebugPrivateWakeProvisioning.mergeAfterManaged(
+                    managed,
+                    DebugPrivateWakeProvisioningReader.load(this, true));
+        }
         ManagedRuntimeConfiguration configuration = ManagedRuntimeConfiguration.resolve(
                 SECURE_RUNTIME,
                 DINGDANG_BACKEND_BASE_URL,
@@ -933,7 +1303,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 GeneratedConfig.IFLYTEK_APP_ID,
                 GeneratedConfig.IFLYTEK_API_KEY,
                 GeneratedConfig.IFLYTEK_API_SECRET,
-                managed);
+                managed,
+                localActivationRecord,
+                System.currentTimeMillis());
         if (SECURE_RUNTIME && !configuration.isBackendProvisioned()) {
             Log.w(KEY_LOG_TAG, "Secure runtime backend credential is not provisioned");
         }
@@ -943,20 +1315,51 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return configuration;
     }
 
+    private DeviceActivationRecord loadLocalActivationRecord() {
+        if (!SECURE_RUNTIME) return null;
+        try {
+            deviceCredentialStore = new AndroidKeystoreDeviceCredentialStore(
+                    getApplicationContext());
+            return deviceCredentialStore.load();
+        } catch (IOException error) {
+            Log.w(KEY_LOG_TAG, "Secure device activation record is unavailable", error);
+            return null;
+        }
+    }
+
     private TaskSession startNewTaskForActiveProject(String problem) {
         ChatProject project = activeProject();
         if (project == null) return null;
         TaskSession session = taskSessionManager.startNew(project.id, problem);
+        session.bindConversationStartIndex(taskMessageStartIndexOnActivation(
+                chatMessages.size(), liveTranscriptMessageIndex));
         persistChatProjects();
-        recordTaskSyncEvent(session, "task_started",
+        recordCriticalTaskSyncEvent(session, "task_started",
                 taskSyncPayload("problem", session.maintenanceTask().initialProblem()),
                 session.id() + ":task_started");
         return session;
     }
 
+    private void recordCriticalTaskSyncEvent(TaskSession session, String eventType,
+            JSONObject payload, String idempotencyKey) {
+        if (taskSyncReporter == null || session == null) return;
+        taskSyncReporter.recordCritical(createTaskSyncEvent(
+                session, eventType, payload, idempotencyKey));
+    }
+
     private void recordTaskSyncEvent(TaskSession session, String eventType,
             JSONObject payload, String idempotencyKey) {
         if (taskSyncReporter == null || session == null) return;
+        taskSyncReporter.record(createTaskSyncEvent(
+                session, eventType, payload, idempotencyKey));
+    }
+
+    private com.codex.air3nativecamera.sync.TaskSyncEvent createTaskSyncEvent(
+            TaskSession session,
+            String eventType,
+            JSONObject payload,
+            String idempotencyKey
+    ) {
         String projectTitle = "";
         for (ChatProject project : chatProjects) {
             if (session.projectId().equals(project.id)) {
@@ -964,13 +1367,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 break;
             }
         }
-        taskSyncReporter.record(TaskSyncEventFactory.create(
+        return TaskSyncEventFactory.create(
                 session,
                 projectTitle,
                 eventType,
                 payload,
                 System.currentTimeMillis(),
-                idempotencyKey));
+                idempotencyKey);
     }
 
     private void recordCurrentTaskSyncEvent(String eventType, JSONObject payload, String suffix) {
@@ -1006,6 +1409,20 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        if (requestCode == REQUEST_MVS_LOCATION) {
+            String pending = pendingMvsCheckinAction;
+            if (!hasMvsLocationPermission()) {
+                failMvsLocation("mvs_location_permission_denied");
+                return;
+            }
+            String[] parts = pending.split(":", 2);
+            if (parts.length == 2) {
+                requestCurrentMvsLocation(parts[0], parts[1]);
+            } else {
+                failMvsLocation("mvs_checkin_context_missing");
+            }
+            return;
+        }
         if (requestCode == REQUEST_AUDIO) {
             renderChatScreen();
             if (granted) {
@@ -1016,9 +1433,30 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }
             return;
         }
+        if (requestCode == REQUEST_CAMERA
+                && deviceActivationQrCaptureState.onCameraPermissionResult(granted)) {
+            pendingVoicePhotoCapture = false;
+            pendingSceneVideoCapture = false;
+            sceneVideoStarting = false;
+            closeCamera();
+            stopCameraThread();
+            renderChatScreen();
+            deviceActivationMessage = "相机权限未授权，二维码扫描已取消";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
         if (requestCode == REQUEST_CAMERA && granted && screenMode == ScreenMode.CAMERA) {
             startCameraFlow();
         } else if (requestCode == REQUEST_CAMERA && !granted && screenMode == ScreenMode.CAMERA) {
+            if (!mvsWorkOrderEvidenceCaptureState.pendingOrderId().isEmpty()) {
+                mvsWorkOrderEvidenceCaptureState.cancel();
+                pendingMvsFormPhotoFieldKey = "";
+                closeCamera();
+                stopCameraThread();
+                renderChatScreen();
+                showActiveMvsWorkOrderDetail("相机权限未授权，工单照片拍摄已取消");
+                return;
+            }
             pendingVoicePhotoCapture = false;
             pendingSceneVideoCapture = false;
             sceneVideoStarting = false;
@@ -1085,6 +1523,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     @Override
     protected void onPause() {
+        cancelPendingExpertConfirmationForLifecycle();
+        disableVoiceprintForLifecycle("pause");
+        stopVoiceprintEnrollmentCapture("pause");
+        deviceActivationQrCaptureState.onPause();
         if (screenMode == ScreenMode.EXPERT && modeController != null) {
             exitExpertMode();
         }
@@ -1094,6 +1536,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         stopVoiceRecording(false, "pause");
         cancelWorkflowVoiceInput("workflow_voice_interrupted");
         cancelWorkflowPhotoCapture("workflow_photo_interrupted");
+        if (!mvsWorkOrderEvidenceCaptureState.pendingOrderId().isEmpty()) {
+            mvsWorkOrderEvidenceCaptureState.cancel();
+            pendingMvsFormPhotoFieldKey = "";
+            screenMode = ScreenMode.CHAT;
+            hudCapabilityVisible = true;
+            capabilityDetailVisible = true;
+        }
         closeCamera();
         stopCameraThread();
         super.onPause();
@@ -1101,7 +1550,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     @Override
     protected void onDestroy() {
+        clearPendingExpertConfirmations();
+        invalidateManagedExecutionRequest();
+        disableVoiceprintForLifecycle("destroy");
+        leaveVoiceprintSettingsIfNeeded("destroy");
+        deviceActivationQrCaptureState.cancel();
+        voiceprintSettingsRequestGate.close();
+        cancelPendingVoiceModeSingleClick();
+        voiceModeDoubleClickPolicy.cancel();
         cancelWorkflowPhotoCapture("workflow_photo_destroyed");
+        mvsWorkOrderEvidenceCaptureState.cancel();
+        pendingMvsFormPhotoFieldKey = "";
         releaseExpertCoordinator();
         if (workflowDeliveryController != null) {
             workflowDeliveryController.close();
@@ -1116,6 +1575,23 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             deviceSessionManager.close();
             deviceSessionManager = null;
         }
+        voiceprintDeviceClient = null;
+        mvsWorkOrderRequestGeneration++;
+        mvsLocationRequestGeneration++;
+        pendingMvsCheckinAction = "";
+        mvsWorkOrderDeviceClient = null;
+        mvsWorkOrderPage = null;
+        activeMvsWorkOrder = null;
+        mvsWorkOrderEvidenceDraftStore = null;
+        mvsWorkOrderFormDraftStore = null;
+        activeMvsNodeForm = null;
+        skillKnowledgeManifestClient = null;
+        managedContentManifest = null;
+        managedExecutionExecutor.shutdownNow();
+        mvsWorkOrderExecutor.shutdownNow();
+        voiceprintExecutor.shutdownNow();
+        deviceActivationRequestGeneration += 1L;
+        deviceActivationExecutor.shutdownNow();
         if (hudPresentation != null) {
             hudPresentation.destroy();
             hudPresentation = null;
@@ -1144,7 +1620,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         if (event.getAction() == KeyEvent.ACTION_DOWN && isHandledHardwareKey(event.getKeyCode())) {
             if (event.getRepeatCount() == 0) {
-                handleHardwareShortcut(event.getKeyCode());
+                if (isSendShortcutKey(event.getKeyCode())) {
+                    handleVoiceModeKeyPress(event.getKeyCode());
+                } else {
+                    handleHardwareShortcut(event.getKeyCode());
+                }
             }
             return true;
         }
@@ -1152,6 +1632,34 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return true;
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    private void handleVoiceModeKeyPress(final int keyCode) {
+        VoiceModeDoubleClickPolicy.Action action = voiceModeDoubleClickPolicy.onPress(
+                SystemClock.elapsedRealtime());
+        if (action == VoiceModeDoubleClickPolicy.Action.DOUBLE_CLICK) {
+            cancelPendingVoiceModeSingleClick();
+            toggleVoiceprintListeningMode();
+            return;
+        }
+        cancelPendingVoiceModeSingleClick();
+        pendingVoiceModeSingleClickRunnable = new Runnable() {
+            @Override public void run() {
+                pendingVoiceModeSingleClickRunnable = null;
+                if (voiceModeDoubleClickPolicy.consumeSingleIfDue(
+                        SystemClock.elapsedRealtime())) {
+                    handleHardwareShortcut(keyCode);
+                }
+            }
+        };
+        mainHandler.postDelayed(pendingVoiceModeSingleClickRunnable, VOICE_MODE_DOUBLE_CLICK_MS);
+    }
+
+    private void cancelPendingVoiceModeSingleClick() {
+        if (pendingVoiceModeSingleClickRunnable != null) {
+            mainHandler.removeCallbacks(pendingVoiceModeSingleClickRunnable);
+            pendingVoiceModeSingleClickRunnable = null;
+        }
     }
 
     @Override
@@ -1187,6 +1695,22 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 if (recordingVoice) finishToggleVoiceRecording("workflow_voice_finish");
                 return true;
             }
+        }
+        if (expertEntryConfirmationPending || workflowExpertEntryConfirmationPending) {
+            if (isBackShortcutKey(keyCode)) {
+                if (workflowExpertEntryConfirmationPending) {
+                    cancelWorkflowExpertEntry();
+                } else {
+                    cancelExpertEntry();
+                }
+            } else if (isConfirmKey(keyCode)) {
+                if (workflowExpertEntryConfirmationPending) {
+                    confirmWorkflowExpertEntry();
+                } else {
+                    confirmExpertEntry();
+                }
+            }
+            return true;
         }
         if (isCommandOverlayVisible()) {
             if (isBackShortcutKey(keyCode) || isConfirmKey(keyCode)) {
@@ -1432,12 +1956,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView memoryButton = menuItem("记忆");
+        TextView memoryButton = menuItem(SECURE_RUNTIME ? "项目记忆" : "记忆");
         projectRail.addView(memoryButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView historyButton = menuItem("历史对话");
+        TextView historyButton = menuItem(SECURE_RUNTIME ? "项目记录" : "历史对话");
         projectRail.addView(historyButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -1670,26 +2194,70 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         expertCollabButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                featureRegistry.require("expert_collab").enter(MainActivity.this);
+                requestExpertEntry();
             }
         });
         equipmentInspectionButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                featureRegistry.require("equipment_inspection").enter(MainActivity.this);
+                if (SECURE_RUNTIME) {
+                    setProjectRailVisible(false);
+                    showCapabilityCenter();
+                    openAbilityById(resolveManagedAbilityId(true, "equipment_inspection"));
+                } else {
+                    featureRegistry.require("equipment_inspection").enter(MainActivity.this);
+                }
             }
         });
         fieldRecordsButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                featureRegistry.require("field_records").enter(MainActivity.this);
+                if (SECURE_RUNTIME) {
+                    setProjectRailVisible(false);
+                    showCapabilityCenter();
+                    openAbilityById(resolveManagedAbilityId(true, "field_records"));
+                } else {
+                    featureRegistry.require("field_records").enter(MainActivity.this);
+                }
             }
         });
         moreOperationsButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 setProjectRailVisible(false);
-                setChatStatus("更多运维能力筹备中");
+                if (SECURE_RUNTIME) {
+                    showCapabilityCenter();
+                } else {
+                    setChatStatus("更多运维能力筹备中");
+                }
+            }
+        });
+        memoryButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setProjectRailVisible(false);
+                if (SECURE_RUNTIME) {
+                    showManagedProjectCatalog();
+                } else {
+                    showHudAbility("memory");
+                }
+            }
+        });
+        historyButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setProjectRailVisible(false);
+                if (SECURE_RUNTIME) {
+                    showManagedProjectCatalog();
+                } else {
+                    showHudOperationDetail("tasks");
+                }
+            }
+        });
+        settingsButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                openVoiceprintSettings();
             }
         });
         menuButton.setOnClickListener(new View.OnClickListener() {
@@ -1745,6 +2313,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         hudLayer.setVisibility(View.VISIBLE);
         WebView webView = new WebView(this);
         hudPresentation = new HudWebPresentation(webView, new HudWebPresentation.Actions() {
+            @Override public void toggleMenu() { runHudAction(new Runnable() {
+                @Override public void run() { toggleCapabilityCenter(); }
+            }); }
             @Override public void openCapabilities() { runHudAction(new Runnable() {
                 @Override public void run() { showCapabilityCenter(); }
             }); }
@@ -1779,7 +2350,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 @Override public void run() { beginVoiceDiagnosisConversation(); }
             }); }
             @Override public void openExpert() { runHudAction(new Runnable() {
-                @Override public void run() { featureRegistry.require("expert_collab").enter(MainActivity.this); }
+                @Override public void run() { requestExpertEntry(); }
             }); }
             @Override public void openAbility(final String route) { runHudAction(new Runnable() {
                 @Override public void run() { showHudAbility(route); }
@@ -1836,6 +2407,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 @Override public void run() { performHudOperation(action); }
             }); }
         });
+        hudPresentation.setManagedMenuEnabled(SECURE_RUNTIME);
         hudLayer.addView(hudPresentation.view(), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(hudLayer, new FrameLayout.LayoutParams(
@@ -1880,6 +2452,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void showCapabilityCenter() {
+        leaveVoiceprintSettingsIfNeeded("capability_center");
         if (hudPresentation != null) {
             setProjectRailVisible(false);
             hudVoiceGuideVisible = false;
@@ -1900,7 +2473,22 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         refreshCollabServiceHealth(false);
     }
 
+    private void toggleCapabilityCenter() {
+        if (shouldOpenCapabilityCenterOnMenuPress(isCapabilityCenterVisible())) {
+            showCapabilityCenter();
+        } else {
+            hideCapabilityCenter();
+        }
+    }
+
+    static boolean shouldOpenCapabilityCenterOnMenuPress(boolean capabilityCenterVisible) {
+        return !capabilityCenterVisible;
+    }
+
     private void hideCapabilityCenter() {
+        leaveVoiceprintSettingsIfNeeded("capability_close");
+        discardPendingGovernanceOnNavigation();
+        invalidateManagedExecutionRequest();
         capabilityDetailVisible = false;
         hudCapabilityVisible = false;
         hudOperationAbilityId = "";
@@ -1924,12 +2512,30 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (hudPresentation == null) {
             return;
         }
+        if ("settings".equals(route)) {
+            openVoiceprintSettings();
+            return;
+        }
+        leaveVoiceprintSettingsIfNeeded("ability_switch");
         hudCapabilityVisible = true;
         capabilityDetailVisible = true;
         if ("memory".equals(route)) {
             route = "device_brain";
         } else if ("agent".equals(route)) {
             route = "agent_center";
+        }
+        route = resolveManagedAbilityId(SECURE_RUNTIME, route);
+        if (usesManagedExecutionContextUi(SECURE_RUNTIME, route)) {
+            if ("agent_center".equals(route)) {
+                showManagedSkillCatalog();
+            } else if ("knowledge".equals(route)) {
+                showManagedKnowledgeCatalog();
+            } else if ("device_brain".equals(route)) {
+                showManagedDeviceMemoryCatalog();
+            } else {
+                showManagedProjectCatalog();
+            }
+            return;
         }
         AIAbilityConfig ability = null;
         for (AIAbilityConfig config : aiAbilityConfigs) {
@@ -1960,11 +2566,24 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void showHudOperationDetail(String abilityId, boolean preservePage) {
+        if ("tasks".equals(abilityId) && mvsWorkOrderDeviceClient != null) {
+            showMvsWorkOrderCatalog(mvsWorkOrderView);
+            return;
+        }
         OperationDetail detail = resolveHudOperationDetail(abilityId);
         showHudOperationDetail(abilityId, detail, preservePage);
     }
 
     private OperationDetail resolveHudOperationDetail(String abilityId) {
+        if (usesManagedExecutionContextUi(SECURE_RUNTIME, abilityId)) {
+            return executionContextHudPresenter.loading(abilityId);
+        }
+        if ("tasks".equals(abilityId) && mvsWorkOrderDeviceClient != null) {
+            return mvsWorkOrderPage == null
+                    ? mvsWorkOrderHudPresenter.loading("我的维修工单")
+                    : mvsWorkOrderHudPresenter.taskList(
+                            mvsWorkOrderPage, deliveredWorkflowTasks());
+        }
         if ("tasks".equals(abilityId) && workflowExecutionCoordinator != null) {
             List<WorkflowExecutionCoordinator.TaskListItem> tasks =
                     workflowExecutionCoordinator.tasks();
@@ -2003,6 +2622,1877 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         scheduleForegroundVoiceListening("operation-detail");
     }
 
+    private void showMvsWorkOrderCatalog(String view) {
+        if (mvsWorkOrderDeviceClient == null) {
+            showHudOperationDetail("tasks",
+                    mvsWorkOrderHudPresenter.failure("维修工单不可用", "mvs_unavailable"),
+                    false);
+            return;
+        }
+        final String acceptedView = normalizeMvsWorkOrderView(view);
+        mvsWorkOrderView = acceptedView;
+        activeMvsWorkOrder = null;
+        activeMvsNodeForm = null;
+        final int generation = ++mvsWorkOrderRequestGeneration;
+        showHudOperationDetail("tasks",
+                mvsWorkOrderHudPresenter.loading("我的维修工单"), false);
+        mvsWorkOrderExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final MvsWorkOrderDeviceClient.WorkOrderPage page =
+                            mvsWorkOrderDeviceClient.listWorkOrders(acceptedView, 50);
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            mvsWorkOrderPage = page;
+                            showHudOperationDetail("tasks",
+                                    mvsWorkOrderHudPresenter.taskList(
+                                            page, deliveredWorkflowTasks()), false);
+                            setChatStatus("维修工单已更新 · " + page.items().size() + " 项");
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            showMvsWorkOrderFailure("维修工单暂不可用", exception);
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void openMvsWorkOrderDetail(String orderId) {
+        if (mvsWorkOrderDeviceClient == null) {
+            showMvsWorkOrderFailure("工单详情不可用", new IOException("mvs_unavailable"));
+            return;
+        }
+        final String acceptedOrderId = cleanNumericMvsIdentifier(orderId);
+        if (acceptedOrderId.isEmpty()) {
+            showMvsWorkOrderFailure("工单详情不可用", new IOException("mvs_order_id_invalid"));
+            return;
+        }
+        final int generation = ++mvsWorkOrderRequestGeneration;
+        showHudOperationDetail("mvs_work_order",
+                mvsWorkOrderHudPresenter.loading("工单详情"), false);
+        mvsWorkOrderExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final MvsWorkOrderDeviceClient.WorkOrder order =
+                            mvsWorkOrderDeviceClient.getDetail(acceptedOrderId);
+                    final String assignmentId = workflowAssignmentIdFor(order);
+                    final int evidenceDraftCount = reconcileMvsEvidenceDraftCount(order.orderId());
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            activeMvsWorkOrder = order;
+                            activeMvsNodeForm = null;
+                            showHudOperationDetail("mvs_work_order",
+                                    mvsWorkOrderHudPresenter.taskDetail(
+                                            order,
+                                            assignmentId,
+                                            evidenceDraftCount),
+                                    false);
+                            setChatStatus("已打开维修工单 " + order.orderNo());
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            showMvsWorkOrderFailure("工单详情暂不可用", exception);
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void loadMvsWorkOrderResource(
+            String resourceType,
+            String orderId,
+            String parameter
+    ) {
+        final MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        final String acceptedOrderId = cleanNumericMvsIdentifier(orderId);
+        if (mvsWorkOrderDeviceClient == null || order == null
+                || !order.orderId().equals(acceptedOrderId)) {
+            showMvsWorkOrderFailure("工单资源不可用", new IOException("mvs_order_context_missing"));
+            return;
+        }
+        final String acceptedResource = resourceType == null ? "" : resourceType.trim();
+        final String acceptedParameter = parameter == null ? "" : parameter.trim();
+        final int generation = ++mvsWorkOrderRequestGeneration;
+        showHudOperationDetail("mvs_work_order",
+                mvsWorkOrderHudPresenter.loading("读取工单资源"), false);
+        mvsWorkOrderExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final Object resource;
+                    final MvsWorkOrderNodeForm nodeForm;
+                    final JSONObject nodeFormDraft;
+                    if ("node_form".equals(acceptedResource)) {
+                        JSONObject rawForm = mvsWorkOrderDeviceClient.getNodeForm(acceptedOrderId);
+                        nodeForm = MvsWorkOrderNodeForm.parse(acceptedOrderId, rawForm);
+                        nodeFormDraft = mvsWorkOrderFormDraftStore == null
+                                ? new JSONObject() : mvsWorkOrderFormDraftStore.valuesFor(nodeForm);
+                        resource = rawForm;
+                    } else if ("sop_tree".equals(acceptedResource)) {
+                        nodeForm = null;
+                        nodeFormDraft = null;
+                        resource = mvsWorkOrderDeviceClient.getSopTree(acceptedOrderId);
+                    } else if ("attachments".equals(acceptedResource)) {
+                        nodeForm = null;
+                        nodeFormDraft = null;
+                        resource = mvsWorkOrderDeviceClient.getAttachments(acceptedOrderId);
+                    } else if ("flow_records".equals(acceptedResource)) {
+                        nodeForm = null;
+                        nodeFormDraft = null;
+                        resource = mvsWorkOrderDeviceClient.getFlowRecords(acceptedOrderId);
+                    } else if ("task_operations".equals(acceptedResource)) {
+                        nodeForm = null;
+                        nodeFormDraft = null;
+                        resource = mvsWorkOrderDeviceClient.getTaskOperations(acceptedOrderId);
+                    } else if ("execution_records".equals(acceptedResource)) {
+                        nodeForm = null;
+                        nodeFormDraft = null;
+                        resource = mvsWorkOrderDeviceClient.getExecutionRecords(acceptedOrderId);
+                    } else if ("checkins".equals(acceptedResource)) {
+                        nodeForm = null;
+                        nodeFormDraft = null;
+                        resource = mvsWorkOrderDeviceClient.getCheckins(acceptedOrderId);
+                    } else if ("checkin_form".equals(acceptedResource)) {
+                        nodeForm = null;
+                        nodeFormDraft = null;
+                        resource = mvsWorkOrderDeviceClient.getCheckinForm(
+                                acceptedOrderId, acceptedParameter);
+                    } else if ("checkin_required".equals(acceptedResource)) {
+                        nodeForm = null;
+                        nodeFormDraft = null;
+                        String definitionId = acceptedParameter.isEmpty()
+                                ? order.definitionId() : acceptedParameter;
+                        if (definitionId.isEmpty()) {
+                            throw new IOException("mvs_definition_id_missing");
+                        }
+                        resource = mvsWorkOrderDeviceClient.isCheckinRequired(
+                                acceptedOrderId, definitionId);
+                    } else {
+                        throw new IOException("mvs_resource_not_allowed");
+                    }
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            if (nodeForm != null) {
+                                activeMvsNodeForm = nodeForm;
+                                showHudOperationDetail("mvs_work_order",
+                                        mvsWorkOrderHudPresenter.nodeForm(
+                                                order, nodeForm, nodeFormDraft), false);
+                                setChatStatus("当前节点表单已加载 · 仅本机草稿");
+                            } else if (resource instanceof MvsWorkOrderDeviceClient.TaskOperations) {
+                                showHudOperationDetail("mvs_work_order",
+                                        mvsWorkOrderHudPresenter.taskOperations(
+                                                order,
+                                                (MvsWorkOrderDeviceClient.TaskOperations) resource),
+                                        false);
+                                setChatStatus("当前节点操作已加载 · 仅展示，未启用办理");
+                            } else {
+                                showHudOperationDetail("mvs_work_order",
+                                        mvsWorkOrderHudPresenter.resource(
+                                                order, acceptedResource, resource), false);
+                                setChatStatus("工单资源已更新");
+                            }
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            showMvsWorkOrderFailure("工单资源暂不可用", exception);
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void openMvsFormFieldEditor(String orderId, String fieldKey) {
+        final MvsWorkOrderNodeForm.Field field = activeMvsFormField(orderId, fieldKey);
+        if (field == null || mvsWorkOrderFormDraftStore == null) {
+            showMvsWorkOrderFailure(
+                    "表单字段不可用", new IOException("mvs_form_field_context_missing"));
+            return;
+        }
+        if (field.type() == MvsWorkOrderNodeForm.FieldType.SINGLE_CHOICE) {
+            showMvsSingleChoiceEditor(field);
+            return;
+        }
+        if (field.type() == MvsWorkOrderNodeForm.FieldType.MULTI_CHOICE) {
+            showMvsMultiChoiceEditor(field);
+            return;
+        }
+        if (field.type() != MvsWorkOrderNodeForm.FieldType.TEXT
+                && field.type() != MvsWorkOrderNodeForm.FieldType.NUMBER
+                && field.type() != MvsWorkOrderNodeForm.FieldType.DATE) {
+            showMvsWorkOrderFailure(
+                    "表单字段暂不可填写", new IOException("mvs_form_field_requires_external"));
+            return;
+        }
+        JSONObject current = mvsWorkOrderFormDraftStore.valuesFor(activeMvsNodeForm);
+        final EditText input = new EditText(this);
+        input.setSingleLine(field.type() != MvsWorkOrderNodeForm.FieldType.TEXT);
+        input.setText(current.optString(field.key(), ""));
+        input.setTextSize(20f);
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(field.maximumLength())});
+        if (field.type() == MvsWorkOrderNodeForm.FieldType.NUMBER) {
+            input.setInputType(InputType.TYPE_CLASS_NUMBER
+                    | InputType.TYPE_NUMBER_FLAG_DECIMAL
+                    | InputType.TYPE_NUMBER_FLAG_SIGNED);
+            input.setHint("请输入数值");
+        } else if (field.type() == MvsWorkOrderNodeForm.FieldType.DATE) {
+            input.setInputType(InputType.TYPE_CLASS_DATETIME);
+            input.setHint("yyyy-MM-dd 或 yyyy-MM-dd HH:mm");
+        } else {
+            input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+            input.setHint("请输入现场记录");
+        }
+        int padding = dp(20);
+        input.setPadding(padding, dp(12), padding, dp(12));
+        new AlertDialog.Builder(this)
+                .setTitle(field.label() + (field.required() ? "（必填）" : ""))
+                .setMessage("本次填写只保存为当前工单的本机草稿，不会提交或推进 MVS。")
+                .setView(input)
+                .setPositiveButton("保存草稿", (dialog, which) ->
+                        saveMvsFormField(field.key(), input.getText().toString()))
+                .setNegativeButton("取消", null)
+                .setOnDismissListener(dialog -> applyImmersiveSystemUi())
+                .show();
+    }
+
+    private void showMvsSingleChoiceEditor(final MvsWorkOrderNodeForm.Field field) {
+        final List<MvsWorkOrderNodeForm.Option> options = field.options();
+        final String[] labels = new String[options.size()];
+        String currentValue = mvsWorkOrderFormDraftStore.valuesFor(activeMvsNodeForm)
+                .optString(field.key(), "");
+        int selected = -1;
+        for (int index = 0; index < options.size(); index += 1) {
+            labels[index] = options.get(index).label();
+            if (options.get(index).value().equals(currentValue)) selected = index;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(field.label() + (field.required() ? "（必填）" : ""))
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    dialog.dismiss();
+                    saveMvsFormField(field.key(), options.get(which).value());
+                })
+                .setNegativeButton("取消", null)
+                .setOnDismissListener(dialog -> applyImmersiveSystemUi())
+                .show();
+    }
+
+    private void showMvsMultiChoiceEditor(final MvsWorkOrderNodeForm.Field field) {
+        final List<MvsWorkOrderNodeForm.Option> options = field.options();
+        final String[] labels = new String[options.size()];
+        final boolean[] selected = new boolean[options.size()];
+        JSONArray current = mvsWorkOrderFormDraftStore.valuesFor(activeMvsNodeForm)
+                .optJSONArray(field.key());
+        for (int optionIndex = 0; optionIndex < options.size(); optionIndex += 1) {
+            labels[optionIndex] = options.get(optionIndex).label();
+            for (int valueIndex = 0; current != null && valueIndex < current.length(); valueIndex += 1) {
+                if (options.get(optionIndex).value().equals(current.optString(valueIndex))) {
+                    selected[optionIndex] = true;
+                    break;
+                }
+            }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(field.label() + (field.required() ? "（必填）" : ""))
+                .setMultiChoiceItems(labels, selected,
+                        (dialog, which, checked) -> selected[which] = checked)
+                .setPositiveButton("保存草稿", (dialog, which) -> {
+                    JSONArray values = new JSONArray();
+                    for (int index = 0; index < options.size(); index += 1) {
+                        if (selected[index]) values.put(options.get(index).value());
+                    }
+                    saveMvsFormField(field.key(), values);
+                })
+                .setNegativeButton("取消", null)
+                .setOnDismissListener(dialog -> applyImmersiveSystemUi())
+                .show();
+    }
+
+    private void openMvsFormPhotoPicker(String orderId, String fieldKey) {
+        final MvsWorkOrderNodeForm.Field field = activeMvsFormField(orderId, fieldKey);
+        final MvsWorkOrderEvidenceDraftStore evidenceStore = mvsWorkOrderEvidenceDraftStore;
+        if (field == null || field.type() != MvsWorkOrderNodeForm.FieldType.PHOTO
+                || evidenceStore == null || mvsWorkOrderFormDraftStore == null) {
+            showMvsWorkOrderFailure(
+                    "表单照片不可用", new IOException("mvs_form_photo_context_missing"));
+            return;
+        }
+        final List<MvsWorkOrderEvidenceDraftStore.Draft> drafts =
+                evidenceStore.draftsForOrder(activeMvsNodeForm.orderId());
+        if (drafts.isEmpty()) {
+            beginMvsFormPhotoCapture(activeMvsNodeForm.orderId(), field.key());
+            return;
+        }
+        String[] labels = new String[drafts.size() + 1];
+        for (int index = 0; index < drafts.size(); index += 1) {
+            labels[index] = "使用 " + new File(drafts.get(index).localReference()).getName();
+        }
+        labels[drafts.size()] = "拍摄新照片";
+        new AlertDialog.Builder(this)
+                .setTitle(field.label())
+                .setItems(labels, (dialog, which) -> {
+                    if (which == drafts.size()) {
+                        beginMvsFormPhotoCapture(activeMvsNodeForm.orderId(), field.key());
+                    } else {
+                        appendMvsFormPhoto(field.key(), drafts.get(which).id());
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .setOnDismissListener(dialog -> applyImmersiveSystemUi())
+                .show();
+    }
+
+    private MvsWorkOrderNodeForm.Field activeMvsFormField(String orderId, String fieldKey) {
+        MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        MvsWorkOrderNodeForm form = activeMvsNodeForm;
+        String acceptedOrderId = cleanNumericMvsIdentifier(orderId);
+        if (order == null || form == null || !order.orderId().equals(acceptedOrderId)
+                || !form.orderId().equals(acceptedOrderId)) return null;
+        MvsWorkOrderNodeForm.Field field = form.field(fieldKey == null ? "" : fieldKey.trim());
+        return field != null && field.editable() ? field : null;
+    }
+
+    private void saveMvsFormField(final String fieldKey, final Object value) {
+        final MvsWorkOrderNodeForm form = activeMvsNodeForm;
+        final MvsWorkOrderFormDraftStore store = mvsWorkOrderFormDraftStore;
+        final MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        if (form == null || store == null || order == null
+                || !order.orderId().equals(form.orderId())) {
+            showMvsWorkOrderFailure(
+                    "表单草稿未保存", new IOException("mvs_form_draft_context_missing"));
+            return;
+        }
+        final int generation = ++mvsWorkOrderRequestGeneration;
+        showHudOperationDetail("mvs_work_order",
+                mvsWorkOrderHudPresenter.loading("保存表单草稿"), false);
+        mvsWorkOrderExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    store.saveField(form, fieldKey, value);
+                    final JSONObject values = store.valuesFor(form);
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)
+                                    || activeMvsNodeForm == null
+                                    || !activeMvsNodeForm.schemaFingerprint()
+                                    .equals(form.schemaFingerprint())) return;
+                            showHudOperationDetail("mvs_work_order",
+                                    mvsWorkOrderHudPresenter.nodeForm(order, form, values), false);
+                            setChatStatus("表单草稿已保存到本机，尚未提交 MVS");
+                        }
+                    });
+                } catch (final IOException | RuntimeException exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            showMvsWorkOrderFailure("表单草稿未保存", exception);
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void appendMvsFormPhoto(String fieldKey, String draftId) {
+        MvsWorkOrderNodeForm form = activeMvsNodeForm;
+        MvsWorkOrderFormDraftStore store = mvsWorkOrderFormDraftStore;
+        if (form == null || store == null) return;
+        JSONArray current = store.valuesFor(form).optJSONArray(fieldKey);
+        JSONArray next = new JSONArray();
+        boolean present = false;
+        for (int index = 0; current != null && index < current.length(); index += 1) {
+            String value = current.optString(index);
+            next.put(value);
+            if (value.equals(draftId)) present = true;
+        }
+        if (!present) next.put(draftId);
+        saveMvsFormField(fieldKey, next);
+    }
+
+    private void showMvsCheckinConfirmation(String direction, String orderId) {
+        MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        String acceptedDirection = normalizeMvsCheckinDirection(direction);
+        if (order == null || !order.orderId().equals(cleanNumericMvsIdentifier(orderId))) {
+            showMvsWorkOrderFailure("签到操作不可用", new IOException("mvs_order_context_missing"));
+            return;
+        }
+        if (acceptedDirection.isEmpty()) {
+            showMvsWorkOrderFailure("签到操作不可用", new IOException("mvs_checkin_direction_invalid"));
+            return;
+        }
+        showHudOperationDetail("mvs_work_order",
+                mvsWorkOrderHudPresenter.confirmation(order, acceptedDirection), false);
+        setChatStatus("请确认是否" + ("out".equals(acceptedDirection) ? "签退" : "签到"));
+    }
+
+    private void beginConfirmedMvsCheckin(String direction, String orderId) {
+        MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        String acceptedOrderId = cleanNumericMvsIdentifier(orderId);
+        String acceptedDirection = normalizeMvsCheckinDirection(direction);
+        if (order == null || !order.orderId().equals(acceptedOrderId)) {
+            showMvsWorkOrderFailure("签到操作不可用", new IOException("mvs_order_context_missing"));
+            return;
+        }
+        if (acceptedDirection.isEmpty()) {
+            showMvsWorkOrderFailure("签到操作不可用", new IOException("mvs_checkin_direction_invalid"));
+            return;
+        }
+        pendingMvsCheckinAction = acceptedDirection + ":" + acceptedOrderId;
+        if (!hasMvsLocationPermission()) {
+            setChatStatus("签到需要现场定位权限，请完成系统授权");
+            requestPermissions(new String[]{
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+            }, REQUEST_MVS_LOCATION);
+            return;
+        }
+        requestCurrentMvsLocation(acceptedDirection, acceptedOrderId);
+    }
+
+    private void requestCurrentMvsLocation(final String direction, final String orderId) {
+        final LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        if (manager == null || !hasMvsLocationPermission()) {
+            failMvsLocation("mvs_location_unavailable");
+            return;
+        }
+        String selectedProvider = "";
+        try {
+            if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                selectedProvider = LocationManager.NETWORK_PROVIDER;
+            } else if (manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                selectedProvider = LocationManager.GPS_PROVIDER;
+            } else if (manager.getAllProviders().contains(LocationManager.PASSIVE_PROVIDER)) {
+                selectedProvider = LocationManager.PASSIVE_PROVIDER;
+            }
+        } catch (RuntimeException exception) {
+            failMvsLocation("mvs_location_provider_failed");
+            return;
+        }
+        if (selectedProvider.isEmpty()) {
+            failMvsLocation("mvs_location_provider_missing");
+            return;
+        }
+        final int generation = ++mvsLocationRequestGeneration;
+        setChatStatus("正在获取现场位置…");
+        mainHandler.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (generation != mvsLocationRequestGeneration) return;
+                mvsLocationRequestGeneration++;
+                failMvsLocation("mvs_location_timeout");
+            }
+        }, MVS_LOCATION_TIMEOUT_MS);
+        try {
+            manager.getCurrentLocation(selectedProvider, null, getMainExecutor(), location -> {
+                if (generation != mvsLocationRequestGeneration) return;
+                mvsLocationRequestGeneration++;
+                if (location == null || !mvsLocationUsable(
+                        System.currentTimeMillis(),
+                        location.getTime(),
+                        location.hasAccuracy() ? location.getAccuracy() : Float.POSITIVE_INFINITY)) {
+                    failMvsLocation("mvs_location_invalid");
+                    return;
+                }
+                pendingMvsCheckinAction = "";
+                submitMvsCheckin(direction, orderId, location);
+            });
+        } catch (SecurityException exception) {
+            mvsLocationRequestGeneration++;
+            failMvsLocation("mvs_location_permission_denied");
+        } catch (RuntimeException exception) {
+            mvsLocationRequestGeneration++;
+            failMvsLocation("mvs_location_failed");
+        }
+    }
+
+    private void submitMvsCheckin(
+            final String direction,
+            final String orderId,
+            final Location location
+    ) {
+        final MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        if (mvsWorkOrderDeviceClient == null || order == null
+                || !order.orderId().equals(orderId)) {
+            showMvsWorkOrderFailure("签到操作不可用", new IOException("mvs_order_context_missing"));
+            return;
+        }
+        final String operationKey = direction + ":" + orderId;
+        String idempotencyKey = mvsCheckinIdempotencyKeys.get(operationKey);
+        if (idempotencyKey == null) {
+            idempotencyKey = "mvs-" + direction + "-" + orderId + "-" + UUID.randomUUID();
+            mvsCheckinIdempotencyKeys.put(operationKey, idempotencyKey);
+        }
+        String traceId = mvsCheckinTraceIds.get(operationKey);
+        if (traceId == null) {
+            traceId = "trace-mvs-" + direction + "-" + orderId + "-" + UUID.randomUUID();
+            mvsCheckinTraceIds.put(operationKey, traceId);
+        }
+        final String acceptedIdempotencyKey = idempotencyKey;
+        final String acceptedTraceId = traceId;
+        final int generation = ++mvsWorkOrderRequestGeneration;
+        showHudOperationDetail("mvs_work_order",
+                mvsWorkOrderHudPresenter.loading("正在提交" + ("out".equals(direction)
+                        ? "签退" : "签到")), false);
+        mvsWorkOrderExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    MvsWorkOrderDeviceClient.CheckinCommand command =
+                            new MvsWorkOrderDeviceClient.CheckinCommand(
+                                    direction,
+                                    "out".equals(direction)
+                                            ? "CONFIRM_MVS_CHECKOUT" : "CONFIRM_MVS_CHECKIN",
+                                    acceptedIdempotencyKey,
+                                    acceptedTraceId,
+                                    location.getLatitude(),
+                                    location.getLongitude(),
+                                    "",
+                                    null,
+                                    null);
+                    final MvsWorkOrderDeviceClient.CheckinReceipt receipt =
+                            mvsWorkOrderDeviceClient.submitCheckin(orderId, command);
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            mvsCheckinIdempotencyKeys.remove(operationKey);
+                            mvsCheckinTraceIds.remove(operationKey);
+                            showHudOperationDetail("mvs_work_order",
+                                    mvsWorkOrderHudPresenter.receipt(order, direction, receipt), false);
+                            setChatStatus(("out".equals(direction) ? "签退" : "签到")
+                                    + "已由服务端确认");
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            showMvsWorkOrderFailure(
+                                    ("out".equals(direction) ? "签退" : "签到") + "暂未完成",
+                                    exception);
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void failMvsLocation(String errorCode) {
+        pendingMvsCheckinAction = "";
+        showHudOperationDetail("mvs_work_order",
+                mvsWorkOrderHudPresenter.failure("现场位置不可用", errorCode), false);
+        setChatStatus("未获取到有效现场位置，工单没有写入");
+    }
+
+    private void showMvsWorkOrderFailure(String title, Exception exception) {
+        List<WorkflowExecutionCoordinator.TaskListItem> workflows = deliveredWorkflowTasks();
+        OperationDetail detail = !workflows.isEmpty() && activeMvsWorkOrder == null
+                ? mvsWorkOrderHudPresenter.gatewayFailure(mvsErrorCode(exception), workflows)
+                : mvsWorkOrderHudPresenter.failure(title, mvsErrorCode(exception));
+        showHudOperationDetail(activeMvsWorkOrder == null ? "tasks" : "mvs_work_order",
+                detail, false);
+        setChatStatus(title + " · " + mvsErrorCode(exception));
+    }
+
+    private boolean isCurrentMvsRequest(int generation) {
+        return generation == mvsWorkOrderRequestGeneration && !isFinishing();
+    }
+
+    private String workflowAssignmentIdFor(MvsWorkOrderDeviceClient.WorkOrder order) {
+        if (order == null || workflowExecutionCoordinator == null) return "";
+        for (WorkflowExecutionCoordinator.TaskListItem task : workflowExecutionCoordinator.tasks()) {
+            if (order.orderId().equals(task.workOrderId())
+                    || order.orderNo().equals(task.displayCode())) {
+                return task.assignmentId();
+            }
+        }
+        return "";
+    }
+
+    private List<WorkflowExecutionCoordinator.TaskListItem> deliveredWorkflowTasks() {
+        return workflowExecutionCoordinator == null
+                ? Collections.<WorkflowExecutionCoordinator.TaskListItem>emptyList()
+                : workflowExecutionCoordinator.tasks();
+    }
+
+    private int mvsEvidenceDraftCount(String orderId) {
+        if (mvsWorkOrderEvidenceDraftStore == null) return 0;
+        try {
+            return mvsWorkOrderEvidenceDraftStore.countForOrder(orderId);
+        } catch (RuntimeException exception) {
+            Log.w(KEY_LOG_TAG, "Unable to count MVS evidence drafts", exception);
+            return 0;
+        }
+    }
+
+    private int reconcileMvsEvidenceDraftCount(String orderId) {
+        MvsWorkOrderEvidenceDraftStore store = mvsWorkOrderEvidenceDraftStore;
+        if (store == null) return 0;
+        try {
+            return reconcileMvsEvidenceDrafts(getFilesDir(), store, orderId);
+        } catch (IOException | RuntimeException exception) {
+            Log.w(KEY_LOG_TAG, "Unable to reconcile MVS evidence drafts", exception);
+            return mvsEvidenceDraftCount(orderId);
+        }
+    }
+
+    static int reconcileMvsEvidenceDrafts(
+            File filesDirectory,
+            MvsWorkOrderEvidenceDraftStore store,
+            String orderId
+    ) throws IOException {
+        if (filesDirectory == null || store == null) {
+            throw new IllegalArgumentException("mvs evidence reconciliation is invalid");
+        }
+        File root = filesDirectory.getCanonicalFile();
+        String rootPrefix = root.getPath() + File.separator;
+        for (MvsWorkOrderEvidenceDraftStore.Draft draft
+                : new ArrayList<>(store.draftsForOrder(orderId))) {
+            File photo = new File(root, draft.localReference()).getCanonicalFile();
+            boolean insidePrivateStorage = photo.getPath().startsWith(rootPrefix);
+            if (!insidePrivateStorage || !photo.isFile() || photo.length() != draft.byteSize()) {
+                store.discard(orderId, draft.id());
+            }
+        }
+        return store.countForOrder(orderId);
+    }
+
+    static boolean deleteMvsEvidenceDraft(
+            File filesDirectory,
+            MvsWorkOrderEvidenceDraftStore store,
+            String orderId,
+            String draftId
+    ) throws IOException {
+        if (filesDirectory == null || store == null) {
+            throw new IllegalArgumentException("mvs evidence deletion is invalid");
+        }
+        MvsWorkOrderEvidenceDraftStore.Draft target =
+                mvsEvidenceDraft(store, orderId, draftId);
+        if (target == null) return false;
+        File root = filesDirectory.getCanonicalFile();
+        String rootPrefix = root.getPath() + File.separator;
+        File photo = new File(root, target.localReference()).getCanonicalFile();
+        if (!photo.getPath().startsWith(rootPrefix)) {
+            throw new IOException("mvs_evidence_path_invalid");
+        }
+        if (photo.exists() && (!photo.isFile() || !photo.delete())) {
+            throw new IOException("mvs_evidence_file_delete_failed");
+        }
+        return store.discard(orderId, draftId) != null;
+    }
+
+    private void showActiveMvsWorkOrderDetail(String status) {
+        MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        if (order == null) {
+            showMvsWorkOrderCatalog(mvsWorkOrderView);
+            return;
+        }
+        showHudOperationDetail(
+                "mvs_work_order",
+                mvsWorkOrderHudPresenter.taskDetail(
+                        order,
+                        workflowAssignmentIdFor(order),
+                        mvsEvidenceDraftCount(order.orderId())),
+                false);
+        if (status != null && !status.trim().isEmpty()) setChatStatus(status);
+    }
+
+    private boolean hasMvsLocationPermission() {
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED
+                || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    static boolean mvsLocationUsable(long nowMillis, long locationTimeMillis, float accuracyMeters) {
+        long age = nowMillis - locationTimeMillis;
+        return locationTimeMillis > 0L
+                && age >= 0L
+                && age <= MVS_LOCATION_MAX_AGE_MS
+                && Float.isFinite(accuracyMeters)
+                && accuracyMeters >= 0f
+                && accuracyMeters <= MVS_LOCATION_MAX_ACCURACY_METERS;
+    }
+
+    private static String normalizeMvsWorkOrderView(String value) {
+        String view = value == null ? "" : value.trim();
+        return "pending".equals(view) || "pending_execute".equals(view)
+                || "completed".equals(view) ? view : "executing";
+    }
+
+    static String normalizeMvsCheckinDirection(String value) {
+        String direction = value == null ? "" : value.trim();
+        return "in".equals(direction) || "out".equals(direction) ? direction : "";
+    }
+
+    private static String cleanNumericMvsIdentifier(String value) {
+        String result = value == null ? "" : value.trim();
+        return result.matches("^[0-9]{1,32}$") ? result : "";
+    }
+
+    private static String mvsErrorCode(Exception exception) {
+        if (exception instanceof MvsWorkOrderDeviceClient.MvsRequestException) {
+            return ((MvsWorkOrderDeviceClient.MvsRequestException) exception).errorCode();
+        }
+        String message = exception == null ? "" : exception.getMessage();
+        String code = message == null ? "" : message.trim();
+        return code.matches("^[a-z0-9_]{1,120}$") ? code : "mvs_request_failed";
+    }
+
+    private void showManagedProjectCatalog() {
+        if (hudPresentation == null) {
+            setChatStatus("当前版本不支持受管项目记忆页面");
+            return;
+        }
+        managedProjectCatalog = null;
+        managedProjectDetail = null;
+        clearManagedProjectInstructionState();
+        final int generation = beginManagedExecutionRequest();
+        showHudOperationDetail("project_memory",
+                executionContextHudPresenter.loading("project_memory"), false);
+        if (executionContextDeviceClient == null) {
+            showManagedExecutionFailure(generation, "project_memory", "device_session_missing");
+            return;
+        }
+        managedExecutionExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final ExecutionContextDeviceClient.ProjectCatalog catalog =
+                            executionContextDeviceClient.listProjects();
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentManagedExecutionRequest(
+                                    generation, "project_memory")) return;
+                            managedProjectCatalog = catalog;
+                            managedProjectTitles.clear();
+                            for (ExecutionContextDeviceClient.ProjectSummary project
+                                    : catalog.items()) {
+                                managedProjectTitles.put(
+                                        project.localProjectId(), project.title());
+                            }
+                            showHudOperationDetail("project_memory",
+                                    executionContextHudPresenter.projectCatalog(catalog), false);
+                            setChatStatus("项目记录已从服务端刷新");
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            showManagedExecutionFailure(generation, "project_memory",
+                                    managedExecutionErrorCode(exception));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void showManagedDeviceMemoryCatalog() {
+        if (hudPresentation == null) {
+            setChatStatus("\u5f53\u524d\u7248\u672c\u4e0d\u652f\u6301\u8bbe\u5907\u8bb0\u5fc6\u9875\u9762");
+            return;
+        }
+        managedDeviceMemoryCatalog = null;
+        final int generation = beginManagedExecutionRequest();
+        showHudOperationDetail("device_brain",
+                executionContextHudPresenter.loading("device_brain"), false);
+        if (deviceMemoryDeviceClient == null) {
+            showManagedExecutionFailure(generation, "device_brain", "device_session_missing");
+            return;
+        }
+        managedExecutionExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final DeviceMemoryDeviceClient.Catalog catalog = deviceMemoryDeviceClient.load();
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentManagedExecutionRequest(generation, "device_brain")) return;
+                            managedDeviceMemoryCatalog = catalog;
+                            showHudOperationDetail("device_brain",
+                                    executionContextHudPresenter.deviceMemoryCatalog(catalog), false);
+                            setChatStatus("\u8bbe\u5907\u8bb0\u5fc6\u5df2\u4ece\u670d\u52a1\u7aef\u6388\u6743\u76ee\u5f55\u5237\u65b0");
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            showManagedExecutionFailure(generation, "device_brain",
+                                    managedExecutionErrorCode(exception));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void showManagedProjectDetail(final String projectId) {
+        if (hudPresentation == null) {
+            setChatStatus("当前版本不支持受管项目记忆页面");
+            return;
+        }
+        managedProjectDetail = null;
+        clearManagedProjectInstructionState();
+        final int generation = beginManagedExecutionRequest();
+        showHudOperationDetail("project_memory",
+                executionContextHudPresenter.loading("project_memory"), false);
+        if (executionContextDeviceClient == null) {
+            showManagedExecutionFailure(generation, "project_memory", "device_session_missing");
+            return;
+        }
+        managedExecutionExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final ExecutionContextDeviceClient.ProjectDetail detail =
+                            executionContextDeviceClient.getProject(projectId);
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentManagedExecutionRequest(
+                                    generation, "project_memory")) return;
+                            managedProjectDetail = detail;
+                            managedProjectTitles.put(detail.localProjectId(), detail.title());
+                            showHudOperationDetail("project_memory",
+                                    executionContextHudPresenter.projectDetail(detail,
+                                            locallyRecoverableTaskIds(detail.localProjectId())),
+                                    false);
+                            setChatStatus("已读取项目记忆与任务记录");
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            showManagedExecutionFailure(generation, "project_memory",
+                                    managedExecutionErrorCode(exception));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void performManagedProjectInstructionOperation(String action) {
+        String value = action == null ? "" : action.trim();
+        String operation;
+        String rawIdentity;
+        if (value.startsWith("managed_project_instruction_open:")) {
+            operation = "open";
+            rawIdentity = value.substring("managed_project_instruction_open:".length());
+        } else if (value.startsWith("managed_project_instruction_edit:")) {
+            operation = "edit";
+            rawIdentity = value.substring("managed_project_instruction_edit:".length());
+        } else if (value.startsWith("managed_project_instruction_disable:")) {
+            operation = "disable";
+            rawIdentity = value.substring("managed_project_instruction_disable:".length());
+        } else if (value.startsWith("managed_project_instruction_enable:")) {
+            operation = "enable";
+            rawIdentity = value.substring("managed_project_instruction_enable:".length());
+        } else if (value.startsWith("managed_project_instruction_delete:")) {
+            operation = "delete";
+            rawIdentity = value.substring("managed_project_instruction_delete:".length());
+        } else if (value.startsWith("managed_project_instruction_refresh:")) {
+            operation = "refresh";
+            rawIdentity = value.substring("managed_project_instruction_refresh:".length());
+        } else {
+            setChatStatus("不支持的项目指令操作");
+            return;
+        }
+
+        final ProjectInstructionLifecyclePolicy.Identity identity;
+        try {
+            identity = ProjectInstructionLifecyclePolicy.parseIdentity(rawIdentity);
+        } catch (IllegalArgumentException rejected) {
+            setChatStatus("项目指令标识无效，请刷新项目记录");
+            showManagedProjectCatalog();
+            return;
+        }
+        if ("open".equals(operation)) {
+            showManagedProjectInstruction(identity, false, "已打开项目指令");
+            return;
+        }
+        if ("refresh".equals(operation)) {
+            showManagedProjectInstruction(identity, true,
+                    "已刷新服务端最新版本，请重新选择操作");
+            return;
+        }
+
+        ExecutionContextDeviceClient.ProjectInstruction instruction =
+                currentManagedProjectInstruction(identity);
+        if (instruction == null) {
+            setChatStatus("项目指令版本可能已变化，正在刷新服务端记录");
+            showManagedProjectInstruction(identity, true,
+                    "已刷新服务端最新版本，请重新选择操作");
+            return;
+        }
+        if ("deleted".equals(instruction.status())) {
+            setChatStatus("已删除的项目指令只能查看，不能再次修改");
+            showManagedProjectInstructionDetail(identity.projectId(), instruction);
+            return;
+        }
+        managedProjectInstruction = instruction;
+        managedProjectInstructionProjectId = identity.projectId();
+        if ("edit".equals(operation)) {
+            pendingProjectGovernanceDraft = null;
+            pendingManagedTaskRestoreDraft = null;
+            managedProjectInstructionEditPending = true;
+            showManagedProjectInstructionDetail(identity.projectId(), instruction);
+            setChatStatus("请说出新的完整项目规则；可说“取消”或“返回首页”");
+            scheduleForegroundVoiceListening("project-instruction-edit");
+            return;
+        }
+        String targetStatus = "disable".equals(operation)
+                ? "disabled" : "enable".equals(operation) ? "active" : "deleted";
+        requestManagedProjectInstructionRevision(instruction, targetStatus, "");
+    }
+
+    private ExecutionContextDeviceClient.ProjectInstruction currentManagedProjectInstruction(
+            ProjectInstructionLifecyclePolicy.Identity identity
+    ) {
+        if (identity == null || managedProjectDetail == null
+                || !identity.projectId().equals(managedProjectDetail.localProjectId())) {
+            return null;
+        }
+        return managedProjectDetail.instruction(identity.instructionId());
+    }
+
+    private void showManagedProjectInstruction(
+            final ProjectInstructionLifecyclePolicy.Identity identity,
+            boolean forceRefresh,
+            final String successStatus
+    ) {
+        if (!forceRefresh) {
+            ExecutionContextDeviceClient.ProjectInstruction cached =
+                    currentManagedProjectInstruction(identity);
+            if (cached != null) {
+                managedProjectInstruction = cached;
+                managedProjectInstructionProjectId = identity.projectId();
+                managedProjectInstructionEditPending = false;
+                showManagedProjectInstructionDetail(identity.projectId(), cached);
+                setChatStatus(successStatus);
+                return;
+            }
+        }
+        clearManagedProjectInstructionState();
+        final int generation = beginManagedExecutionRequest();
+        showHudOperationDetail("project_memory",
+                executionContextHudPresenter.loading("project_memory"), false);
+        if (executionContextDeviceClient == null) {
+            showManagedExecutionFailure(generation, "project_memory", "device_session_missing");
+            return;
+        }
+        managedExecutionExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final ExecutionContextDeviceClient.ProjectDetail detail =
+                            executionContextDeviceClient.getProject(identity.projectId());
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentManagedExecutionRequest(
+                                    generation, "project_memory")) return;
+                            managedProjectDetail = detail;
+                            managedProjectTitles.put(detail.localProjectId(), detail.title());
+                            ExecutionContextDeviceClient.ProjectInstruction instruction =
+                                    detail.instruction(identity.instructionId());
+                            if (instruction == null) {
+                                clearManagedProjectInstructionState();
+                                showHudOperationDetail("project_memory",
+                                        executionContextHudPresenter.projectInstructionDetail(
+                                                detail, identity.instructionId()), false);
+                                setChatStatus("服务端已不存在该项目指令");
+                                return;
+                            }
+                            managedProjectInstruction = instruction;
+                            managedProjectInstructionProjectId = identity.projectId();
+                            showManagedProjectInstructionDetail(identity.projectId(), instruction);
+                            setChatStatus(successStatus);
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            showManagedExecutionFailure(generation, "project_memory",
+                                    managedExecutionErrorCode(exception));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void showManagedProjectInstructionDetail(
+            String projectId,
+            ExecutionContextDeviceClient.ProjectInstruction instruction
+    ) {
+        if (managedProjectDetail == null || instruction == null
+                || !projectId.equals(managedProjectDetail.localProjectId())) {
+            setChatStatus("项目指令记录不可用，请刷新项目");
+            return;
+        }
+        showHudOperationDetail("project_memory",
+                executionContextHudPresenter.projectInstructionDetail(
+                        managedProjectDetail, instruction.instructionId()), false);
+    }
+
+    private void requestManagedProjectInstructionRevision(
+            ExecutionContextDeviceClient.ProjectInstruction instruction,
+            String targetStatus,
+            String replacementInstruction
+    ) {
+        if (!SECURE_RUNTIME || executionContextDeviceClient == null) {
+            setChatStatus("受管项目服务不可用，项目指令未改变");
+            return;
+        }
+        if (instruction == null || managedProjectInstructionProjectId.isEmpty()) {
+            setChatStatus("项目指令记录不可用，请刷新后重试");
+            return;
+        }
+        try {
+            ProjectGovernanceDraft draft = ProjectGovernanceDraft.projectInstructionRevision(
+                    managedProjectInstructionProjectId,
+                    instruction.instructionId(),
+                    instruction.version(),
+                    instruction.status(),
+                    instruction.condition(),
+                    instruction.action(),
+                    instruction.exceptions(),
+                    targetStatus,
+                    replacementInstruction);
+            managedProjectInstructionEditPending = false;
+            showProjectGovernanceConfirmation(draft);
+        } catch (IllegalArgumentException rejected) {
+            setChatStatus("新的项目规则无效或没有变化，请重新说完整规则");
+            if (managedProjectInstructionEditPending) {
+                scheduleForegroundVoiceListening("project-instruction-edit-invalid");
+            } else {
+                showManagedProjectInstructionDetail(
+                        managedProjectInstructionProjectId, instruction);
+            }
+        }
+    }
+
+    private void clearManagedProjectInstructionState() {
+        managedProjectInstruction = null;
+        managedProjectInstructionProjectId = "";
+        managedProjectInstructionEditPending = false;
+    }
+
+    private void showManagedSkillCatalog() {
+        if (hudPresentation == null) {
+            setChatStatus("当前版本不支持受管 Skill 页面");
+            return;
+        }
+        managedSkillCatalog = null;
+        managedContentManifest = null;
+        final TaskSession session = taskSessionManager.active();
+        final int generation = beginManagedExecutionRequest();
+        if (executionContextDeviceClient == null || skillKnowledgeManifestClient == null) {
+            showHudOperationDetail("agent_center",
+                    executionContextHudPresenter.loading("agent_center"), false);
+            showManagedExecutionFailure(generation, "agent_center", "device_session_missing");
+            return;
+        }
+        if (session == null || session.status() != TaskSession.Status.ACTIVE) {
+            showHudOperationDetail("agent_center",
+                    executionContextHudPresenter.loading("agent_center"), false);
+            showManagedExecutionFailure(generation, "agent_center", "active_task_required");
+            return;
+        }
+        try {
+            managedContentManifest = skillKnowledgeManifestClient.loadCached(session.projectId());
+            if (managedContentManifest != null) {
+                showHudOperationDetail("agent_center",
+                        executionContextHudPresenter.skillManifestCatalog(managedContentManifest),
+                        false);
+                setChatStatus("已显示本地授权目录，等待服务端确认");
+            } else {
+                showHudOperationDetail("agent_center",
+                        executionContextHudPresenter.loading("agent_center"), false);
+            }
+        } catch (IOException cacheError) {
+            Log.i(KEY_LOG_TAG, "Content manifest cache unavailable: "
+                    + managedExecutionErrorCode(cacheError));
+            showHudOperationDetail("agent_center",
+                    executionContextHudPresenter.loading("agent_center"), false);
+        }
+        managedExecutionExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final SkillKnowledgeManifestClient.Manifest manifest =
+                            skillKnowledgeManifestClient.refresh(session.projectId());
+                    final ExecutionContextDeviceClient.SkillCatalog catalog =
+                            executionContextDeviceClient.listSkills(session.projectId(), session.id());
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentManagedExecutionRequest(generation, "agent_center")
+                                    || !isCurrentManagedTask(session)) return;
+                            managedContentManifest = manifest;
+                            managedSkillCatalog = catalog;
+                            showHudOperationDetail("agent_center",
+                                    executionContextHudPresenter.skillCatalog(catalog), false);
+                            setChatStatus("AI 运维 Skill 已从服务端刷新");
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            showManagedExecutionFailure(generation, "agent_center",
+                                    managedExecutionErrorCode(exception));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void showManagedKnowledgeCatalog() {
+        if (hudPresentation == null) {
+            setChatStatus("当前版本不支持受管知识页面");
+            return;
+        }
+        managedContentManifest = null;
+        final TaskSession session = taskSessionManager.active();
+        final int generation = beginManagedExecutionRequest();
+        if (skillKnowledgeManifestClient == null) {
+            showHudOperationDetail("knowledge",
+                    executionContextHudPresenter.loading("knowledge"), false);
+            showManagedExecutionFailure(generation, "knowledge", "device_session_missing");
+            return;
+        }
+        if (session == null || session.status() != TaskSession.Status.ACTIVE) {
+            showHudOperationDetail("knowledge",
+                    executionContextHudPresenter.loading("knowledge"), false);
+            showManagedExecutionFailure(generation, "knowledge", "active_task_required");
+            return;
+        }
+        try {
+            managedContentManifest = skillKnowledgeManifestClient.loadCached(session.projectId());
+            if (managedContentManifest != null) {
+                showHudOperationDetail("knowledge",
+                        executionContextHudPresenter.knowledgeCatalog(
+                                managedContentManifest, false), false);
+                setChatStatus("已显示本地知识目录，等待服务端确认");
+            } else {
+                showHudOperationDetail("knowledge",
+                        executionContextHudPresenter.loading("knowledge"), false);
+            }
+        } catch (IOException cacheError) {
+            Log.i(KEY_LOG_TAG, "Knowledge manifest cache unavailable: "
+                    + managedExecutionErrorCode(cacheError));
+            showHudOperationDetail("knowledge",
+                    executionContextHudPresenter.loading("knowledge"), false);
+        }
+        managedExecutionExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final SkillKnowledgeManifestClient.Manifest manifest =
+                            skillKnowledgeManifestClient.refresh(session.projectId());
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentManagedExecutionRequest(generation, "knowledge")
+                                    || !isCurrentManagedTask(session)) return;
+                            managedContentManifest = manifest;
+                            showHudOperationDetail("knowledge",
+                                    executionContextHudPresenter.knowledgeCatalog(
+                                            manifest, true), false);
+                            setChatStatus("华方知识库授权目录已从服务端确认");
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            showManagedExecutionFailure(generation, "knowledge",
+                                    managedExecutionErrorCode(exception));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void performManagedExecutionOperation(String action) {
+        String value = action == null ? "" : action.trim();
+        if (value.startsWith("managed_governance_switch_end:")) {
+            switchPendingGovernanceTaskStatus(
+                    value.substring("managed_governance_switch_end:".length()));
+            return;
+        }
+        if ("managed_governance_review_memory".equals(value)) {
+            showPendingGovernanceMemoryReview();
+            return;
+        }
+        if ("managed_governance_return_end".equals(value)) {
+            showPendingGovernanceTaskEndSummary();
+            return;
+        }
+        if ("managed_governance_call_expert".equals(value)) {
+            callExpertForPendingGovernance();
+            return;
+        }
+        if ("managed_task_restore_confirm".equals(value)) {
+            confirmPendingManagedTaskRestore();
+            return;
+        }
+        if ("managed_task_restore_cancel".equals(value)) {
+            cancelPendingManagedTaskRestore();
+            return;
+        }
+        if ("managed_governance_confirm".equals(value)) {
+            executePendingProjectGovernance();
+            return;
+        }
+        if ("managed_governance_cancel".equals(value)) {
+            cancelPendingProjectGovernance();
+            return;
+        }
+        if (value.startsWith("managed_governance_retry_end:")) {
+            requestManagedTaskEnd(value.substring("managed_governance_retry_end:".length()));
+            return;
+        }
+        if (value.startsWith("managed_skill_")) {
+            performManagedSkillOperation(value);
+            return;
+        }
+        if (value.startsWith("managed_project_instruction_")) {
+            performManagedProjectInstructionOperation(value);
+            return;
+        }
+        if ("managed_knowledge_refresh".equals(value)) {
+            showManagedKnowledgeCatalog();
+            return;
+        }
+        if ("managed_device_memory_refresh".equals(value)) {
+            showManagedDeviceMemoryCatalog();
+            return;
+        }
+        if ("managed_project_refresh".equals(value)
+                || "managed_project_list".equals(value)) {
+            showManagedProjectCatalog();
+            return;
+        }
+        if (value.startsWith("managed_project_open:")) {
+            showManagedProjectDetail(value.substring("managed_project_open:".length()));
+            return;
+        }
+        if (value.startsWith("managed_project_resume:")) {
+            String identity = value.substring("managed_project_resume:".length());
+            int separator = identity.lastIndexOf(':');
+            String projectId = separator < 1 ? "" : identity.substring(0, separator);
+            String taskId = separator < 1 ? "" : identity.substring(separator + 1);
+            requestManagedTaskRestore(projectId, taskId);
+            return;
+        }
+        if (value.startsWith("managed_project_new_task:")) {
+            String projectId = value.substring("managed_project_new_task:".length()).trim();
+            if (managedProjectDetail == null
+                    || !projectId.equals(managedProjectDetail.localProjectId())
+                    || !"active".equalsIgnoreCase(managedProjectDetail.status())) {
+                setChatStatus("请刷新并重新选择一个进行中的项目");
+                showManagedProjectDetail(projectId);
+                return;
+            }
+            prepareManagedProjectForNewTask(projectId);
+            return;
+        }
+        setChatStatus("不支持的受管项目操作");
+    }
+
+    private void requestManagedTaskRestore(String projectId, String taskId) {
+        if (projectGovernanceWriteInFlight) {
+            setChatStatus("项目写入正在提交，请等待结果后再恢复任务");
+            return;
+        }
+        pendingProjectGovernanceDraft = null;
+        pendingManagedTaskRestoreDraft = null;
+        try {
+            if (managedProjectDetail == null) {
+                throw new IllegalArgumentException("project_detail_missing");
+            }
+            ManagedTaskRestoreDraft draft = ManagedTaskRestoreDraft.create(
+                    taskSessionManager, managedProjectDetail.toJson(), projectId, taskId);
+            pendingManagedTaskRestoreDraft = draft;
+            showHudOperationDetail("project_memory", draft.confirmationDetail(), false);
+            setChatStatus("请确认是否恢复该任务");
+            scheduleForegroundVoiceListening("task-restore-confirmation");
+        } catch (IllegalArgumentException rejected) {
+            setChatStatus(managedTaskRestoreFailureMessage(rejected.getMessage()));
+            showCurrentManagedProjectDetailOrCatalog();
+        }
+    }
+
+    private void confirmPendingManagedTaskRestore() {
+        final ManagedTaskRestoreDraft draft = pendingManagedTaskRestoreDraft;
+        if (draft == null) {
+            setChatStatus("没有待确认的任务恢复操作");
+            return;
+        }
+        if (executionContextDeviceClient == null) {
+            pendingManagedTaskRestoreDraft = null;
+            setChatStatus("受管项目服务不可用，任务未恢复");
+            showCurrentManagedProjectDetailOrCatalog();
+            return;
+        }
+        pendingManagedTaskRestoreDraft = null;
+        final int generation = beginManagedExecutionRequest();
+        showHudOperationDetail("project_memory",
+                executionContextHudPresenter.loading("project_memory"), false);
+        managedExecutionExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final ExecutionContextDeviceClient.ProjectDetail freshDetail =
+                            executionContextDeviceClient.getProject(draft.localProjectId());
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentManagedExecutionRequest(
+                                    generation, "project_memory")) return;
+                            managedProjectDetail = freshDetail;
+                            if (!draft.matchesFreshState(
+                                    taskSessionManager, freshDetail.toJson())) {
+                                showHudOperationDetail("project_memory",
+                                        executionContextHudPresenter.projectDetail(
+                                                freshDetail,
+                                                locallyRecoverableTaskIds(
+                                                        freshDetail.localProjectId())),
+                                        false);
+                                setChatStatus("服务端任务状态已变化，任务未恢复");
+                                return;
+                            }
+                            managedNewTaskProjectId = "";
+                            resumeTaskWorkspace(draft.localTaskId());
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            showManagedExecutionFailure(generation, "project_memory",
+                                    managedExecutionErrorCode(exception));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void cancelPendingManagedTaskRestore() {
+        if (pendingManagedTaskRestoreDraft == null) {
+            setChatStatus("没有待取消的任务恢复操作");
+            return;
+        }
+        pendingManagedTaskRestoreDraft = null;
+        setChatStatus("已取消恢复，当前任务状态未改变");
+        showCurrentManagedProjectDetailOrCatalog();
+    }
+
+    private void showCurrentManagedProjectDetailOrCatalog() {
+        if (managedProjectDetail == null) {
+            showManagedProjectCatalog();
+            return;
+        }
+        showHudOperationDetail("project_memory",
+                executionContextHudPresenter.projectDetail(
+                        managedProjectDetail,
+                        locallyRecoverableTaskIds(managedProjectDetail.localProjectId())),
+                false);
+    }
+
+    private static String managedTaskRestoreFailureMessage(String errorCode) {
+        if ("task_not_recoverable".equals(errorCode)) {
+            return "该任务已完成或关闭，不能恢复";
+        }
+        if ("task_state_conflict".equals(errorCode)) {
+            return "服务端任务状态与本机记录不一致，任务未恢复";
+        }
+        if ("project_not_active".equals(errorCode)) {
+            return "项目已关闭，不能恢复任务";
+        }
+        return "任务不存在、本机记录不可用或项目不匹配";
+    }
+
+    private void requestManagedTaskEnd(final String taskStatus) {
+        final TaskSession session = taskSessionManager.active();
+        if (!SECURE_RUNTIME || executionContextDeviceClient == null) {
+            setChatStatus("受管任务服务不可用，当前任务未结束");
+            return;
+        }
+        if (session == null || session.status() != TaskSession.Status.ACTIVE) {
+            setChatStatus("当前没有可结束的进行中任务");
+            return;
+        }
+        if (!("completed".equals(taskStatus) || "closed".equals(taskStatus))) {
+            setChatStatus("不支持的任务结束状态");
+            return;
+        }
+        pendingProjectGovernanceDraft = null;
+        pendingManagedTaskRestoreDraft = null;
+        projectGovernanceWriteInFlight = false;
+        final int generation = beginManagedExecutionRequest();
+        showHudOperationDetail("project_memory",
+                executionContextHudPresenter.loading("project_memory"), false);
+        setChatStatus("正在生成任务结束摘要");
+        managedExecutionExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final ExecutionContextDeviceClient.ProjectDetail detail =
+                            executionContextDeviceClient.getProject(session.projectId());
+                    final ProjectGovernanceDraft draft = ProjectGovernanceDraft.taskEnd(
+                            session, detail.toJson(), taskStatus);
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentManagedExecutionRequest(generation, "project_memory")
+                                    || !isCurrentManagedTask(session)) return;
+                            managedProjectDetail = detail;
+                            showProjectGovernanceConfirmation(draft);
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            showManagedExecutionFailure(generation, "project_memory",
+                                    managedExecutionErrorCode(exception));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void requestManagedProjectInstruction(String instruction) {
+        TaskSession session = taskSessionManager.active();
+        if (!SECURE_RUNTIME || executionContextDeviceClient == null) {
+            setChatStatus("受管项目服务不可用，项目指令未保存");
+            return;
+        }
+        if (session == null || session.status() != TaskSession.Status.ACTIVE) {
+            setChatStatus("请先进入一个进行中的项目任务，再更新项目记忆");
+            return;
+        }
+        showProjectGovernanceConfirmation(
+                ProjectGovernanceDraft.projectInstruction(session, instruction));
+    }
+
+    private void showProjectGovernanceConfirmation(ProjectGovernanceDraft draft) {
+        managedProjectInstructionEditPending = false;
+        pendingProjectGovernanceDraft = draft;
+        projectGovernanceWriteInFlight = false;
+        String projectTitle = pendingGovernanceProjectTitle(draft);
+        showHudOperationDetail("project_memory", draft.confirmationDetail(projectTitle), false);
+        setChatStatus("等待人工二次确认");
+    }
+
+    private void switchPendingGovernanceTaskStatus(String taskStatus) {
+        ProjectGovernanceDraft draft = pendingProjectGovernanceDraft;
+        if (projectGovernanceWriteInFlight) {
+            setChatStatus("服务端正在提交，不能切换结束方式");
+            return;
+        }
+        if (draft == null || draft.kind() != ProjectGovernanceDraft.Kind.TASK_END) {
+            setChatStatus("当前没有待确认的任务结束摘要");
+            return;
+        }
+        try {
+            ProjectGovernanceDraft switched = draft.withTaskStatus(taskStatus);
+            showProjectGovernanceConfirmation(switched);
+            setChatStatus("已切换任务结束方式，请重新核对后确认");
+        } catch (IllegalArgumentException rejected) {
+            setChatStatus("不支持的任务结束方式");
+        }
+    }
+
+    private void showPendingGovernanceMemoryReview() {
+        ProjectGovernanceDraft draft = pendingProjectGovernanceDraft;
+        if (draft == null || draft.kind() != ProjectGovernanceDraft.Kind.TASK_END) {
+            setChatStatus("当前没有可核对的任务结束摘要");
+            return;
+        }
+        showHudOperationDetail("project_memory",
+                draft.memoryReviewDetail(pendingGovernanceProjectTitle(draft)), false);
+        setChatStatus("正在核对本次结束草稿使用的项目记忆");
+    }
+
+    private void showPendingGovernanceTaskEndSummary() {
+        ProjectGovernanceDraft draft = pendingProjectGovernanceDraft;
+        if (draft == null || draft.kind() != ProjectGovernanceDraft.Kind.TASK_END) {
+            setChatStatus("当前没有待确认的任务结束摘要");
+            return;
+        }
+        showHudOperationDetail("project_memory",
+                draft.confirmationDetail(pendingGovernanceProjectTitle(draft)), false);
+        setChatStatus("已返回任务结束摘要");
+    }
+
+    private void callExpertForPendingGovernance() {
+        ProjectGovernanceDraft draft = pendingProjectGovernanceDraft;
+        if (draft == null || draft.kind() != ProjectGovernanceDraft.Kind.TASK_END) {
+            setChatStatus("当前没有可复核的任务结束摘要");
+            return;
+        }
+        setChatStatus("请确认是否呼叫专家复核，退出后返回当前项目与步骤");
+        requestExpertEntry();
+    }
+
+    private String pendingGovernanceProjectTitle(ProjectGovernanceDraft draft) {
+        return managedProjectTitles.containsKey(draft.localProjectId())
+                ? managedProjectTitles.get(draft.localProjectId()) : draft.localProjectId();
+    }
+
+    private void cancelPendingProjectGovernance() {
+        if (projectGovernanceWriteInFlight) {
+            setChatStatus("服务端正在提交，请等待结果");
+            return;
+        }
+        ProjectGovernanceDraft.Kind kind = pendingProjectGovernanceDraft == null
+                ? null : pendingProjectGovernanceDraft.kind();
+        pendingProjectGovernanceDraft = null;
+        if (kind == ProjectGovernanceDraft.Kind.PROJECT_INSTRUCTION
+                && managedProjectInstruction != null
+                && !managedProjectInstructionProjectId.isEmpty()) {
+            showManagedProjectInstructionDetail(
+                    managedProjectInstructionProjectId, managedProjectInstruction);
+            setChatStatus("已取消，项目指令未改变");
+            return;
+        }
+        hideCapabilityCenter();
+        setChatStatus(kind == ProjectGovernanceDraft.Kind.TASK_END
+                ? "已继续当前任务，结束操作未提交"
+                : "已取消，任务和项目记忆均未改变");
+        syncHudPresentation();
+    }
+
+    private void executePendingProjectGovernance() {
+        final ProjectGovernanceDraft draft = pendingProjectGovernanceDraft;
+        if (draft == null || projectGovernanceWriteInFlight) {
+            setChatStatus(projectGovernanceWriteInFlight
+                    ? "服务端正在提交，请勿重复确认" : "当前没有待确认操作");
+            return;
+        }
+        if (executionContextDeviceClient == null) {
+            setChatStatus("设备会话不可用，操作未执行");
+            return;
+        }
+        projectGovernanceWriteInFlight = true;
+        showHudOperationDetail("project_memory",
+                executionContextHudPresenter.loading("project_memory"), false);
+        setChatStatus("正在提交人工确认结果");
+        managedExecutionExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final JSONObject completionSyncPayload;
+                    if (draft.kind() == ProjectGovernanceDraft.Kind.TASK_END) {
+                        ExecutionContextDeviceClient.CommandResult accepted =
+                                executionContextDeviceClient.endTask(
+                                draft.localProjectId(),
+                                draft.localTaskId(),
+                                draft.taskStatus(),
+                                draft.summary(),
+                                draft.expectedMemoryRevision(),
+                                draft.confirmedFacts(),
+                                draft.excludedFacts(),
+                                draft.risks(),
+                                draft.idempotencyKey());
+                        completionSyncPayload = TaskCompletionSyncPayload.create(
+                                draft.taskStatus(),
+                                draft.summary(),
+                                accepted.toJson().getLong("memoryRevision"),
+                                draft.confirmedFacts(),
+                                draft.excludedFacts(),
+                                draft.risks());
+                    } else {
+                        executionContextDeviceClient.confirmProjectInstruction(
+                                draft.localProjectId(),
+                                draft.instructionId(),
+                                draft.expectedInstructionVersion(),
+                                draft.instructionStatus(),
+                                draft.condition(),
+                                draft.instruction(),
+                                draft.instructionExceptions(),
+                                draft.sourceTraceId(),
+                                draft.idempotencyKey());
+                        completionSyncPayload = null;
+                    }
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            finishProjectGovernanceSuccess(draft, completionSyncPayload);
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            showProjectGovernanceFailure(draft,
+                                    managedExecutionErrorCode(exception));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void finishProjectGovernanceSuccess(
+            ProjectGovernanceDraft draft,
+            JSONObject completionSyncPayload
+    ) {
+        projectGovernanceWriteInFlight = false;
+        pendingProjectGovernanceDraft = null;
+        if (draft.kind() == ProjectGovernanceDraft.Kind.PROJECT_INSTRUCTION) {
+            setChatStatus(projectInstructionSuccessMessage(draft));
+            showManagedProjectDetail(draft.localProjectId());
+            return;
+        }
+        TaskSession completedSession = taskSessionManager.find(draft.localTaskId());
+        if (!completeManagedTaskAfterServerSuccess(
+                taskSessionManager, draft.localProjectId(), draft.localTaskId())) {
+            setChatStatus("服务端已结束任务，本机任务状态已变化，请刷新项目记录");
+            showManagedProjectDetail(draft.localProjectId());
+            return;
+        }
+        persistChatProjects();
+        if (completionSyncPayload == null) {
+            setChatStatus("服务端已结束任务，但完成快照缺失，请刷新项目记录");
+            showManagedProjectDetail(draft.localProjectId());
+            return;
+        }
+        recordCriticalTaskSyncEvent(completedSession,
+                "closed".equals(draft.taskStatus()) ? "task_closed" : "task_completed",
+                completionSyncPayload,
+                draft.localTaskId() + ":" + draft.taskStatus());
+        returnToHudStandby("任务已结束，项目记录已保存。下一次输入将创建新任务。");
+    }
+
+    private void showProjectGovernanceFailure(ProjectGovernanceDraft draft, String errorCode) {
+        projectGovernanceWriteInFlight = false;
+        boolean memoryConflict = draft.kind() == ProjectGovernanceDraft.Kind.TASK_END
+                && "project_memory_revision_conflict".equals(errorCode);
+        boolean instructionConflict = draft.kind() == ProjectGovernanceDraft.Kind.PROJECT_INSTRUCTION
+                && ProjectInstructionLifecyclePolicy.isVersionConflict(errorCode);
+        if (memoryConflict || instructionConflict) pendingProjectGovernanceDraft = null;
+        String primaryAction = memoryConflict
+                ? "managed_governance_retry_end:" + draft.taskStatus()
+                : instructionConflict
+                ? "managed_project_instruction_refresh:" + draft.localProjectId()
+                        + ":" + draft.instructionId()
+                : "managed_governance_confirm";
+        String primaryLabel = memoryConflict ? "刷新后重试"
+                : instructionConflict ? "刷新最新版本" : "重试提交";
+        String recovery = memoryConflict
+                ? "项目记忆已变化，需要重新生成摘要。"
+                : instructionConflict
+                ? "服务端已有更新版本，旧草稿已丢弃，不会自动重试或覆盖。"
+                : "可使用同一幂等请求安全重试。";
+        OperationDetail detail = new OperationDetail(
+                "提交失败",
+                "服务端未保存本次操作",
+                "任务、照片、对话和项目记忆均未在本机伪造成功状态。",
+                Arrays.asList(
+                        "请求阶段：项目任务治理",
+                        "错误：" + errorCode,
+                        recovery),
+                primaryAction,
+                primaryLabel,
+                "managed_governance_cancel",
+                "取消");
+        showHudOperationDetail("project_memory", detail, false);
+        setChatStatus(draft.kind() == ProjectGovernanceDraft.Kind.PROJECT_INSTRUCTION
+                ? "服务请求失败，项目指令未改变"
+                : "服务请求失败，现场任务仍保持进行中");
+    }
+
+    private static String projectInstructionSuccessMessage(ProjectGovernanceDraft draft) {
+        if (draft == null) return "项目指令已保存";
+        if ("deleted".equals(draft.instructionStatus())) {
+            return "项目指令已审计删除，历史版本仍保留";
+        }
+        if ("disabled".equals(draft.instructionStatus())) {
+            return "项目指令已停用，不再进入新的 AI 执行上下文";
+        }
+        return draft.expectedInstructionVersion() > 0
+                ? "项目指令新版本已保存并生效"
+                : "项目指令已保存，将从后续匹配的 AI 对话生效";
+    }
+
+    private void performManagedSkillOperation(final String action) {
+        final TaskSession session = taskSessionManager.active();
+        if (executionContextDeviceClient == null) {
+            showHudOperationDetail("agent_center",
+                    executionContextHudPresenter.failure(
+                            "agent_center", "device_session_missing"), false);
+            return;
+        }
+        if (session == null || session.status() != TaskSession.Status.ACTIVE) {
+            showHudOperationDetail("agent_center",
+                    executionContextHudPresenter.failure(
+                            "agent_center", "active_task_required"), false);
+            return;
+        }
+        final boolean activate = action != null
+                && action.startsWith("managed_skill_activate:");
+        final boolean deactivate = action != null
+                && action.startsWith("managed_skill_deactivate:");
+        final String versionId = activate
+                ? action.substring("managed_skill_activate:".length()).trim()
+                : deactivate
+                ? action.substring("managed_skill_deactivate:".length()).trim() : "";
+        final ExecutionContextDeviceClient.Skill skill = managedSkill(versionId);
+        if ((!activate && !deactivate) || skill == null
+                || (deactivate && !skill.activeForTask())) {
+            setChatStatus("Skill 状态已变化，请刷新后重试");
+            showManagedSkillCatalog();
+            return;
+        }
+        managedSkillCatalog = null;
+        final int generation = beginManagedExecutionRequest();
+        showHudOperationDetail("agent_center",
+                executionContextHudPresenter.loading("agent_center"), false);
+        managedExecutionExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    String idempotencyKey = "skill-" + UUID.randomUUID();
+                    if (activate) {
+                        executionContextDeviceClient.activateSkill(
+                                session.projectId(), session.id(), versionId, idempotencyKey);
+                    } else {
+                        executionContextDeviceClient.deactivateSkill(
+                                session.projectId(), session.id(), idempotencyKey);
+                    }
+                    final ExecutionContextDeviceClient.SkillCatalog catalog =
+                            executionContextDeviceClient.listSkills(session.projectId(), session.id());
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentManagedExecutionRequest(generation, "agent_center")
+                                    || !isCurrentManagedTask(session)) return;
+                            managedSkillCatalog = catalog;
+                            showHudOperationDetail("agent_center",
+                                    executionContextHudPresenter.skillCatalog(catalog), false);
+                            setChatStatus(activate
+                                    ? "Skill 已在服务端启用，将从下一轮 AI 对话生效"
+                                    : "Skill 已在服务端停用，将从下一轮 AI 对话移除");
+                        }
+                    });
+                } catch (final Exception exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            showManagedExecutionFailure(generation, "agent_center",
+                                    managedExecutionErrorCode(exception));
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private int beginManagedExecutionRequest() {
+        managedExecutionRequestGeneration += 1;
+        return managedExecutionRequestGeneration;
+    }
+
+    private void invalidateManagedExecutionRequest() {
+        managedExecutionRequestGeneration += 1;
+    }
+
+    private boolean isCurrentManagedExecutionRequest(int generation, String abilityId) {
+        return generation == managedExecutionRequestGeneration
+                && abilityId != null && abilityId.equals(hudOperationAbilityId)
+                && capabilityDetailVisible && isCapabilityCenterVisible();
+    }
+
+    private boolean isCurrentManagedTask(TaskSession expected) {
+        TaskSession active = taskSessionManager.active();
+        return expected != null && active != null
+                && expected.id().equals(active.id())
+                && expected.projectId().equals(active.projectId())
+                && active.status() == TaskSession.Status.ACTIVE;
+    }
+
+    private void showManagedExecutionFailure(
+            int generation,
+            String abilityId,
+            String errorCode
+    ) {
+        if (!isCurrentManagedExecutionRequest(generation, abilityId)) return;
+        if ("agent_center".equals(abilityId)) {
+            managedSkillCatalog = null;
+            managedContentManifest = null;
+        } else if ("knowledge".equals(abilityId)) {
+            managedContentManifest = null;
+        } else if ("device_brain".equals(abilityId)) {
+            managedDeviceMemoryCatalog = null;
+        } else {
+            managedProjectDetail = null;
+        }
+        showHudOperationDetail(abilityId,
+                executionContextHudPresenter.failure(abilityId, errorCode), false);
+        setChatStatus("服务请求失败，未改变项目或 Skill 状态");
+    }
+
+    private static String managedExecutionErrorCode(Exception exception) {
+        String message = exception == null ? "" : exception.getMessage();
+        String clean = message == null ? "" : message.trim();
+        return clean.matches("^[a-z0-9_]{1,120}$") ? clean : "request_failed";
+    }
+
+    private Set<String> locallyRecoverableTaskIds(String projectId) {
+        Set<String> taskIds = new LinkedHashSet<>();
+        for (TaskSession session : taskSessionManager.sessions()) {
+            if (projectId.equals(session.projectId())
+                    && session.status() != TaskSession.Status.COMPLETED) {
+                taskIds.add(session.id());
+            }
+        }
+        return taskIds;
+    }
+
+    private ExecutionContextDeviceClient.Skill managedSkill(String versionId) {
+        if (managedSkillCatalog == null || versionId == null) return null;
+        for (ExecutionContextDeviceClient.Skill skill : managedSkillCatalog.items()) {
+            if (versionId.equals(skill.versionId())) return skill;
+        }
+        return null;
+    }
+
+    private void prepareManagedProjectForNewTask(String projectId) {
+        cancelActiveGptRequestForNavigation();
+        taskSessionManager.pauseActive();
+        saveCurrentProjectFromMessages();
+        int projectIndex = -1;
+        for (int index = 0; index < chatProjects.size(); index++) {
+            if (projectId.equals(chatProjects.get(index).id)) {
+                projectIndex = index;
+                break;
+            }
+        }
+        String title = managedProjectTitles.containsKey(projectId)
+                ? managedProjectTitles.get(projectId) : "现场诊断";
+        if (projectIndex < 0) {
+            chatProjects.add(0, new ChatProject(projectId, title, System.currentTimeMillis()));
+            projectIndex = 0;
+        } else if (title != null && !title.trim().isEmpty()) {
+            chatProjects.get(projectIndex).title = title.trim();
+        }
+        currentProjectIndex = projectIndex;
+        managedNewTaskProjectId = projectId;
+        requireNewTaskOnNextInput = true;
+        clearComposerImage();
+        composerTranscript = "";
+        lastDirectAiContextImage = null;
+        streamingAssistantIndex = -1;
+        liveTranscriptMessageIndex = -1;
+        loadCurrentProjectMessages();
+        hudTaskWorkspaceActive = false;
+        hudRestoredTaskAwaitingInput = false;
+        hudTaskMessageStartIndex = chatMessages.size();
+        clearHudTaskProgress();
+        recoverableAiError = "";
+        hideCapabilityCenter();
+        persistChatProjects();
+        setChatStatus("项目已选择，请描述现场问题以创建新任务");
+        renderChatScreen();
+    }
+
     static int operationPageCount(int itemCount, int pageSize) {
         int safeSize = Math.max(1, pageSize);
         return Math.max(1, (Math.max(0, itemCount) + safeSize - 1) / safeSize);
@@ -2033,6 +4523,37 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return "workflow_back";
     }
 
+    private static String workflowFormFieldKeyFromAction(
+            String action,
+            String currentNodeId,
+            String currentNodeType
+    ) {
+        if (!"form".equals(currentNodeType)) return "";
+        String nodeId = currentNodeId == null ? "" : currentNodeId.trim();
+        String value = action == null ? "" : action.trim();
+        String prefix = "workflow_input:" + nodeId + ":";
+        if (nodeId.isEmpty() || !value.startsWith(prefix)) return "";
+        String fieldKey = value.substring(prefix.length()).trim();
+        return fieldKey.isEmpty() || fieldKey.contains(":") ? "" : fieldKey;
+    }
+
+    private static boolean shouldAdvanceWorkflowForm(
+            String currentNodeType,
+            boolean confirmed
+    ) {
+        return !confirmed && "form".equals(currentNodeType);
+    }
+
+    static boolean shouldCancelWorkflowInputForNavigation(
+            boolean workflowInputPurposeActive,
+            boolean workflowNodeVoiceSessionActive,
+            boolean workflowFormVoiceSessionActive
+    ) {
+        return workflowInputPurposeActive
+                || workflowNodeVoiceSessionActive
+                || workflowFormVoiceSessionActive;
+    }
+
     private void changeHudOperationPage(boolean next) {
         OperationDetail detail = hudOperationDetail == null
                 ? resolveHudOperationDetail(hudOperationAbilityId) : hudOperationDetail;
@@ -2050,6 +4571,37 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private void performHudOperation(String action) {
         String value = action == null ? "" : action.trim();
+        if ("expert_confirmed".equals(value)) {
+            confirmExpertEntry();
+            return;
+        }
+        if ("expert_cancel".equals(value)) {
+            cancelExpertEntry();
+            return;
+        }
+        if ("workflow_expert_confirmed".equals(value)) {
+            confirmWorkflowExpertEntry();
+            return;
+        }
+        if ("workflow_expert_cancel".equals(value)) {
+            cancelWorkflowExpertEntry();
+            return;
+        }
+        if (value.startsWith("managed_project_") || value.startsWith("managed_skill_")
+                || value.startsWith("managed_device_memory_")
+                || value.startsWith("managed_governance_")
+                || value.startsWith("managed_task_restore_")) {
+            performManagedExecutionOperation(value);
+            return;
+        }
+        if (value.startsWith("voiceprint_")) {
+            performVoiceprintSettingsAction(value);
+            return;
+        }
+        if (value.startsWith("device_activation_")) {
+            performDeviceActivationSettingsAction(value);
+            return;
+        }
         if ("operation_next_page".equals(value)) {
             changeHudOperationPage(true);
             return;
@@ -2058,11 +4610,91 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             changeHudOperationPage(false);
             return;
         }
+        if (value.startsWith("mvs_work_order_view:")) {
+            showMvsWorkOrderCatalog(value.substring("mvs_work_order_view:".length()));
+            return;
+        }
+        if (value.startsWith("mvs_work_order_refresh:")) {
+            showMvsWorkOrderCatalog(value.substring("mvs_work_order_refresh:".length()));
+            return;
+        }
+        if ("mvs_work_order_list".equals(value)) {
+            showMvsWorkOrderCatalog(mvsWorkOrderView);
+            return;
+        }
+        if (value.startsWith("mvs_work_order_open:")) {
+            openMvsWorkOrderDetail(value.substring("mvs_work_order_open:".length()));
+            return;
+        }
+        if (value.startsWith("mvs_work_order_resource:")) {
+            String[] parts = value.substring("mvs_work_order_resource:".length())
+                    .split(":", 3);
+            loadMvsWorkOrderResource(
+                    parts.length > 0 ? parts[0] : "",
+                    parts.length > 1 ? parts[1] : "",
+                    parts.length > 2 ? parts[2] : "");
+            return;
+        }
+        if (value.startsWith("mvs_evidence_list:")) {
+            openMvsWorkOrderEvidenceDrafts(
+                    value.substring("mvs_evidence_list:".length()));
+            return;
+        }
+        if (value.startsWith("mvs_evidence_capture:")) {
+            beginMvsWorkOrderEvidenceCapture(
+                    value.substring("mvs_evidence_capture:".length()));
+            return;
+        }
+        if (value.startsWith("mvs_evidence_discard_prepare:")) {
+            String[] parts = value.substring("mvs_evidence_discard_prepare:".length())
+                    .split(":", 2);
+            showMvsEvidenceDiscardConfirmation(
+                    parts.length > 0 ? parts[0] : "",
+                    parts.length > 1 ? parts[1] : "");
+            return;
+        }
+        if (value.startsWith("mvs_evidence_discard_confirmed:")) {
+            String[] parts = value.substring("mvs_evidence_discard_confirmed:".length())
+                    .split(":", 2);
+            discardMvsEvidenceDraft(
+                    parts.length > 0 ? parts[0] : "",
+                    parts.length > 1 ? parts[1] : "");
+            return;
+        }
+        if (value.startsWith("mvs_form_edit:")) {
+            String[] parts = value.substring("mvs_form_edit:".length()).split(":", 2);
+            openMvsFormFieldEditor(
+                    parts.length > 0 ? parts[0] : "",
+                    parts.length > 1 ? parts[1] : "");
+            return;
+        }
+        if (value.startsWith("mvs_form_photo_pick:")) {
+            String[] parts = value.substring("mvs_form_photo_pick:".length()).split(":", 2);
+            openMvsFormPhotoPicker(
+                    parts.length > 0 ? parts[0] : "",
+                    parts.length > 1 ? parts[1] : "");
+            return;
+        }
+        if (value.startsWith("mvs_checkin_prepare:")) {
+            String[] parts = value.substring("mvs_checkin_prepare:".length()).split(":", 2);
+            showMvsCheckinConfirmation(
+                    parts.length > 0 ? parts[0] : "",
+                    parts.length > 1 ? parts[1] : "");
+            return;
+        }
+        if (value.startsWith("mvs_checkin_confirmed:")) {
+            String[] parts = value.substring("mvs_checkin_confirmed:".length()).split(":", 2);
+            beginConfirmedMvsCheckin(
+                    parts.length > 0 ? parts[0] : "",
+                    parts.length > 1 ? parts[1] : "");
+            return;
+        }
         if (value.startsWith("workflow_open:")) {
             openWorkflowTaskDetail(value.substring("workflow_open:".length()));
             return;
         }
         if ("workflow_list".equals(value)) {
+            cancelWorkflowInputForNavigation("workflow_list_navigation");
             activeWorkflowAssignmentId = "";
             showHudOperationDetail("tasks");
             setChatStatus("已返回维修工单");
@@ -2081,6 +4713,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         if (value.startsWith("workflow_standard:")) {
+            cancelWorkflowInputForNavigation("workflow_standard_navigation");
             activeWorkflowAssignmentId = value.substring("workflow_standard:".length()).trim();
             hideCapabilityCenter();
             setChatStatus("已进入普通维修任务");
@@ -2101,6 +4734,18 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         if ("workflow_voice_input".equals(value)) {
             dispatchWorkflowVoiceInput();
+            return;
+        }
+        if (value.startsWith("workflow_input:")) {
+            dispatchWorkflowFormVoiceInput(value);
+            return;
+        }
+        if ("workflow_ai_assist".equals(value)) {
+            dispatchWorkflowAiAssist();
+            return;
+        }
+        if ("workflow_expert_call".equals(value)) {
+            dispatchWorkflowExpertCall();
             return;
         }
         if ("workflow_next".equals(value)) {
@@ -2128,14 +4773,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         if (value.startsWith("workflow_capture_")
-                || value.startsWith("workflow_voice_")
-                || "workflow_ai_assist".equals(value)
-                || "workflow_expert_call".equals(value)
-                || value.startsWith("workflow_input:")) {
+                || value.startsWith("workflow_voice_")) {
             setChatStatus("当前工作流能力尚未在本版本启用");
             return;
         }
         if (value.startsWith("set_agent:")) {
+            if (!shouldExecuteLegacySkillAction(SECURE_RUNTIME, value)) {
+                showManagedSkillCatalog();
+                setChatStatus("Skill 状态由服务端管理，本机操作已拒绝");
+                return;
+            }
             String[] parts = value.split(":", 3);
             String agentId = parts.length > 1 ? parts[1] : "";
             boolean enabled = parts.length > 2 && "enabled".equals(parts[2]);
@@ -2230,7 +4877,163 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
     }
 
+    private void beginMvsWorkOrderEvidenceCapture(String orderId) {
+        beginMvsWorkOrderEvidenceCapture(orderId, "");
+    }
+
+    private void beginMvsFormPhotoCapture(String orderId, String fieldKey) {
+        MvsWorkOrderNodeForm.Field field = activeMvsFormField(orderId, fieldKey);
+        if (field == null || field.type() != MvsWorkOrderNodeForm.FieldType.PHOTO) {
+            showMvsWorkOrderFailure(
+                    "表单照片不可用", new IOException("mvs_form_photo_context_missing"));
+            return;
+        }
+        beginMvsWorkOrderEvidenceCapture(orderId, field.key());
+    }
+
+    private void beginMvsWorkOrderEvidenceCapture(String orderId, String formPhotoFieldKey) {
+        MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        String acceptedOrderId = cleanNumericMvsIdentifier(orderId);
+        if (order == null || !order.orderId().equals(acceptedOrderId)) {
+            showMvsWorkOrderFailure(
+                    "工单拍照不可用",
+                    new IOException("mvs_order_context_missing"));
+            return;
+        }
+        if (mvsWorkOrderEvidenceDraftStore == null) {
+            showMvsWorkOrderFailure(
+                    "工单照片草稿不可用",
+                    new IOException("mvs_evidence_storage_unavailable"));
+            return;
+        }
+        if (!mvsWorkOrderEvidenceCaptureState.begin(order.orderId(), acceptedOrderId)) {
+            showMvsWorkOrderFailure(
+                    "工单拍照不可用",
+                    new IOException("mvs_evidence_capture_busy"));
+            return;
+        }
+        pendingMvsFormPhotoFieldKey = formPhotoFieldKey == null
+                ? "" : formPhotoFieldKey.trim();
+        hideCapabilityCenter();
+        enterCameraScreen("mvs-work-order-evidence");
+        setChatStatus(pendingMvsFormPhotoFieldKey.isEmpty()
+                ? "请拍摄当前工单的现场照片"
+                : "请拍摄表单字段所需照片");
+    }
+
+    private void openMvsWorkOrderEvidenceDrafts(String orderId) {
+        final MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        final MvsWorkOrderEvidenceDraftStore store = mvsWorkOrderEvidenceDraftStore;
+        final String acceptedOrderId = cleanNumericMvsIdentifier(orderId);
+        if (order == null || store == null || !order.orderId().equals(acceptedOrderId)) {
+            showMvsWorkOrderFailure(
+                    "工单照片草稿不可用",
+                    new IOException("mvs_evidence_draft_context_missing"));
+            return;
+        }
+        final int generation = ++mvsWorkOrderRequestGeneration;
+        showHudOperationDetail("mvs_work_order",
+                mvsWorkOrderHudPresenter.loading("读取现场照片草稿"), false);
+        mvsWorkOrderExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    reconcileMvsEvidenceDrafts(getFilesDir(), store, acceptedOrderId);
+                    final List<MvsWorkOrderEvidenceDraftStore.Draft> drafts =
+                            store.draftsForOrder(acceptedOrderId);
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            showHudOperationDetail(
+                                    "mvs_work_order",
+                                    mvsWorkOrderHudPresenter.evidenceDrafts(order, drafts),
+                                    false);
+                            setChatStatus("现场照片草稿已更新");
+                        }
+                    });
+                } catch (final IOException | RuntimeException exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            showMvsWorkOrderFailure("工单照片草稿不可用", exception);
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void showMvsEvidenceDiscardConfirmation(String orderId, String draftId) {
+        MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        MvsWorkOrderEvidenceDraftStore store = mvsWorkOrderEvidenceDraftStore;
+        String acceptedOrderId = cleanNumericMvsIdentifier(orderId);
+        MvsWorkOrderEvidenceDraftStore.Draft target = mvsEvidenceDraft(store, acceptedOrderId, draftId);
+        if (order == null || target == null || !order.orderId().equals(acceptedOrderId)) {
+            showMvsWorkOrderFailure(
+                    "工单照片草稿不可用",
+                    new IOException("mvs_evidence_draft_missing"));
+            return;
+        }
+        showHudOperationDetail(
+                "mvs_work_order",
+                mvsWorkOrderHudPresenter.evidenceDiscardConfirmation(order, target),
+                false);
+        setChatStatus("请确认是否删除本机照片草稿");
+    }
+
+    private void discardMvsEvidenceDraft(String orderId, String draftId) {
+        final MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        final MvsWorkOrderEvidenceDraftStore store = mvsWorkOrderEvidenceDraftStore;
+        final String acceptedOrderId = cleanNumericMvsIdentifier(orderId);
+        if (order == null || store == null || !order.orderId().equals(acceptedOrderId)
+                || mvsEvidenceDraft(store, acceptedOrderId, draftId) == null) {
+            showMvsWorkOrderFailure(
+                    "工单照片草稿不可用",
+                    new IOException("mvs_evidence_draft_missing"));
+            return;
+        }
+        final String acceptedDraftId = draftId == null ? "" : draftId.trim();
+        final int generation = ++mvsWorkOrderRequestGeneration;
+        showHudOperationDetail("mvs_work_order",
+                mvsWorkOrderHudPresenter.loading("删除本机照片草稿"), false);
+        mvsWorkOrderExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    if (!deleteMvsEvidenceDraft(
+                            getFilesDir(), store, acceptedOrderId, acceptedDraftId)) {
+                        throw new IOException("mvs_evidence_draft_missing");
+                    }
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            showActiveMvsWorkOrderDetail("本机照片草稿已删除，MVS 未被修改");
+                        }
+                    });
+                } catch (final IOException | RuntimeException exception) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (!isCurrentMvsRequest(generation)) return;
+                            showMvsWorkOrderFailure("本机照片草稿未删除", exception);
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private static MvsWorkOrderEvidenceDraftStore.Draft mvsEvidenceDraft(
+            MvsWorkOrderEvidenceDraftStore store,
+            String orderId,
+            String draftId
+    ) {
+        if (store == null || orderId == null || draftId == null) return null;
+        for (MvsWorkOrderEvidenceDraftStore.Draft draft : store.draftsForOrder(orderId)) {
+            if (draft.id().equals(draftId.trim())) return draft;
+        }
+        return null;
+    }
+
     private void openWorkflowTaskDetail(String assignmentId) {
+        cancelWorkflowInputForNavigation("workflow_detail_navigation");
         String id = assignmentId == null ? "" : assignmentId.trim();
         if (workflowExecutionCoordinator == null || id.isEmpty()) {
             setChatStatus("工单运行时不可用");
@@ -2250,6 +5053,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void openWorkflowExecution(String assignmentId, boolean optionalConfirmed) {
+        cancelWorkflowInputForNavigation("workflow_execution_navigation");
         String id = assignmentId == null ? "" : assignmentId.trim();
         if (workflowExecutionCoordinator == null || id.isEmpty()) {
             setChatStatus("工单运行时不可用");
@@ -2475,6 +5279,515 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
     }
 
+    private void dispatchWorkflowFormVoiceInput(String action) {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        if (workflowExecutionCoordinator == null || snapshot == null) {
+            setChatStatus("工作流表单能力不可用");
+            return;
+        }
+        WorkflowRuntimeState state = snapshot.runtimeState();
+        WorkflowPackage.Node node = snapshot.workflowPackage().node(state.currentNodeId());
+        String fieldKey = workflowFormFieldKeyFromAction(
+                action,
+                node == null ? "" : node.nodeId(),
+                node == null ? "" : node.type());
+        WorkflowFormVoiceInputSession session;
+        try {
+            session = WorkflowFormVoiceInputSession.from(
+                    activeWorkflowAssignmentId,
+                    state.executionId(),
+                    node,
+                    fieldKey,
+                    (int) (VOICE_RECORDING_MS / 1_000L));
+        } catch (RuntimeException exception) {
+            setChatStatus("当前表单字段不支持语音填写");
+            return;
+        }
+        beginWorkflowFormVoiceInput(session);
+    }
+
+    private void beginWorkflowFormVoiceInput(WorkflowFormVoiceInputSession session) {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        if (session == null || workflowFormVoiceInputSession != null
+                || workflowVoiceInputSession != null || recordingVoice
+                || pendingSceneVideoCapture || sceneVideoStarting || sceneVideoRecording
+                || screenMode != ScreenMode.CHAT || state == null || node == null
+                || realtimeAsrClient == null
+                || !session.matches(
+                activeWorkflowAssignmentId,
+                state.executionId(),
+                node.nodeId(),
+                session.fieldKey())) {
+            setChatStatus("当前工作流表单状态或时长配置无效");
+            return;
+        }
+        workflowFormVoiceInputSession = session;
+        cancelForegroundVoiceListening();
+        voiceSessionPurpose = VoiceSessionPurpose.WORKFLOW_INPUT;
+        voiceStartedFromAutoWindow = false;
+        composerTranscript = "";
+        clearLiveTranscriptMessageIfStreaming();
+        setChatStatus("请说出“" + session.fieldLabel() + "”，最长 "
+                + session.maximumDurationSeconds() + " 秒");
+        startToggleVoiceRecording();
+    }
+
+    private void dispatchWorkflowAiAssist() {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        if (workflowCapabilityRegistry == null || snapshot == null) {
+            setChatStatus("工作流 AI 能力不可用");
+            return;
+        }
+        WorkflowRuntimeState state = snapshot.runtimeState();
+        WorkflowPackage.Node node = snapshot.workflowPackage().node(state.currentNodeId());
+        if (state.executionId().isEmpty() || node == null || !"ai_assist".equals(node.type())) {
+            setChatStatus("当前步骤不允许 AI 分析");
+            return;
+        }
+        WorkflowCapabilityRegistry.Request request;
+        try {
+            request = new WorkflowCapabilityRegistry.Request(
+                    activeWorkflowAssignmentId,
+                    state.executionId(),
+                    state.stepAttempt(node.nodeId()) + 1,
+                    new JSONObject());
+        } catch (RuntimeException exception) {
+            setChatStatus("工作流 AI 请求无效");
+            return;
+        }
+        WorkflowCapabilityRegistry.Dispatch dispatch = workflowCapabilityRegistry.dispatch(
+                node, request, new WorkflowCapabilityRegistry.Callback() {
+                    @Override public void complete(final WorkflowCapabilityRegistry.Result result) {
+                        mainHandler.post(new Runnable() {
+                            @Override public void run() {
+                                if (result == null || result.status()
+                                        == WorkflowCapabilityRegistry.Result.Status.FAILED) {
+                                    setChatStatus("工作流 AI 分析未完成");
+                                }
+                            }
+                        });
+                    }
+                });
+        if (dispatch != WorkflowCapabilityRegistry.Dispatch.STARTED) {
+            setChatStatus("工作流 AI 能力未启用");
+        }
+    }
+
+    private void beginWorkflowAiAssist(
+            final WorkflowCapabilityRegistry.Request request,
+            final WorkflowCapabilityRegistry.Callback callback
+    ) {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        if (request == null || callback == null || workflowAiRequestInFlight
+                || chatAiClient == null || state == null || node == null
+                || !"ai_assist".equals(node.type())
+                || !activeWorkflowAssignmentId.equals(request.assignmentId())
+                || !state.executionId().equals(request.executionId())) {
+            if (callback != null) callback.complete(
+                    WorkflowCapabilityRegistry.Result.failed("workflow_ai_state_invalid"));
+            setChatStatus("当前工作流 AI 状态无效");
+            return;
+        }
+        final AiExecutionContext executionContext;
+        try {
+            executionContext = workflowExecutionCoordinator.executionContextFor(
+                    activeWorkflowAssignmentId);
+        } catch (RuntimeException exception) {
+            callback.complete(WorkflowCapabilityRegistry.Result.failed(
+                    "workflow_ai_execution_context_missing"));
+            setChatStatus("当前工单上下文不可用，AI 不会继续执行");
+            return;
+        }
+        JSONObject config = node.config();
+        String instruction = config.optString("prompt", "").trim();
+        if (instruction.isEmpty()) instruction = config.optString("description", "").trim();
+        if (instruction.isEmpty()) instruction = config.optString("title", "AI 协助").trim();
+        if (instruction.isEmpty() || instruction.length() > 8000) {
+            callback.complete(WorkflowCapabilityRegistry.Result.failed(
+                    "workflow_ai_prompt_invalid"));
+            setChatStatus("工作流 AI 指令无效");
+            return;
+        }
+        final ChatMessage latestImage = latestImageMessage();
+        final String imageId = latestImage == null ? "" : latestImage.imageId;
+        workflowAiRequestInFlight = true;
+        workflowAiResponse = "";
+        workflowAiCallback = callback;
+        setChatStatus("工作流 AI 分析中");
+        try {
+            chatAiClient.send(instruction, imageId, null, executionContext,
+                    new StreamingCallback() {
+                        @Override public void onDelta(String text) {
+                            if (text == null || text.trim().isEmpty()) return;
+                            mainHandler.post(new Runnable() {
+                                @Override public void run() {
+                                    String combined = workflowAiResponse + text;
+                                    workflowAiResponse = combined.length() > 8000
+                                            ? combined.substring(0, 8000) : combined;
+                                    setChatStatus("工作流 AI 正在返回结果");
+                                }
+                            });
+                        }
+
+                        @Override public void onComplete() {
+                            mainHandler.post(new Runnable() {
+                                @Override public void run() {
+                                    completeWorkflowAiAssist(node);
+                                }
+                            });
+                        }
+
+                        @Override public void onError(final Exception error) {
+                            mainHandler.post(new Runnable() {
+                                @Override public void run() {
+                                    failWorkflowAiAssist(error);
+                                }
+                            });
+                        }
+                    });
+        } catch (RuntimeException exception) {
+            failWorkflowAiAssist(exception);
+        }
+    }
+
+    private void completeWorkflowAiAssist(WorkflowPackage.Node node) {
+        WorkflowCapabilityRegistry.Callback callback = workflowAiCallback;
+        String response = workflowAiResponse.trim();
+        workflowAiCallback = null;
+        workflowAiRequestInFlight = false;
+        if (callback == null || response.isEmpty()) {
+            if (callback != null) callback.complete(
+                    WorkflowCapabilityRegistry.Result.failed("workflow_ai_empty_response"));
+            setChatStatus("工作流 AI 未返回可用结果");
+            return;
+        }
+        callback.complete(WorkflowCapabilityRegistry.Result.completed(
+                taskSyncPayload("response", response)));
+        JSONObject config = node == null ? new JSONObject() : node.config();
+        String title = config.optString("title", "AI 协助").trim();
+        String description = config.optString("description", "").trim();
+        List<String> items = new ArrayList<>();
+        items.add(response);
+        if (!description.isEmpty()) items.add(0, description);
+        showHudOperationDetail("workflow", new OperationDetail(
+                "工作流 AI", title.isEmpty() ? "AI 协助" : title,
+                "结果仅作为当前步骤建议，需由现场人员推进下一步。",
+                items, "workflow_next", "下一步", "workflow_back", "返回"), false);
+        setChatStatus("工作流 AI 结果已返回，请确认后继续");
+    }
+
+    private void failWorkflowAiAssist(Exception error) {
+        WorkflowCapabilityRegistry.Callback callback = workflowAiCallback;
+        workflowAiCallback = null;
+        workflowAiRequestInFlight = false;
+        workflowAiResponse = "";
+        if (callback != null) callback.complete(WorkflowCapabilityRegistry.Result.failed(
+                "workflow_ai_request_failed"));
+        setChatStatus("工作流 AI 请求失败，当前步骤未推进");
+        Log.w(KEY_LOG_TAG, "Workflow AI request failed " + safeMessage(error));
+    }
+
+    private void dispatchWorkflowExpertCall() {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        if (workflowCapabilityRegistry == null || snapshot == null) {
+            setChatStatus("工作流专家能力不可用");
+            return;
+        }
+        WorkflowRuntimeState state = snapshot.runtimeState();
+        WorkflowPackage.Node node = snapshot.workflowPackage().node(state.currentNodeId());
+        if (state.executionId().isEmpty() || node == null || !"expert_call".equals(node.type())) {
+            setChatStatus("当前步骤不允许呼叫专家");
+            return;
+        }
+        workflowExpertEntryConfirmationPending = true;
+        showWorkflowExpertConfirmation();
+    }
+
+    private void showWorkflowExpertConfirmation() {
+        OperationDetail detail = new OperationDetail(
+                "二次确认",
+                "确认呼叫专家？",
+                "确认后将打开独立专家视频协同页，并保留当前工单与步骤。",
+                Arrays.asList("工单：" + activeWorkflowAssignmentId,
+                        "专家协同属于高风险外部沟通操作，AI 不会代替你确认。"),
+                workflowExpertConfirmationAction(true), "确认呼叫专家",
+                workflowExpertConfirmationAction(false), "取消");
+        showHudOperationDetail("workflow", detail, false);
+        setChatStatus("等待人工二次确认");
+    }
+
+    private void confirmWorkflowExpertEntry() {
+        if (!workflowExpertEntryConfirmationPending) {
+            setChatStatus("没有待确认的工作流专家操作");
+            return;
+        }
+        workflowExpertEntryConfirmationPending = false;
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null ? null
+                : snapshot.workflowPackage().node(state.currentNodeId());
+        if (workflowCapabilityRegistry == null || state == null || state.executionId().isEmpty()
+                || node == null || !"expert_call".equals(node.type())) {
+            openWorkflowExecution(activeWorkflowAssignmentId, false);
+            setChatStatus("工作流专家步骤已失效，未呼叫专家");
+            return;
+        }
+        WorkflowCapabilityRegistry.Request request;
+        try {
+            request = new WorkflowCapabilityRegistry.Request(
+                    activeWorkflowAssignmentId,
+                    state.executionId(),
+                    state.stepAttempt(node.nodeId()) + 1,
+                    new JSONObject());
+        } catch (RuntimeException exception) {
+            openWorkflowExecution(activeWorkflowAssignmentId, false);
+            setChatStatus("工作流专家请求无效，未呼叫专家");
+            return;
+        }
+        WorkflowCapabilityRegistry.Dispatch dispatch = workflowCapabilityRegistry.dispatch(
+                node, request, new WorkflowCapabilityRegistry.Callback() {
+                    @Override public void complete(final WorkflowCapabilityRegistry.Result result) {
+                        mainHandler.post(new Runnable() {
+                            @Override public void run() {
+                                if (result == null || result.status()
+                                        == WorkflowCapabilityRegistry.Result.Status.FAILED) {
+                                    if (screenMode != ScreenMode.EXPERT) {
+                                        openWorkflowExecution(activeWorkflowAssignmentId, false);
+                                    }
+                                    setChatStatus("工作流专家协同未完成");
+                                }
+                            }
+                        });
+                    }
+                });
+        if (dispatch != WorkflowCapabilityRegistry.Dispatch.STARTED) {
+            openWorkflowExecution(activeWorkflowAssignmentId, false);
+            setChatStatus("工作流专家能力未启用");
+        }
+    }
+
+    private void cancelWorkflowExpertEntry() {
+        if (!workflowExpertEntryConfirmationPending) {
+            setChatStatus("没有待取消的工作流专家操作");
+            return;
+        }
+        workflowExpertEntryConfirmationPending = false;
+        openWorkflowExecution(activeWorkflowAssignmentId, false);
+        setChatStatus("已取消专家呼叫，当前工作流步骤未推进");
+    }
+
+    private void requestExpertEntry() {
+        if (!shouldConfirmExpertEntry(SECURE_RUNTIME)) {
+            featureRegistry.require("expert_collab").enter(MainActivity.this);
+            return;
+        }
+        if (expertEntryConfirmationPending || workflowExpertEntryConfirmationPending) {
+            setChatStatus("已有待确认的专家呼叫");
+            return;
+        }
+        expertConfirmationReturnCapabilityVisible = isCapabilityCenterVisible();
+        expertConfirmationReturnTaskWorkspaceActive = hudTaskWorkspaceActive;
+        expertEntryConfirmationPending = true;
+        if (expertConfirmationReturnCapabilityVisible && capabilityDetailVisible) {
+            expertConfirmationReturnAbilityId = hudOperationAbilityId == null
+                    ? "" : hudOperationAbilityId;
+            expertConfirmationReturnDetail = hudOperationDetail;
+        } else {
+            expertConfirmationReturnAbilityId = "";
+            expertConfirmationReturnDetail = null;
+        }
+        setProjectRailVisible(false);
+        OperationDetail detail = new OperationDetail(
+                "二次确认",
+                "确认呼叫专家？",
+                "确认后将打开独立专家视频协同页，并保留当前项目与维修步骤。",
+                Arrays.asList("专家视频协同会占用麦克风和摄像头。",
+                        "退出后返回当前项目和步骤，AI 不会代替你确认。"),
+                expertConfirmationAction(true), "确认呼叫专家",
+                expertConfirmationAction(false), "取消");
+        showHudOperationDetail(
+                expertConfirmationReturnAbilityId.isEmpty() ? "capabilities" : expertConfirmationReturnAbilityId,
+                detail, false);
+        setChatStatus("等待人工二次确认");
+    }
+
+    private void confirmExpertEntry() {
+        if (!expertEntryConfirmationPending) {
+            setChatStatus("没有待确认的专家呼叫");
+            return;
+        }
+        restoreExpertConfirmationReturnSurface();
+        clearPendingExpertConfirmations();
+        featureRegistry.require("expert_collab").enter(MainActivity.this);
+    }
+
+    private void cancelExpertEntry() {
+        if (!expertEntryConfirmationPending) {
+            setChatStatus("没有待取消的专家呼叫");
+            return;
+        }
+        restoreExpertConfirmationReturnSurface();
+        clearPendingExpertConfirmations();
+        setChatStatus("已取消专家呼叫，当前任务未改变");
+    }
+
+    private void restoreExpertConfirmationReturnSurface() {
+        OperationDetail detail = expertConfirmationReturnDetail;
+        String abilityId = expertConfirmationReturnAbilityId;
+        String target = expertConfirmationReturnTarget(
+                expertConfirmationReturnCapabilityVisible,
+                detail != null && !abilityId.isEmpty(),
+                expertConfirmationReturnTaskWorkspaceActive);
+        if ("ability".equals(target)) {
+            showHudOperationDetail(abilityId, detail, false);
+            return;
+        }
+        if ("capabilities".equals(target)) {
+            showCapabilityCenter();
+            return;
+        }
+        hudCapabilityVisible = false;
+        capabilityDetailVisible = false;
+        if ("task".equals(target)) {
+            activateHudTaskWorkspace();
+        } else {
+            hudTaskWorkspaceActive = false;
+        }
+        syncHudPresentation();
+    }
+
+    private void clearPendingExpertConfirmations() {
+        expertEntryConfirmationPending = false;
+        workflowExpertEntryConfirmationPending = false;
+        expertConfirmationReturnCapabilityVisible = false;
+        expertConfirmationReturnTaskWorkspaceActive = false;
+        expertConfirmationReturnAbilityId = "";
+        expertConfirmationReturnDetail = null;
+    }
+
+    static boolean shouldConfirmExpertEntry(boolean secureRuntime) {
+        return secureRuntime;
+    }
+
+    static String expertConfirmationAction(boolean confirmed) {
+        return confirmed ? "expert_confirmed" : "expert_cancel";
+    }
+
+    static String workflowExpertConfirmationAction(boolean confirmed) {
+        return confirmed ? "workflow_expert_confirmed" : "workflow_expert_cancel";
+    }
+
+    static String expertConfirmationVoiceAction(
+            boolean expertPending,
+            boolean workflowExpertPending,
+            VoiceCommandRouter.Command command
+    ) {
+        if (!expertPending && !workflowExpertPending) return "";
+        if (command == VoiceCommandRouter.Command.CONFIRM) {
+            return workflowExpertPending
+                    ? workflowExpertConfirmationAction(true) : expertConfirmationAction(true);
+        }
+        if (command == VoiceCommandRouter.Command.CANCEL
+                || command == VoiceCommandRouter.Command.BACK) {
+            return workflowExpertPending
+                    ? workflowExpertConfirmationAction(false) : expertConfirmationAction(false);
+        }
+        return "";
+    }
+
+    static String expertConfirmationLifecycleAction(
+            boolean expertPending,
+            boolean workflowExpertPending
+    ) {
+        if (workflowExpertPending) return workflowExpertConfirmationAction(false);
+        return expertPending ? expertConfirmationAction(false) : "";
+    }
+
+    private void cancelPendingExpertConfirmationForLifecycle() {
+        String action = expertConfirmationLifecycleAction(
+                expertEntryConfirmationPending, workflowExpertEntryConfirmationPending);
+        if (!action.isEmpty()) performHudOperation(action);
+    }
+
+    static String expertConfirmationReturnTarget(
+            boolean capabilityVisible,
+            boolean abilityVisible,
+            boolean taskWorkspaceActive
+    ) {
+        if (capabilityVisible) return abilityVisible ? "ability" : "capabilities";
+        return taskWorkspaceActive ? "task" : "home";
+    }
+
+    private void beginWorkflowExpertCall(
+            WorkflowCapabilityRegistry.Request request,
+            WorkflowCapabilityRegistry.Callback callback
+    ) {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        if (request == null || callback == null || workflowExpertCallPending
+                || modeController == null || state == null || node == null
+                || !"expert_call".equals(node.type())
+                || !activeWorkflowAssignmentId.equals(request.assignmentId())
+                || !state.executionId().equals(request.executionId())) {
+            if (callback != null) callback.complete(
+                    WorkflowCapabilityRegistry.Result.failed("workflow_expert_state_invalid"));
+            setChatStatus("当前工作流专家状态无效");
+            return;
+        }
+        workflowExpertCallPending = true;
+        workflowExpertAssignmentId = request.assignmentId();
+        workflowExpertCallback = callback;
+        setChatStatus("正在进入专家协同");
+        enterExpertMode();
+    }
+
+    private void completeWorkflowExpertCall() {
+        WorkflowCapabilityRegistry.Callback callback = workflowExpertCallback;
+        String assignmentId = workflowExpertAssignmentId;
+        workflowExpertCallback = null;
+        workflowExpertAssignmentId = "";
+        workflowExpertCallPending = false;
+        if (callback == null) return;
+        if (workflowExecutionCoordinator == null || !activeWorkflowAssignmentId.equals(assignmentId)) {
+            callback.complete(WorkflowCapabilityRegistry.Result.failed(
+                    "workflow_expert_assignment_changed"));
+            return;
+        }
+        WorkflowExecutionCoordinator.ActionResult advanced =
+                workflowExecutionCoordinator.advance(
+                        assignmentId, new WorkflowStepContext(), new JSONObject(),
+                        taskSyncPayload("expertCallCompleted", true));
+        callback.complete(advanced.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED
+                || advanced.code() == WorkflowExecutionCoordinator.ActionCode.BLOCKED
+                ? WorkflowCapabilityRegistry.Result.completed(
+                        taskSyncPayload("expertCallCompleted", true))
+                : WorkflowCapabilityRegistry.Result.failed("workflow_expert_advance_failed"));
+        showHudOperationDetail("workflow",
+                workflowHudPresenter.actionResult(assignmentId, advanced), false);
+        setChatStatus(advanced.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED
+                ? "专家协同已结束，已进入下一工作流步骤"
+                : "专家协同已结束，请检查当前工作流条件");
+    }
+
+    private void failWorkflowExpertCall(String reason) {
+        WorkflowCapabilityRegistry.Callback callback = workflowExpertCallback;
+        workflowExpertCallback = null;
+        workflowExpertAssignmentId = "";
+        workflowExpertCallPending = false;
+        if (callback != null) callback.complete(WorkflowCapabilityRegistry.Result.failed(
+                reason == null || reason.trim().isEmpty()
+                        ? "workflow_expert_failed" : reason.trim()));
+        setChatStatus("工作流专家协同失败，当前步骤未推进");
+    }
+
     private void beginWorkflowVoiceInput(
             WorkflowCapabilityRegistry.Request request,
             WorkflowCapabilityRegistry.Callback callback
@@ -2491,7 +5804,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             session = null;
         }
         if (request == null || callback == null || session == null
-                || workflowVoiceInputSession != null || recordingVoice
+                || workflowVoiceInputSession != null || workflowFormVoiceInputSession != null
+                || recordingVoice
                 || pendingSceneVideoCapture || sceneVideoStarting || sceneVideoRecording
                 || screenMode != ScreenMode.CHAT || state == null || node == null
                 || realtimeAsrClient == null
@@ -2517,6 +5831,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void completeWorkflowVoiceInput(String transcript) {
+        if (workflowFormVoiceInputSession != null) {
+            completeWorkflowFormVoiceInput(transcript);
+            return;
+        }
         WorkflowVoiceInputSession session = workflowVoiceInputSession;
         WorkflowCapabilityRegistry.Callback callback = workflowVoiceCallback;
         WorkflowSnapshot snapshot = activeWorkflowSnapshot();
@@ -2572,10 +5890,63 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         renderComposer();
     }
 
+    private void completeWorkflowFormVoiceInput(String transcript) {
+        WorkflowFormVoiceInputSession session = workflowFormVoiceInputSession;
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        if (session == null || workflowExecutionCoordinator == null
+                || state == null || node == null
+                || !session.matches(
+                activeWorkflowAssignmentId,
+                state.executionId(),
+                node.nodeId(),
+                session.fieldKey())) {
+            failWorkflowVoiceInput(
+                    "workflow_form_voice_state_changed",
+                    "工作流表单步骤已变化，语音内容未写入，请在当前字段重新填写");
+            return;
+        }
+        String value;
+        try {
+            value = session.complete(transcript);
+        } catch (RuntimeException exception) {
+            failWorkflowVoiceInput(
+                    "workflow_form_voice_transcript_invalid",
+                    "语音内容无效，当前字段未保存，请重新填写");
+            return;
+        }
+        workflowFormVoiceInputSession = null;
+        voiceSessionPurpose = VoiceSessionPurpose.NONE;
+        voiceStreamState = VoiceStreamState.IDLE;
+        composerTranscript = "";
+        clearLiveTranscriptMessageIfStreaming();
+        WorkflowExecutionCoordinator.ActionResult recorded =
+                workflowExecutionCoordinator.recordFormField(
+                        activeWorkflowAssignmentId,
+                        session.nodeId(),
+                        session.fieldKey(),
+                        value);
+        showHudOperationDetail(
+                "workflow",
+                workflowHudPresenter.actionResult(activeWorkflowAssignmentId, recorded),
+                false);
+        if (recorded.code() == WorkflowExecutionCoordinator.ActionCode.RECORDED) {
+            setChatStatus("字段“" + session.fieldLabel()
+                    + "”草稿已保存，请继续填写或说“下一步”");
+        } else {
+            setChatStatus("字段“" + session.fieldLabel()
+                    + "”未保存：" + recorded.reason());
+        }
+        renderComposer();
+    }
+
     private void failWorkflowVoiceInput(String reason, String message) {
         WorkflowCapabilityRegistry.Callback callback = workflowVoiceCallback;
         workflowVoiceCallback = null;
         workflowVoiceInputSession = null;
+        workflowFormVoiceInputSession = null;
         if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
             voiceSessionPurpose = VoiceSessionPurpose.NONE;
         }
@@ -2599,16 +5970,29 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         WorkflowCapabilityRegistry.Callback callback = workflowVoiceCallback;
         workflowVoiceCallback = null;
         workflowVoiceInputSession = null;
+        workflowFormVoiceInputSession = null;
         if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
             voiceSessionPurpose = VoiceSessionPurpose.NONE;
         }
         voiceStreamState = VoiceStreamState.IDLE;
+        audioCaptureCoordinator.releaseAsr();
         composerTranscript = "";
         clearLiveTranscriptMessageIfStreaming();
         if (callback != null) {
             Log.i(KEY_LOG_TAG, "Workflow voice input cancelled reason=" + reason);
             callback.complete(WorkflowCapabilityRegistry.Result.cancelled());
         }
+    }
+
+    private void cancelWorkflowInputForNavigation(String reason) {
+        if (!shouldCancelWorkflowInputForNavigation(
+                voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT,
+                workflowVoiceInputSession != null,
+                workflowFormVoiceInputSession != null)) {
+            return;
+        }
+        stopVoiceRecording(false, reason);
+        cancelWorkflowVoiceInput(reason);
     }
 
     private void selectActiveWorkflowChoice(String action) {
@@ -2639,9 +6023,39 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void advanceActiveWorkflow(boolean confirmed, String confirmationPhrase) {
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        if (shouldAdvanceWorkflowForm(node == null ? "" : node.type(), confirmed)) {
+            advanceActiveWorkflowForm();
+            return;
+        }
         WorkflowStepContext context = new WorkflowStepContext().setConfirmed(confirmed);
         if (confirmed) context.setConfirmationPhrase(confirmationPhrase);
         advanceActiveWorkflow(context, new JSONObject(), new JSONObject());
+    }
+
+    private void advanceActiveWorkflowForm() {
+        if (workflowExecutionCoordinator == null || activeWorkflowAssignmentId.isEmpty()) {
+            setChatStatus("当前没有可执行的工作流表单");
+            return;
+        }
+        WorkflowExecutionCoordinator.ActionResult result =
+                workflowExecutionCoordinator.advanceForm(activeWorkflowAssignmentId);
+        showHudOperationDetail(
+                "workflow",
+                workflowHudPresenter.actionResult(activeWorkflowAssignmentId, result),
+                false);
+        if (result.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED) {
+            setChatStatus(result.state() != null
+                    && result.state().status() == WorkflowRuntimeState.Status.COMPLETED
+                    ? "工作流已完成，项目记录已保留" : "表单已提交，已进入下一工作流步骤");
+        } else if (result.code() == WorkflowExecutionCoordinator.ActionCode.BLOCKED) {
+            setChatStatus("表单尚未填写完整：" + result.reason());
+        } else {
+            setChatStatus("表单未提交：" + result.reason());
+        }
     }
 
     private void advanceActiveWorkflow(
@@ -2653,9 +6067,34 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             setChatStatus("当前没有可执行的工作流");
             return;
         }
+        JSONObject effectiveOutput = output == null ? new JSONObject() : output;
+        WorkflowSnapshot snapshot = activeWorkflowSnapshot();
+        WorkflowRuntimeState state = snapshot == null ? null : snapshot.runtimeState();
+        WorkflowPackage.Node node = state == null
+                ? null : snapshot.workflowPackage().node(state.currentNodeId());
+        boolean consumedAiResponse = false;
+        if (node != null && "ai_assist".equals(node.type())
+                && !workflowAiResponse.trim().isEmpty()) {
+            effectiveOutput = taskSyncPayload("response", workflowAiResponse.trim());
+            String outputField = node.config().optString("outputField", "").trim();
+            if (!outputField.isEmpty()) {
+                try {
+                    context = (context == null ? new WorkflowStepContext() : context)
+                            .putField(outputField, workflowAiResponse.trim());
+                } catch (RuntimeException exception) {
+                    setChatStatus("工作流 AI 结果字段无效，当前步骤未推进");
+                    return;
+                }
+            }
+            consumedAiResponse = true;
+        }
         WorkflowExecutionCoordinator.ActionResult result =
                 workflowExecutionCoordinator.advance(
-                        activeWorkflowAssignmentId, context, input, output);
+                        activeWorkflowAssignmentId, context, input, effectiveOutput);
+        if (consumedAiResponse
+                && result.code() == WorkflowExecutionCoordinator.ActionCode.ADVANCED) {
+            workflowAiResponse = "";
+        }
         showHudOperationDetail(
                 "workflow",
                 workflowHudPresenter.actionResult(activeWorkflowAssignmentId, result),
@@ -2692,6 +6131,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void setEnvironmentAgentEnabled(boolean enabled) {
+        if (!usesLegacyLocalSkillRuntime(SECURE_RUNTIME)) {
+            String managedAction = executionContextHudPresenter.skillActionFromVoice(
+                    (enabled ? "启用" : "停用") + "环境诊断技能",
+                    true,
+                    managedSkillCatalog);
+            if (managedAction.isEmpty()) {
+                showManagedSkillCatalog();
+                setChatStatus("请从服务端已授权 Skill 中选择环境诊断技能");
+            } else {
+                performManagedSkillOperation(managedAction);
+            }
+            return;
+        }
         if (!operationDetailFactory.setAgentPackageAuthorized("environment_ops", enabled)) {
             setChatStatus("未找到环境诊断技能");
             return;
@@ -2877,10 +6329,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         itemParams.topMargin = dp(24);
         capabilityContent.addView(itemList, itemParams);
 
-        if (ability.route() == AIAbilityConfig.Route.SKILL_CENTER) {
+        if (shouldExposeLegacyPlannedCatalog(SECURE_RUNTIME)
+                && ability.route() == AIAbilityConfig.Route.SKILL_CENTER) {
             appendSkillCatalog();
         }
-        if (ability.route() == AIAbilityConfig.Route.AGENT_CENTER) {
+        if (shouldExposeLegacyPlannedCatalog(SECURE_RUNTIME)
+                && ability.route() == AIAbilityConfig.Route.AGENT_CENTER) {
             appendAgentCatalog();
         }
 
@@ -2949,6 +6403,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
     }
 
+    static boolean shouldExposeLegacyPlannedCatalog(boolean secureRuntime) {
+        return !secureRuntime;
+    }
+
     private String joinAgentSkillIds(List<String> skillIds) {
         StringBuilder labels = new StringBuilder();
         for (String skillId : skillIds) {
@@ -2966,13 +6424,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void openAbilityById(String id) {
+        String resolvedId = resolveManagedAbilityId(SECURE_RUNTIME, id);
         for (AIAbilityConfig ability : aiAbilityConfigs) {
-            if (ability.id().equals(id)) {
+            if (ability.id().equals(resolvedId)) {
                 openAbility(ability);
                 return;
             }
         }
-        throw new IllegalArgumentException("unknown AI ability id: " + id);
+        throw new IllegalArgumentException("unknown AI ability id: " + resolvedId);
     }
 
     private void openAbility(AIAbilityConfig ability) {
@@ -2983,8 +6442,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 return;
             }
             if (ability.route() == AIAbilityConfig.Route.EXPERT_COLLAB) {
-                hideCapabilityCenter();
-                featureRegistry.require("expert_collab").enter(MainActivity.this);
+                requestExpertEntry();
                 return;
             }
             showHudAbility(ability.id());
@@ -2996,8 +6454,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         if (ability.route() == AIAbilityConfig.Route.EXPERT_COLLAB) {
-            hideCapabilityCenter();
-            featureRegistry.require("expert_collab").enter(MainActivity.this);
+            requestExpertEntry();
             return;
         }
         showCapabilityPage(ability);
@@ -3088,16 +6545,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         String commands;
         if (isCapabilityCenterVisible()) {
             context = capabilityDetailVisible ? "当前：AI 能力模块" : "当前：AI 能力中心";
-            commands = "开始诊断  进入已上线的 AI 诊断\n巡检 / 现场感知 / 设备 / 知识 / 技能中心 / 任务中心\n专家  直入专家视频协同\n\n返回 / 取消  返回上一层\n拍照  直接记录现场并进入图片分析";
+            commands = "开始诊断  进入已上线的 AI 诊断\n巡检 / 现场感知 / 设备 / 知识 / 技能中心 / 任务中心\n专家  二次确认后进入专家视频协同\n\n返回 / 取消  返回上一层\n拍照  直接记录现场并进入图片分析";
         } else if (screenMode == ScreenMode.CAMERA) {
             context = "当前：现场拍摄";
-            commands = "拍照  立即拍摄现场\n重拍  放弃当前照片后重拍\n使用照片 / 确认  带回 AI 对话\n返回 / 不拍了  退出相机\n\n通用\n专家  呼叫在线专家\n语音命令  再次查看本页";
+            commands = "拍照  立即拍摄现场\n重拍  放弃当前照片后重拍\n使用照片 / 确认  带回 AI 对话\n返回 / 不拍了  退出相机\n\n通用\n专家  二次确认后呼叫在线专家\n语音命令  再次查看本页";
         } else if (screenMode == ScreenMode.EXPERT) {
             context = "当前：专家协同";
             commands = "等待接听时：返回 / 取消  结束呼叫并返回 AI\n通话已接通后：使用底部挂断或 F10 结束通话\n\n通用\n语音命令  再次查看本页";
         } else {
             context = "当前：AI 智能运维指导";
-            commands = "开始诊断  进入 AI 诊断\n拍照  拍摄现场，随后直接说问题\n专家  呼叫在线专家协同\n巡检 / 现场感知 / 设备 / 知识 / 技能中心 / 智能体中心 / 任务中心\n\n拍摄后\n重拍  重新取景\n使用照片 / 确认  带图提问\n补充 / 重说  继续输入问题";
+            commands = "开始诊断  进入 AI 诊断\n拍照  拍摄现场，随后直接说问题\n专家  二次确认后呼叫在线专家协同\n巡检 / 现场感知 / 设备 / 知识 / AI运维技能 / 任务中心\n\n拍摄后\n重拍  重新取景\n使用照片 / 确认  带图提问\n补充 / 重说  继续输入问题";
         }
         commandContextText.setText(context);
         commandListText.setText(commands);
@@ -3162,6 +6619,16 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         hudPresentation.setCollabStatus(collabServiceState.label());
+        boolean backendProvisioned = runtimeConfiguration != null
+                && runtimeConfiguration.isBackendProvisioned();
+        boolean wakeAuthorized = runtimeConfiguration != null
+                && runtimeConfiguration.hasIflytekCredentials();
+        hudPresentation.setStandbyAvailability(
+                runtimeStandbyLabel(
+                        SECURE_RUNTIME, backendProvisioned, OFFLINE_WAKE_ENABLED, wakeAuthorized),
+                runtimeStandbyNotice(
+                        SECURE_RUNTIME, backendProvisioned, OFFLINE_WAKE_ENABLED, wakeAuthorized));
+        hudPresentation.setVoiceMode(currentVoiceGuideMode());
         String guideState = activeHudGuideState(hudVoiceGuideVisible, hudGlassesGuideVisible);
         if (!guideState.isEmpty()) {
             if ("voiceGuide".equals(guideState)) {
@@ -3200,7 +6667,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (hudTaskProgress == HudTaskProgress.GUIDANCE) {
             int step = task == null ? hudGuidanceStep : task.currentRepairStepNumber();
             int total = task == null ? 3 : task.repairStepCount();
-            String action = task == null ? "请确认当前部件状态。" : task.currentRepairStep();
+            String action = task == null ? "请确认当前部件状态。" : task.currentRepairStepForHud();
             hudPresentation.setGuidanceStep(step, total, action);
             hudPresentation.showState(guidanceHudState());
             return;
@@ -3222,19 +6689,24 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         // reply exists, voice capture, paging and follow-up AI calls stay inside this workspace.
         int persistedAiTurnCount = task == null ? 0 : task.aiTurnCount();
         if (shouldKeepEstablishedTaskSurface(hudTaskWorkspaceActive, completedResponseCount,
-                persistedAiTurnCount, hudTaskProgress != HudTaskProgress.NONE)) {
+                persistedAiTurnCount, hudTaskProgress != HudTaskProgress.NONE
+                        || hudRestoredTaskAwaitingInput)) {
             if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
-                String draft = chatMessages.get(streamingAssistantIndex).text.trim();
+                String draft = HudTextNormalizer.normalize(
+                        chatMessages.get(streamingAssistantIndex).text.trim());
                 hudPresentation.setConversationPage(draft.length() == 0
                         ? "AI 正在分析本轮照片与描述，请稍候。"
                         : draft, 1, 1);
+            } else if (hudRestoredTaskAwaitingInput && persistedAiTurnCount == 0) {
+                hudPresentation.setConversation("任务已恢复，请继续描述现场情况。");
             } else if (task != null) {
                 int pageIndex = task.conversationPageIndex(HUD_CONVERSATION_PAGE_SIZE);
                 hudPresentation.setConversationPage(
                         task.conversationPage(pageIndex, HUD_CONVERSATION_PAGE_SIZE),
                         pageIndex + 1, task.conversationPageCount(HUD_CONVERSATION_PAGE_SIZE));
             } else {
-                hudPresentation.setConversation(response == null ? "正在等待 AI 回复" : response.text.trim());
+                hudPresentation.setConversation(response == null ? "正在等待 AI 回复"
+                        : HudTextNormalizer.normalize(response.text.trim()));
             }
             hudPresentation.showState("conversation");
             return;
@@ -3252,7 +6724,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         if (shouldShowHudTaskWorkspace(hudTaskWorkspaceActive, responseIndex, hudTaskMessageStartIndex)) {
             if (completedResponseCount > 1 || !isActionableDiagnosisResponse(response.text)) {
-                hudPresentation.setConversation(response.text.trim());
+                hudPresentation.setConversation(HudTextNormalizer.normalize(response.text.trim()));
                 hudPresentation.showState("conversation");
                 return;
             }
@@ -3262,7 +6734,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                         task.responsePage(task.diagnosisPageIndex(), pageSize),
                         task.diagnosisPageIndex() + 1, task.responsePageCount(pageSize), task.confidence());
             } else {
-                hudPresentation.setResponse("AI 诊断结果", response.text.trim());
+                hudPresentation.setResponse("AI 诊断结果",
+                        HudTextNormalizer.normalize(response.text.trim()));
             }
             hudPresentation.showState("diagnosis");
             return;
@@ -3524,6 +6997,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void returnToHudStandby(String status) {
+        clearPendingExpertConfirmations();
+        leaveVoiceprintSettingsIfNeeded("home");
+        discardPendingGovernanceOnNavigation();
+        invalidateManagedExecutionRequest();
         invalidateInspectionAiRequest();
         cancelActiveGptRequestForNavigation();
         cancelVoiceEventDescriptionTimeout();
@@ -3537,6 +7014,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         hudCapabilityVisible = false;
         capabilityDetailVisible = false;
         hudTaskWorkspaceActive = false;
+        hudRestoredTaskAwaitingInput = false;
         requireNewTaskOnNextInput = true;
         hudTaskMessageStartIndex = chatMessages.size();
         recoverableAiError = "";
@@ -3544,6 +7022,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         voiceStreamState = VoiceStreamState.IDLE;
         persistChatProjects();
         if (hudPresentation != null && screenMode == ScreenMode.CHAT) {
+            hudPresentation.setStandbyNotice(status != null && status.startsWith("任务已结束，")
+                    ? status : "");
             hudPresentation.showState("standby");
             setChatStatus(status);
             return;
@@ -3565,7 +7045,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         activateHudTaskWorkspace();
         hudTaskProgress = HudTaskProgress.GUIDANCE;
         hudGuidanceStep = task.currentRepairStepNumber();
-        hudPresentation.setGuidanceStep(hudGuidanceStep, task.repairStepCount(), task.currentRepairStep());
+        hudPresentation.setGuidanceStep(hudGuidanceStep, task.repairStepCount(),
+                task.currentRepairStepForHud());
         hudPresentation.showState(guidanceHudState());
     }
 
@@ -3609,6 +7090,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             syncHudPresentation();
             return true;
         }
+        if (task != null && shouldRequestManagedTaskEnd(
+                SECURE_RUNTIME,
+                command,
+                task.currentRepairStepNumber(),
+                task.repairStepCount())) {
+            requestManagedTaskEnd("completed");
+            return true;
+        }
         if (command == VoiceCommandRouter.Command.NEXT) {
             hudTaskProgress = HudTaskProgress.GUIDANCE;
             boolean advanced = task != null ? task.advanceRepairStep() : hudGuidanceStep < 3;
@@ -3619,7 +7108,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     hudGuidanceStep = task.currentRepairStepNumber();
                 }
                 hudPresentation.setGuidanceStep(hudGuidanceStep, task == null ? 3 : task.repairStepCount(),
-                        task == null ? "继续下一项检查" : task.currentRepairStep());
+                        task == null ? "继续下一项检查" : task.currentRepairStepForHud());
                 setChatStatus("维修步骤 " + hudGuidanceStep + " / "
                         + (task == null ? 3 : task.repairStepCount()));
             } else {
@@ -3700,6 +7189,34 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 || command == VoiceCommandRouter.Command.RETRY;
     }
 
+    static boolean shouldRequestManagedTaskEnd(
+            boolean secureRuntime,
+            VoiceCommandRouter.Command command,
+            int currentRepairStepNumber,
+            int repairStepCount
+    ) {
+        if (!secureRuntime || command == null) return false;
+        if (command == VoiceCommandRouter.Command.FINISH) return true;
+        return command == VoiceCommandRouter.Command.NEXT
+                && repairStepCount > 0
+                && currentRepairStepNumber >= repairStepCount;
+    }
+
+    static boolean shouldDiscardPendingGovernanceOnNavigation(
+            boolean pending,
+            boolean writeInFlight
+    ) {
+        return pending && !writeInFlight;
+    }
+
+    private void discardPendingGovernanceOnNavigation() {
+        if (shouldDiscardPendingGovernanceOnNavigation(
+                pendingProjectGovernanceDraft != null, projectGovernanceWriteInFlight)) {
+            pendingProjectGovernanceDraft = null;
+        }
+        pendingManagedTaskRestoreDraft = null;
+    }
+
     private void changeDiagnosisPage(boolean next) {
         MaintenanceTask task = currentMaintenanceTask();
         if (task == null) {
@@ -3744,12 +7261,22 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void navigateHudBack() {
+        if (workflowExpertEntryConfirmationPending) {
+            cancelWorkflowExpertEntry();
+            return;
+        }
+        if (expertEntryConfirmationPending) {
+            cancelExpertEntry();
+            return;
+        }
         if (hudVoiceGuideVisible || hudGlassesGuideVisible) {
             returnToHudStandby("语音待命");
             return;
         }
         if (isCapabilityCenterVisible()) {
             if (capabilityDetailVisible) {
+                leaveVoiceprintSettingsIfNeeded("settings_back");
+                discardPendingGovernanceOnNavigation();
                 capabilityDetailVisible = false;
                 hudPresentation.showState("capabilities");
             } else {
@@ -3776,6 +7303,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void openHudVoiceGuide() {
+        leaveVoiceprintSettingsIfNeeded("voice_guide");
         if (hudPresentation == null) {
             showCommandOverlay();
             return;
@@ -3787,11 +7315,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         hudVoiceGuideVisible = true;
         hudGlassesGuideVisible = false;
         hudPresentation.setVoiceGuideContext(guideContext);
+        hudPresentation.setVoiceMode(currentVoiceGuideMode());
         hudPresentation.showState("voiceGuide");
         scheduleForegroundVoiceListening("voice-guide");
     }
 
     private void openHudGlassesTutorial() {
+        leaveVoiceprintSettingsIfNeeded("glasses_guide");
         if (hudPresentation == null) {
             showCommandOverlay();
             return;
@@ -3839,6 +7369,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         clearHudTaskProgress();
         hudTaskWorkspaceActive = false;
+        hudRestoredTaskAwaitingInput = false;
         hudTaskMessageStartIndex = chatMessages.size();
         recoverableAiError = "";
         setChatStatus("已创建新的维修任务");
@@ -3868,15 +7399,137 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (activeSession != null) {
             taskSessionManager.pauseActive();
         }
-        if (taskSessionManager.findProject(project.id) != null || projectHasUserInput(project)) {
+        boolean hasRecoverableTask = taskSessionManager.findProject(project.id) != null;
+        if (shouldForkProjectForNewTask(managedNewTaskProjectId, project.id,
+                hasRecoverableTask, projectHasUserInput(project))) {
             createNewProjectChat(true);
             project = activeProject();
             hudTaskMessageStartIndex = taskMessageStartIndexAfterProjectReset(
                     hudTaskWorkspaceActive, chatMessages.size());
         }
         TaskSession session = startNewTaskForActiveProject(problem);
+        managedNewTaskProjectId = "";
         requireNewTaskOnNextInput = false;
         return session == null ? null : session.maintenanceTask();
+    }
+
+    static boolean shouldForkProjectForNewTask(
+            String managedProjectId,
+            String activeProjectId,
+            boolean hasRecoverableTask,
+            boolean hasUserInput
+    ) {
+        boolean managedProjectSelected = managedProjectId != null
+                && activeProjectId != null
+                && !managedProjectId.trim().isEmpty()
+                && managedProjectId.trim().equals(activeProjectId.trim());
+        return !managedProjectSelected && (hasRecoverableTask || hasUserInput);
+    }
+
+    static AiExecutionContext aiExecutionContextFor(TaskSession session) {
+        if (session == null || session.status() != TaskSession.Status.ACTIVE) {
+            throw new IllegalStateException("active task execution context is required");
+        }
+        return new AiExecutionContext(session.projectId(), session.id());
+    }
+
+    static String backendSessionIdForExecution(
+            boolean secureRuntime,
+            String projectSessionId,
+            TaskSession activeTask
+    ) {
+        if (secureRuntime) {
+            return activeTask != null && activeTask.status() == TaskSession.Status.ACTIVE
+                    ? activeTask.id()
+                    : "";
+        }
+        return projectSessionId == null ? "" : projectSessionId.trim();
+    }
+
+    static boolean requiresActiveTaskBeforeManagedMediaUpload(
+            boolean secureRuntime,
+            TaskSession activeTask
+    ) {
+        return secureRuntime && (activeTask == null
+                || activeTask.status() != TaskSession.Status.ACTIVE);
+    }
+
+    static boolean usesManagedExecutionContextUi(boolean secureRuntime, String abilityId) {
+        String resolvedId = resolveManagedAbilityId(secureRuntime, abilityId);
+        return secureRuntime && ("project_memory".equals(resolvedId)
+                || "agent_center".equals(resolvedId)
+                || "knowledge".equals(resolvedId)
+                || "device_brain".equals(resolvedId));
+    }
+
+    static boolean usesLegacyLocalSkillRuntime(boolean secureRuntime) {
+        return !secureRuntime;
+    }
+
+    static String resolveManagedAbilityId(boolean secureRuntime, String requestedId) {
+        String abilityId = requestedId == null ? "" : requestedId.trim();
+        if (!secureRuntime) return abilityId;
+        if ("equipment_inspection".equals(abilityId)) return "inspection";
+        if ("field_records".equals(abilityId)) return "tasks";
+        if ("more_operations".equals(abilityId)) return "capabilities";
+        if ("skill_center".equals(abilityId)) return "agent_center";
+        return abilityId;
+    }
+
+    static boolean shouldExecuteLegacySkillAction(boolean secureRuntime, String action) {
+        String value = action == null ? "" : action.trim();
+        return !secureRuntime || !value.startsWith("set_agent:");
+    }
+
+    static String unavailableFeatureStatus(boolean secureRuntime, String title) {
+        String normalizedTitle = title == null ? "" : title.trim();
+        if (secureRuntime) {
+            return normalizedTitle.length() == 0
+                    ? "当前组织未发布该能力"
+                    : "当前组织未发布“" + normalizedTitle + "”能力";
+        }
+        return normalizedTitle + "筹备中";
+    }
+
+    static boolean resumeManagedTask(
+            TaskSessionManager manager,
+            String projectId,
+            String taskId
+    ) {
+        if (manager == null || projectId == null || taskId == null) return false;
+        TaskSession session = manager.find(taskId.trim());
+        return session != null
+                && projectId.trim().equals(session.projectId())
+                && session.status() != TaskSession.Status.COMPLETED
+                && manager.resume(session.id());
+    }
+
+    static boolean resumeTaskFromLocalProjectNavigation(
+            boolean secureRuntime,
+            TaskSessionManager manager,
+            String projectId
+    ) {
+        if (manager == null) return false;
+        manager.pauseActive();
+        return !secureRuntime && manager.resumeProject(projectId);
+    }
+
+    static boolean completeManagedTaskAfterServerSuccess(
+            TaskSessionManager manager,
+            String projectId,
+            String taskId
+    ) {
+        if (manager == null || projectId == null || taskId == null) return false;
+        TaskSession target = manager.find(taskId.trim());
+        if (target == null || target.status() == TaskSession.Status.COMPLETED
+                || !projectId.trim().equals(target.projectId())) {
+            return false;
+        }
+        target.maintenanceTask().complete();
+        if (!manager.complete(target.id())) return false;
+        TaskSession active = manager.active();
+        if (active != null && target.id().equals(active.id())) manager.pauseActive();
+        return true;
     }
 
     private void restoreActiveTaskWorkspace() {
@@ -3884,7 +7537,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (session == null) return;
         hudTaskWorkspaceActive = true;
         requireNewTaskOnNextInput = false;
-        hudTaskMessageStartIndex = firstUserMessageIndex(chatMessages);
+        hudTaskMessageStartIndex = session.conversationStartIndex() >= 0
+                ? Math.min(session.conversationStartIndex(), chatMessages.size())
+                : firstUserMessageIndex(chatMessages);
         clearHudTaskProgress();
         if (session.maintenanceTask().phase() == MaintenanceTask.Phase.GUIDANCE) {
             hudTaskProgress = HudTaskProgress.GUIDANCE;
@@ -3907,8 +7562,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 break;
             }
         }
+        managedNewTaskProjectId = "";
         loadCurrentProjectMessages();
         restoreActiveTaskWorkspace();
+        hudRestoredTaskAwaitingInput = true;
         hideCapabilityCenter();
         persistChatProjects();
         setChatStatus("已恢复维修任务");
@@ -4237,7 +7894,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private void createNewProjectChat(boolean preservePendingInput) {
         cancelActiveGptRequestForNavigation();
         taskSessionManager.pauseActive();
+        managedNewTaskProjectId = "";
         requireNewTaskOnNextInput = true;
+        hudRestoredTaskAwaitingInput = false;
         saveCurrentProjectFromMessages();
         ChatProject project = new ChatProject(
                 "project-" + System.currentTimeMillis(),
@@ -4261,9 +7920,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (index < 0 || index >= chatProjects.size()) {
             return;
         }
+        managedNewTaskProjectId = "";
         if (index == currentProjectIndex) {
             ChatProject selected = activeProject();
-            if (selected != null && taskSessionManager.resumeProject(selected.id)) {
+            if (!SECURE_RUNTIME && selected != null
+                    && resumeTaskFromLocalProjectNavigation(
+                            false, taskSessionManager, selected.id)) {
                 restoreActiveTaskWorkspace();
                 persistChatProjects();
                 scrollChatToBottom = true;
@@ -4281,10 +7943,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         liveTranscriptMessageIndex = -1;
         loadCurrentProjectMessages();
         ChatProject selected = activeProject();
-        boolean resumedTask = selected != null && taskSessionManager.resumeProject(selected.id);
+        boolean resumedTask = resumeTaskFromLocalProjectNavigation(
+                SECURE_RUNTIME,
+                taskSessionManager,
+                selected == null ? "" : selected.id);
         hudTaskMessageStartIndex = taskMessageStartIndexAfterProjectSwitch(
                 resumedTask, firstUserMessageIndex(chatMessages), chatMessages.size());
         hudTaskWorkspaceActive = resumedTask;
+        hudRestoredTaskAwaitingInput = resumedTask;
         requireNewTaskOnNextInput = !resumedTask;
         clearHudTaskProgress();
         if (resumedTask) {
@@ -4396,7 +8062,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         renderChatScreen();
-        setChatStatus(title + "筹备中");
+        setChatStatus(unavailableFeatureStatus(SECURE_RUNTIME, title));
     }
 
     @Override
@@ -4407,6 +8073,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     @Override
     public void showExpertStatus(String message) {
         Log.i(KEY_LOG_TAG, "Expert mode status=" + (message == null ? "" : message));
+        String status = message == null ? "" : message.trim();
+        if (workflowExpertCallPending
+                && (status.contains("失败") || status.contains("中断"))) {
+            failWorkflowExpertCall("workflow_expert_service_failed");
+        }
     }
 
     @Override
@@ -4433,6 +8104,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void exitExpertMode() {
+        boolean restoreGovernanceReview = screenMode == ScreenMode.EXPERT
+                && pendingProjectGovernanceDraft != null;
+        ProjectGovernanceDraft governanceDraft = pendingProjectGovernanceDraft;
+        OperationDetail governanceDetail = hudOperationDetail;
+        String governanceAbilityId = hudOperationAbilityId;
+        int governancePageIndex = hudOperationPageIndex;
         if (modeController != null) {
             modeController.exitExpert();
         }
@@ -4446,10 +8123,21 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         taskSnapshotBeforeExpert = null;
         taskIdBeforeExpert = "";
         persistChatProjects();
+        if (restoreGovernanceReview && governanceDraft != null && governanceDetail != null) {
+            pendingProjectGovernanceDraft = governanceDraft;
+            hudOperationPageIndex = governancePageIndex;
+            showHudOperationDetail(governanceAbilityId, governanceDetail, true);
+            setChatStatus("已返回任务结束摘要，请继续核对后确认");
+            return;
+        }
         syncHudPresentation();
+        if (workflowExpertCallPending) {
+            completeWorkflowExpertCall();
+        }
     }
 
     private void showExpertLayer() {
+        acquireExclusiveAudioOwner(AudioCaptureCoordinator.Owner.EXPERT, "expert_enter");
         screenMode = ScreenMode.EXPERT;
         chatLayer.setVisibility(View.GONE);
         if (hudLayer != null) {
@@ -4465,7 +8153,6 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 ViewGroup.LayoutParams.MATCH_PARENT));
         expertLayer.setVisibility(View.VISIBLE);
         expertCoordinator.start();
-        scheduleForegroundVoiceListening("expert_waiting");
     }
 
     private void releaseExpertCoordinator() {
@@ -4477,6 +8164,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             expertLayer.removeAllViews();
             expertLayer.setVisibility(View.GONE);
         }
+        audioCaptureCoordinator.release(AudioCaptureCoordinator.Owner.EXPERT);
     }
 
     private void renderChatScreen() {
@@ -4508,6 +8196,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void renderCameraScreen() {
+        acquireExclusiveAudioOwner(AudioCaptureCoordinator.Owner.CAMERA, "camera_enter");
         screenMode = ScreenMode.CAMERA;
         resetCameraPreviewStability();
         if (modeController != null) {
@@ -4541,7 +8230,6 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (cameraDevice == null) {
             requestCameraPermissionIfNeeded();
         }
-        scheduleForegroundVoiceListening("camera-screen");
     }
 
     private void renderMessages() {
@@ -4726,7 +8414,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             expertAction.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
-                    featureRegistry.require("expert_collab").enter(MainActivity.this);
+                    requestExpertEntry();
                 }
             });
             quickActions.addView(expertAction);
@@ -4879,7 +8567,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         expertAction.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                featureRegistry.require("expert_collab").enter(MainActivity.this);
+                requestExpertEntry();
             }
         });
         actions.addView(expertAction);
@@ -5187,7 +8875,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView body = new TextView(this);
-        body.setText(message.text + (message.streaming ? "▌" : ""));
+        String displayText = user ? message.text : HudTextNormalizer.normalize(message.text);
+        body.setText(displayText + (message.streaming ? "▌" : ""));
         body.setTextColor(Color.rgb(39, 53, 49));
         body.setTextSize(18);
         body.setLineSpacing(dp(3), 1.0f);
@@ -5387,6 +9076,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         Log.i(KEY_LOG_TAG, "Photo captured bytes=" + (jpegBytes == null ? 0 : jpegBytes.length)
                 + " dimensions=" + bounds.outWidth + "x" + bounds.outHeight);
+        if (deviceActivationQrCaptureState.isPending()) {
+            handleDeviceActivationQrPhoto(jpegBytes);
+            return;
+        }
         if (inspectionCapturePending && activeInspectionRun != null) {
             inspectionCapturePending = false;
             handleInspectionPhoto(jpegBytes);
@@ -5394,6 +9087,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         if (workflowCapturePending) {
             handleWorkflowPhoto(jpegBytes);
+            return;
+        }
+        if (!mvsWorkOrderEvidenceCaptureState.pendingOrderId().isEmpty()) {
+            handleMvsWorkOrderEvidencePhoto(jpegBytes);
             return;
         }
         composerImageGeneration++;
@@ -5454,6 +9151,63 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }
         }
         scheduleForegroundVoiceListening("photo-captured");
+    }
+
+    private void handleMvsWorkOrderEvidencePhoto(byte[] jpegBytes) {
+        MvsWorkOrderDeviceClient.WorkOrder order = activeMvsWorkOrder;
+        String activeOrderId = order == null ? "" : order.orderId();
+        String acceptedOrderId = mvsWorkOrderEvidenceCaptureState.consume(activeOrderId);
+        String formPhotoFieldKey = pendingMvsFormPhotoFieldKey;
+        pendingMvsFormPhotoFieldKey = "";
+        closeCamera();
+        stopCameraThread();
+        renderChatScreen();
+        if (acceptedOrderId.isEmpty()) {
+            showMvsWorkOrderFailure(
+                    "工单照片未保存",
+                    new IOException("mvs_evidence_capture_context_lost"));
+            return;
+        }
+        if (jpegBytes == null || jpegBytes.length == 0
+                || mvsWorkOrderEvidenceDraftStore == null) {
+            showMvsWorkOrderFailure(
+                    "工单照片未保存",
+                    new IOException("mvs_evidence_storage_unavailable"));
+            return;
+        }
+
+        File localPhoto = null;
+        MvsWorkOrderEvidenceDraftStore.Draft savedDraft;
+        try {
+            String reference = "capture-" + System.currentTimeMillis() + "-"
+                    + UUID.randomUUID().toString().substring(0, 8);
+            localPhoto = writeEvidenceFile(
+                    new File(
+                            new File(getFilesDir(), "mvs-work-order-evidence"),
+                            acceptedOrderId),
+                    reference,
+                    jpegBytes);
+            String localReference = "mvs-work-order-evidence/" + acceptedOrderId
+                    + "/" + localPhoto.getName();
+            savedDraft = mvsWorkOrderEvidenceDraftStore.recordPhoto(
+                    acceptedOrderId,
+                    localReference,
+                    localPhoto.length(),
+                    MvsWorkOrderEvidenceDraftStore.sha256Hex(jpegBytes));
+        } catch (IOException | RuntimeException exception) {
+            if (localPhoto != null && localPhoto.isFile() && !localPhoto.delete()) {
+                Log.w(KEY_LOG_TAG, "Unable to remove incomplete MVS evidence photo "
+                        + localPhoto.getName());
+            }
+            Log.w(KEY_LOG_TAG, "Unable to persist MVS evidence photo", exception);
+            showMvsWorkOrderFailure("工单照片未保存", exception);
+            return;
+        }
+        if (!formPhotoFieldKey.isEmpty()) {
+            appendMvsFormPhoto(formPhotoFieldKey, savedDraft.id());
+            return;
+        }
+        showActiveMvsWorkOrderDetail("现场照片已作为本机草稿保存，尚未上传 MVS");
     }
 
     private void handleWorkflowPhoto(byte[] jpegBytes) {
@@ -5608,6 +9362,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return;
         }
         activeInspectionRun.attachPhoto(photoFile.getAbsolutePath());
+        if (requiresActiveTaskBeforeManagedMediaUpload(
+                SECURE_RUNTIME, taskSessionManager.active())
+                && ensureMaintenanceTask(
+                        "巡检任务：" + activeInspectionRun.definition().title()) == null) {
+            persistChatProjects();
+            showHudOperationDetail("inspection");
+            setChatStatus("巡检任务创建失败，照片已保留，请重试");
+            return;
+        }
         final InspectionRun expectedRun = activeInspectionRun;
         final String expectedPointId = expectedRun.currentPoint().id();
         final long expectedGeneration = ++inspectionRequestGeneration;
@@ -5671,11 +9434,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             final InspectionRun expectedRun, final String expectedPointId,
             final long expectedGeneration) {
         if (!isCurrentInspectionRequest(expectedRun, expectedPointId, expectedGeneration)) return;
+        ensureMaintenanceTask("巡检任务：" + expectedRun.definition().title());
+        final AiExecutionContext executionContext;
+        try {
+            executionContext = aiExecutionContextFor(taskSessionManager.active());
+        } catch (IllegalStateException exception) {
+            failInspectionAi(expectedRun, expectedPointId, expectedGeneration, exception);
+            return;
+        }
         final StringBuilder response = new StringBuilder();
         String prompt = InspectionAiBridge.prompt(expectedRun.currentPoint())
                 + "\n上次记录：" + expectedRun.currentPoint().previousValue()
                 + "。请在可确认时说明与上次相比是否变化。";
-        chatAiClient.send(prompt, imageId, jpegBytes, new StreamingCallback() {
+        chatAiClient.send(prompt, imageId, jpegBytes, executionContext, new StreamingCallback() {
             @Override
             public void onDelta(String text) {
                 synchronized (response) {
@@ -6046,7 +9817,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 + " taskWorkspace=" + hudTaskWorkspaceActive + " progress=" + hudTaskProgress);
         if (command == VoiceCommand.OPEN_EXPERT) {
             voiceStreamState = VoiceStreamState.IDLE;
-            enterExpertMode();
+            requestExpertEntry();
             return true;
         }
         if (command == VoiceCommand.OPEN_CAMERA) {
@@ -6101,6 +9872,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             voiceStreamState = VoiceStreamState.IDLE;
             return true;
         }
+        if (command == VoiceCommand.OPEN_SETTINGS) {
+            voiceStreamState = VoiceStreamState.IDLE;
+            openVoiceprintSettings();
+            return true;
+        }
         if (command == VoiceCommand.NEXT_PROJECT) {
             switchProjectChat(Math.min(chatProjects.size() - 1, currentProjectIndex + 1));
             setProjectRailVisible(true);
@@ -6123,9 +9899,35 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private boolean handleVoicePreviewInteraction(String text) {
+        VoiceCommandRouter.Command pendingCommand = voiceCommandRouter.route(text);
+        if ((expertEntryConfirmationPending || workflowExpertEntryConfirmationPending)
+                && pendingCommand == VoiceCommandRouter.Command.HOME) {
+            clearPendingExpertConfirmations();
+            returnToHudHomeFromVoice();
+            return true;
+        }
+        String pendingExpertAction = expertConfirmationVoiceAction(
+                expertEntryConfirmationPending,
+                workflowExpertEntryConfirmationPending,
+                pendingCommand);
+        if (!pendingExpertAction.isEmpty()) {
+            performHudOperation(pendingExpertAction);
+            return true;
+        }
+        if (expertEntryConfirmationPending || workflowExpertEntryConfirmationPending) {
+            setChatStatus("请明确说“确认”或“取消”");
+            scheduleForegroundVoiceListening("expert-confirmation");
+            return true;
+        }
+        if (handleProjectGovernanceVoice(text)) {
+            return true;
+        }
         boolean agentSkillCatalogVisible = isCapabilityCenterVisible()
                 && capabilityDetailVisible && "agent_center".equals(hudOperationAbilityId);
-        String agentSkillAction = agentSkillActionFromVoice(text, agentSkillCatalogVisible);
+        String agentSkillAction = SECURE_RUNTIME
+                ? executionContextHudPresenter.skillActionFromVoice(
+                        text, agentSkillCatalogVisible, managedSkillCatalog)
+                : agentSkillActionFromVoice(text, agentSkillCatalogVisible);
         if (agentSkillAction.length() > 0) {
             performHudOperation(agentSkillAction);
             return true;
@@ -6294,6 +10096,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 && (command == VoiceCommandRouter.Command.BACK
                 || command == VoiceCommandRouter.Command.CANCEL)) {
             if (capabilityDetailVisible) {
+                leaveVoiceprintSettingsIfNeeded("voice_back");
                 if (hudPresentation != null) {
                     capabilityDetailVisible = false;
                     hudPresentation.showState("capabilities");
@@ -6405,7 +10208,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return true;
         }
         if (command == VoiceCommandRouter.Command.EXPERT) {
-            enterExpertMode();
+            requestExpertEntry();
             return true;
         }
         if (command == VoiceCommandRouter.Command.RESTART_TASK) {
@@ -6437,6 +10240,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             showCapabilityCenter();
             openAbilityById("device_brain");
             return true;
+        }
+        if (command == VoiceCommandRouter.Command.PROJECT_MEMORY) {
+            if (SECURE_RUNTIME) {
+                showManagedProjectCatalog();
+                return true;
+            }
+            return false;
         }
         if (command == VoiceCommandRouter.Command.KNOWLEDGE) {
             showCapabilityCenter();
@@ -6516,8 +10326,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
         boolean returningToInspection = inspectionCapturePending && activeInspectionRun != null;
         boolean returningToWorkflow = workflowCapturePending;
+        boolean returningToMvsWorkOrder =
+                !mvsWorkOrderEvidenceCaptureState.pendingOrderId().isEmpty();
+        boolean returningToActivationSettings = deviceActivationQrCaptureState.isPending();
+        deviceActivationQrCaptureState.cancel();
         inspectionCapturePending = false;
         cancelWorkflowPhotoCapture("workflow_photo_cancelled");
+        mvsWorkOrderEvidenceCaptureState.cancel();
+        pendingMvsFormPhotoFieldKey = "";
         cancelForegroundVoiceListening();
         pendingVoicePhotoCapture = false;
         cancelVoiceEventDescriptionTimeout();
@@ -6534,6 +10350,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             showHudOperationDetail("inspection");
         } else if (returningToWorkflow) {
             openWorkflowExecution(activeWorkflowAssignmentId, false);
+        } else if (returningToMvsWorkOrder) {
+            showActiveMvsWorkOrderDetail("工单照片拍摄已取消");
+        } else if (returningToActivationSettings) {
+            deviceActivationMessage = "已取消二维码扫描";
+            openVoiceprintSettings();
+            return;
         }
         scheduleForegroundVoiceListening("voice-command-back");
     }
@@ -6550,6 +10372,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     /** Returns to the standby HUD from any non-call surface without leaving camera or ASR alive. */
     private void returnToHudHomeFromVoice() {
+        deviceActivationQrCaptureState.cancel();
         if (isCommandOverlayVisible()) {
             hideCommandOverlay();
         }
@@ -6561,6 +10384,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         voiceEventStateMachine.reset();
         pendingVoicePhotoCapture = false;
         cancelWorkflowPhotoCapture("workflow_photo_home");
+        mvsWorkOrderEvidenceCaptureState.cancel();
+        pendingMvsFormPhotoFieldKey = "";
         cancelWorkflowVoiceInput("workflow_voice_home");
         if (screenMode == ScreenMode.CAMERA) {
             closeCamera();
@@ -6617,6 +10442,88 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     && (text.equals(word) || text.startsWith(word) || text.endsWith(word))) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    private boolean handleProjectGovernanceVoice(String text) {
+        if (managedProjectInstructionEditPending) {
+            ProjectInstructionLifecyclePolicy.EditDecision editDecision =
+                    ProjectInstructionLifecyclePolicy.classifyEditVoice(text);
+            if (editDecision.intent()
+                    == ProjectInstructionLifecyclePolicy.EditIntent.CANCEL_HOME) {
+                clearManagedProjectInstructionState();
+                pendingProjectGovernanceDraft = null;
+                returnToHudStandby("已取消项目指令修改并返回首页");
+                return true;
+            }
+            if (editDecision.intent() == ProjectInstructionLifecyclePolicy.EditIntent.CANCEL) {
+                managedProjectInstructionEditPending = false;
+                showManagedProjectInstructionDetail(
+                        managedProjectInstructionProjectId, managedProjectInstruction);
+                setChatStatus("已取消修改，项目指令未改变");
+                return true;
+            }
+            if (editDecision.intent() == ProjectInstructionLifecyclePolicy.EditIntent.REVISE) {
+                requestManagedProjectInstructionRevision(
+                        managedProjectInstruction,
+                        managedProjectInstruction == null
+                                ? "" : managedProjectInstruction.status(),
+                        editDecision.instruction());
+                return true;
+            }
+            setChatStatus("请说出完整规则，例如“以后在这个项目遇到……先……”");
+            scheduleForegroundVoiceListening("project-instruction-edit-invalid");
+            return true;
+        }
+        boolean taskRestorePending = pendingManagedTaskRestoreDraft != null;
+        boolean confirmationPending = pendingProjectGovernanceDraft != null || taskRestorePending;
+        ProjectGovernancePolicy.Decision decision = ProjectGovernancePolicy.classify(
+                text, confirmationPending);
+        if (confirmationPending) {
+            if (decision.intent() == ProjectGovernancePolicy.Intent.CONFIRM_PENDING) {
+                if (taskRestorePending) {
+                    confirmPendingManagedTaskRestore();
+                } else {
+                    executePendingProjectGovernance();
+                }
+            } else if (decision.intent() == ProjectGovernancePolicy.Intent.CANCEL_PENDING) {
+                if (taskRestorePending) {
+                    cancelPendingManagedTaskRestore();
+                } else {
+                    cancelPendingProjectGovernance();
+                }
+            } else if (decision.intent() == ProjectGovernancePolicy.Intent.CANCEL_PENDING_HOME) {
+                pendingManagedTaskRestoreDraft = null;
+                if (!projectGovernanceWriteInFlight) pendingProjectGovernanceDraft = null;
+                returnToHudStandby(projectGovernanceWriteInFlight
+                        ? "操作已提交，结果返回后将更新项目记录"
+                        : "已取消待确认操作并返回首页");
+            } else {
+                setChatStatus("请明确说“确认执行”或“取消”");
+                scheduleForegroundVoiceListening("governance-confirmation");
+            }
+            return true;
+        }
+        if (!SECURE_RUNTIME || decision.intent() == ProjectGovernancePolicy.Intent.NONE) {
+            return false;
+        }
+        TaskSession active = taskSessionManager.active();
+        if (active == null || active.status() != TaskSession.Status.ACTIVE) {
+            setChatStatus("请先进入一个进行中的项目任务");
+            return true;
+        }
+        if (decision.intent() == ProjectGovernancePolicy.Intent.END_TASK_CLOSED) {
+            requestManagedTaskEnd("closed");
+            return true;
+        }
+        if (decision.intent() == ProjectGovernancePolicy.Intent.END_TASK_COMPLETED) {
+            requestManagedTaskEnd("completed");
+            return true;
+        }
+        if (decision.intent() == ProjectGovernancePolicy.Intent.PROJECT_INSTRUCTION) {
+            requestManagedProjectInstruction(decision.instruction());
+            return true;
         }
         return false;
     }
@@ -6969,6 +10876,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     static String aiFailureNetworkState(String detail) {
         String value = detail == null ? "" : detail.trim().toLowerCase(Locale.ROOT);
+        if (value.contains("task_registration") || value.contains("device_sync")) {
+            return "任务同步未完成";
+        }
         if (value.contains("credential") || value.contains("unauthorized")
                 || value.contains("forbidden") || value.contains("_401")
                 || value.contains("_403")) {
@@ -6984,6 +10894,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             return "网络不可用";
         }
         return "服务异常";
+    }
+
+    static String aiFailureStage(String detail, String fallback) {
+        String value = detail == null ? "" : detail.trim().toLowerCase(Locale.ROOT);
+        if (value.contains("task_registration") || value.contains("device_sync")) {
+            return "任务上下文同步阶段";
+        }
+        return fallback == null || fallback.trim().length() == 0
+                ? "AI 对话阶段" : fallback.trim();
     }
 
     static String recoverableAiFailureMessage(String stage, String detail, String requestId) {
@@ -7041,8 +10960,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         boolean sceneEvidenceTurn = false;
         boolean sceneCandidateTurn = false;
         if (task != null) {
-            boolean environmentAgentEnabled = operationDetailFactory
-                    .isAgentPackageAuthorized("environment_ops");
+            boolean environmentAgentEnabled = usesLegacyLocalSkillRuntime(SECURE_RUNTIME)
+                    && operationDetailFactory.isAgentPackageAuthorized("environment_ops");
             boolean requestHasPhoto = image != null && image.length > 0;
             if (environmentAgentEnabled) {
                 boolean activatedByPrompt = honeywellTempHumiditySkill.tryActivate(
@@ -7105,10 +11024,21 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         final boolean currentSceneEvidenceTurn = sceneEvidenceTurn;
         final boolean currentSceneCandidateTurn = sceneCandidateTurn;
         final boolean currentRequestHadNewImage = image != null;
-        final String requestPrompt = buildDirectAiRequestPrompt(
-                prompt, currentSceneEvidenceTurn, currentSceneCandidateTurn,
-                currentRequestHadNewImage);
-        chatAiClient.send(requestPrompt, effectiveImageId, imageForAi, new StreamingCallback() {
+        final String requestPrompt = aiTransportPrompt(
+                SECURE_RUNTIME,
+                prompt,
+                buildDirectAiRequestPrompt(
+                        prompt, currentSceneEvidenceTurn, currentSceneCandidateTurn,
+                        currentRequestHadNewImage));
+        final AiExecutionContext executionContext;
+        try {
+            executionContext = aiExecutionContextFor(taskSessionManager.active());
+        } catch (IllegalStateException exception) {
+            failAssistantStreamingMessage(exception, requestId);
+            return;
+        }
+        chatAiClient.send(requestPrompt, effectiveImageId, imageForAi, executionContext,
+                new StreamingCallback() {
             @Override
             public void onDelta(String text) {
                 final String delta = text;
@@ -7165,14 +11095,15 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private void failAssistantStreamingMessage(Exception error, String requestId, String stage) {
         String detail = safeMessage(error);
+        String effectiveStage = aiFailureStage(detail, stage);
         if (streamingAssistantIndex >= 0 && streamingAssistantIndex < chatMessages.size()) {
             chatMessages.remove(streamingAssistantIndex);
         }
         streamingAssistantIndex = -1;
         gptRequestGeneration++;
         voiceStreamState = VoiceStreamState.IDLE;
-        recoverableAiError = recoverableAiFailureMessage(stage, detail, requestId);
-        setChatStatus("AI 请求失败 · " + aiFailureNetworkState(detail));
+        recoverableAiError = recoverableAiFailureMessage(effectiveStage, detail, requestId);
+        setChatStatus(effectiveStage + " · " + aiFailureNetworkState(detail));
         persistChatProjects();
         renderChatStreamMessagesOnly();
         syncHudPresentation();
@@ -7218,6 +11149,17 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return "以下是同一现场事件的已确认上下文，仅在与当前问题相关时参考：\n"
                 + context + "\n" + buildCurrentQuestionInstruction(prompt)
                 + sceneInstruction;
+    }
+
+    static String aiTransportPrompt(
+            boolean secureRuntime,
+            String rawPrompt,
+            String enrichedPrompt
+    ) {
+        if (secureRuntime) {
+            return rawPrompt == null ? "" : rawPrompt.trim();
+        }
+        return enrichedPrompt == null ? "" : enrichedPrompt;
     }
 
     static String buildCurrentQuestionInstruction(String prompt) {
@@ -7552,7 +11494,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (project.backendSessionId == null) {
             project.backendSessionId = "";
         }
-        return project.backendSessionId;
+        return backendSessionIdForExecution(
+                SECURE_RUNTIME, project.backendSessionId, taskSessionManager.active());
     }
 
     private ChatAiClient createChatAiClient() {
@@ -7568,7 +11511,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             if (DIRECT_GPT_ENABLED) {
             return new DirectGptClient(DIRECT_GPT_BASE_URL, DIRECT_GPT_MODEL, DIRECT_GPT_REASONING_EFFORT, DIRECT_GPT_API_KEY);
             }
-        return new BackendGptClient(backendChatClient, new BackendGptClient.SessionProvider() {
+        return new BackendGptClient(backendChatClient, taskStartRegistrationGate,
+                new BackendGptClient.SessionProvider() {
             @Override
             public String sessionId() {
                 return backendSessionIdForActiveProject();
@@ -7596,12 +11540,1308 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 LocalAsrEngineFactory.create(this, true));
     }
 
+    private void openVoiceprintSettings() {
+        setProjectRailVisible(false);
+        if (audioCaptureCoordinator.voiceMode()
+                == AudioCaptureCoordinator.VoiceMode.VOICEPRINT) {
+            disableVoiceprintListening("settings_open", false);
+        }
+        hudCapabilityVisible = true;
+        capabilityDetailVisible = true;
+        hudOperationAbilityId = "voiceprint_settings";
+        DeviceActivationUiPolicy activationPolicy = currentDeviceActivationPolicy();
+        if (activationPolicy.state()
+                == DeviceActivationUiPolicy.State.ACTIVATION_REQUIRED) {
+            voiceprintSettingsMessage = "完成设备激活后才能读取受管声纹状态";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        voiceprintSettingsMessage = "正在读取受管声纹状态";
+        showVoiceprintSettingsDetail(false);
+        runVoiceprintSettingsRequest("profile");
+    }
+
+    private DeviceActivationUiPolicy currentDeviceActivationPolicy() {
+        return DeviceActivationUiPolicy.resolve(
+                SECURE_RUNTIME,
+                hasCompleteManagedBackendAuthority(),
+                localActivationRecord,
+                System.currentTimeMillis());
+    }
+
+    private void performDeviceActivationSettingsAction(String action) {
+        if ("device_activation_enter_code".equals(action)) {
+            openDeviceActivationCodeDialog();
+            return;
+        }
+        if ("device_activation_request_reactivate".equals(action)) {
+            showDeviceActivationConfirmation("reactivate");
+            return;
+        }
+        if ("device_activation_confirm_reactivate".equals(action)) {
+            openDeviceActivationCodeDialog();
+            return;
+        }
+        if ("device_activation_scan_qr".equals(action)) {
+            startDeviceActivationQrScan();
+            return;
+        }
+        if ("device_activation_confirm_qr".equals(action)) {
+            String activationCode = pendingDeviceActivationCode;
+            pendingDeviceActivationCode = "";
+            submitDeviceActivation(activationCode);
+            return;
+        }
+        if ("device_activation_cancel_qr".equals(action)) {
+            pendingDeviceActivationCode = "";
+            deviceActivationMessage = "已取消二维码激活";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        if ("device_activation_request_clear".equals(action)) {
+            showDeviceActivationConfirmation("clear");
+            return;
+        }
+        if ("device_activation_confirm_clear".equals(action)) {
+            clearLocalDeviceActivation();
+            return;
+        }
+        if ("device_activation_refresh".equals(action)) {
+            refreshLocalDeviceActivation();
+        }
+    }
+
+    private void startDeviceActivationQrScan() {
+        DeviceActivationUiPolicy policy = currentDeviceActivationPolicy();
+        if (!policy.canActivate() || deviceActivationRequestInFlight) {
+            deviceActivationMessage = policy.canActivate()
+                    ? "设备激活请求处理中，请稍候"
+                    : "受管配置已生效，无需扫描激活码";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        pendingDeviceActivationCode = "";
+        deviceActivationQrCaptureState.start();
+        deviceActivationMessage = "请将激活二维码完整放入取景框并拍照";
+        hideCapabilityCenter();
+        enterCameraScreen("device-activation-qr");
+        cameraStatusText.setText("扫描设备激活二维码");
+    }
+
+    private void showDeviceActivationConfirmation(String kind) {
+        boolean clear = "clear".equals(kind);
+        List<String> items = new ArrayList<>();
+        items.add(clear
+                ? "删除后本机受管会话将失效，重新使用前必须再次激活。"
+                : "重新激活会用新的设备授权替换当前本地授权。" );
+        items.add("当前项目记录保留；AI、声纹和专家服务不会代替你确认。" );
+        items.add("供应商长期密钥不会写入眼镜或激活响应。" );
+        showHudOperationDetail("voiceprint_settings", new OperationDetail(
+                "二次确认",
+                clear ? "确认删除本地授权？" : "确认重新激活设备？",
+                clear ? "删除后设备进入待激活状态。"
+                        : "请输入管理员刚生成的一次性激活码。",
+                items,
+                clear ? "device_activation_confirm_clear"
+                        : "device_activation_confirm_reactivate",
+                clear ? "确认删除" : "继续重新激活",
+                "voiceprint_settings_refresh",
+                "取消"), false);
+    }
+
+    private void openDeviceActivationCodeDialog() {
+        DeviceActivationUiPolicy policy = currentDeviceActivationPolicy();
+        if (!policy.canActivate()) {
+            deviceActivationMessage = "企业受管配置已生效，无需手工激活";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        if (deviceActivationRequestInFlight) {
+            setChatStatus("设备激活请求处理中，请稍候");
+            return;
+        }
+        final EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint("HF9-XXXX-XXXX-XXXX");
+        input.setTextSize(20f);
+        input.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        input.setFilters(new InputFilter[]{
+                new InputFilter.AllCaps(),
+                new InputFilter.LengthFilter(18)
+        });
+        int padding = dp(20);
+        input.setPadding(padding, dp(12), padding, dp(12));
+        new AlertDialog.Builder(this)
+                .setTitle("输入设备激活码")
+                .setMessage("激活码由管理后台生成，有效期 5 至 15 分钟且只能使用一次。")
+                .setView(input)
+                .setPositiveButton("激活", (dialog, which) ->
+                        submitDeviceActivation(input.getText().toString()))
+                .setNegativeButton("取消", null)
+                .setOnDismissListener(dialog -> applyImmersiveSystemUi())
+                .show();
+    }
+
+    private void submitDeviceActivation(final String activationCode) {
+        if (deviceActivationRequestInFlight) return;
+        final DeviceCredentialStore store = deviceCredentialStore;
+        final DeviceInstallationIdentity installationIdentity = deviceInstallationIdentity;
+        if (store == null || installationIdentity == null) {
+            deviceActivationMessage = "本机安全存储不可用，未执行激活";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        final long generation = ++deviceActivationRequestGeneration;
+        deviceActivationRequestInFlight = true;
+        deviceActivationMessage = "正在安全兑换一次性激活码";
+        showVoiceprintSettingsDetail(false);
+        deviceActivationExecutor.execute(() -> {
+            DeviceActivationRecord activated = null;
+            String failure = "";
+            try {
+                String instanceId = installationIdentity.getOrCreate();
+                activated = new DeviceActivationClient(
+                        DEVICE_ACTIVATION_BASE_URL, store).redeem(
+                        activationCode,
+                        instanceId,
+                        getPackageName(),
+                        BuildConfig.VERSION_NAME,
+                        Build.MODEL);
+            } catch (IOException | IllegalArgumentException error) {
+                failure = error.getMessage() == null ? "" : error.getMessage();
+            }
+            final DeviceActivationRecord result = activated;
+            final String errorCode = failure;
+            mainHandler.post(() -> finishDeviceActivation(generation, result, errorCode));
+        });
+    }
+
+    private void finishDeviceActivation(
+            long generation,
+            DeviceActivationRecord result,
+            String errorCode) {
+        if (generation != deviceActivationRequestGeneration || isFinishing()) return;
+        deviceActivationRequestInFlight = false;
+        if (result == null) {
+            deviceActivationMessage = DeviceActivationUiPolicy.errorLabel(errorCode);
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        localActivationRecord = result;
+        deviceActivationMessage = "设备激活成功，正在载入受管服务";
+        showVoiceprintSettingsDetail(false);
+        persistChatProjects();
+        mainHandler.postDelayed(() -> {
+            if (!isFinishing() && !isDestroyed()) recreate();
+        }, 450L);
+    }
+
+    private void clearLocalDeviceActivation() {
+        if (deviceActivationRequestInFlight) return;
+        final DeviceCredentialStore store = deviceCredentialStore;
+        if (store == null) {
+            deviceActivationMessage = "本机没有可删除的激活授权";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        disableVoiceprintListening("device_activation_clear", false);
+        stopVoiceprintEnrollmentCapture("device_activation_clear");
+        final long generation = ++deviceActivationRequestGeneration;
+        deviceActivationRequestInFlight = true;
+        deviceActivationMessage = "正在删除本机激活授权";
+        showVoiceprintSettingsDetail(false);
+        deviceActivationExecutor.execute(() -> {
+            String failure = "";
+            try {
+                store.clear();
+            } catch (IOException error) {
+                failure = error.getMessage() == null ? "" : error.getMessage();
+            }
+            final String errorCode = failure;
+            mainHandler.post(() -> finishClearLocalDeviceActivation(generation, errorCode));
+        });
+    }
+
+    private void finishClearLocalDeviceActivation(long generation, String errorCode) {
+        if (generation != deviceActivationRequestGeneration || isFinishing()) return;
+        deviceActivationRequestInFlight = false;
+        if (errorCode.length() > 0) {
+            deviceActivationMessage = "本机授权删除失败，当前授权未改变";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        localActivationRecord = null;
+        deviceActivationMessage = hasCompleteManagedBackendAuthority()
+                ? "本地授权已删除，企业受管配置继续生效"
+                : "本地授权已删除，设备需要重新激活";
+        showVoiceprintSettingsDetail(false);
+        persistChatProjects();
+        mainHandler.postDelayed(() -> {
+            if (!isFinishing() && !isDestroyed()) recreate();
+        }, 450L);
+    }
+
+    private void refreshLocalDeviceActivation() {
+        if (deviceCredentialStore == null) {
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        try {
+            localActivationRecord = deviceCredentialStore.load();
+            deviceActivationMessage = "设备激活状态已刷新";
+        } catch (IOException error) {
+            localActivationRecord = null;
+            deviceActivationMessage = "本机授权读取失败，需要重新激活";
+        }
+        showVoiceprintSettingsDetail(false);
+    }
+
+    private void handleDeviceActivationQrPhoto(final byte[] jpegBytes) {
+        if (!deviceActivationQrCaptureState.consumePhoto()) return;
+        closeCamera();
+        stopCameraThread();
+        renderChatScreen();
+        deviceActivationMessage = "正在识别设备激活二维码";
+        showVoiceprintSettingsDetail(false);
+        deviceActivationExecutor.execute(() -> {
+            String code = "";
+            Bitmap decoded = null;
+            Bitmap scaled = null;
+            try {
+                if (jpegBytes != null && jpegBytes.length > 0) {
+                    decoded = BitmapFactory.decodeByteArray(
+                            jpegBytes, 0, jpegBytes.length);
+                    scaled = scaleBitmapToMaxEdge(decoded, 1200);
+                    if (scaled != null) {
+                        int width = scaled.getWidth();
+                        int height = scaled.getHeight();
+                        int[] pixels = new int[width * height];
+                        scaled.getPixels(pixels, 0, width, 0, 0, width, height);
+                        code = DeviceActivationQrDecoder.decodeArgb(
+                                width, height, pixels);
+                    }
+                }
+            } catch (RuntimeException error) {
+                Log.w(KEY_LOG_TAG, "Device activation QR decoding failed", error);
+            } finally {
+                if (scaled != null && scaled != decoded && !scaled.isRecycled()) {
+                    scaled.recycle();
+                }
+                if (decoded != null && !decoded.isRecycled()) decoded.recycle();
+            }
+            final String result = code;
+            mainHandler.post(() -> finishDeviceActivationQrScan(result));
+        });
+    }
+
+    private void finishDeviceActivationQrScan(String activationCode) {
+        if (isFinishing() || isDestroyed()) return;
+        String normalized = DeviceActivationQrDecoder.normalizePayload(activationCode);
+        if (normalized.length() == 0) {
+            pendingDeviceActivationCode = "";
+            deviceActivationMessage = "未识别到有效激活二维码，请重新扫描或手工输入";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        pendingDeviceActivationCode = normalized;
+        List<String> items = new ArrayList<>();
+        items.add("已识别一次性激活码：" + maskedActivationCode(normalized));
+        items.add("确认后才会向激活服务兑换，本次照片不会作为项目证据上传。" );
+        items.add("激活失败不会删除或替换当前有效授权。" );
+        showHudOperationDetail("voiceprint_settings", new OperationDetail(
+                "设备激活",
+                "确认使用二维码激活？",
+                "二维码只提供一次性激活码，不包含供应商密钥。",
+                items,
+                "device_activation_confirm_qr",
+                "确认激活",
+                "device_activation_cancel_qr",
+                "取消"), false);
+    }
+
+    static String maskedActivationCode(String value) {
+        String code = DeviceActivationQrDecoder.normalizePayload(value);
+        if (code.length() != 18) return "";
+        return code.substring(0, 4) + "****-****-" + code.substring(14);
+    }
+
+    private void performVoiceprintSettingsAction(String action) {
+        if ("voiceprint_settings_refresh".equals(action)) {
+            runVoiceprintSettingsRequest("profile");
+            return;
+        }
+        if ("voiceprint_consent".equals(action)) {
+            runVoiceprintSettingsRequest("consent");
+            return;
+        }
+        if ("voiceprint_capture_sample".equals(action)) {
+            startVoiceprintEnrollmentSampleCapture();
+            return;
+        }
+        if ("voiceprint_capture_verification".equals(action)) {
+            startVoiceprintEnrollmentVerificationCapture();
+            return;
+        }
+        if ("voiceprint_request_reenroll".equals(action)) {
+            showVoiceprintConfirmation("reenroll");
+            return;
+        }
+        if ("voiceprint_request_delete".equals(action)) {
+            showVoiceprintConfirmation("delete");
+            return;
+        }
+        if ("voiceprint_confirm_reenroll".equals(action)) {
+            runVoiceprintSettingsRequest("reenroll");
+            return;
+        }
+        if ("voiceprint_confirm_delete".equals(action)) {
+            runVoiceprintSettingsRequest("delete");
+        }
+    }
+
+    private void showVoiceprintConfirmation(String kind) {
+        boolean delete = "delete".equals(kind);
+        List<String> items = new ArrayList<>();
+        items.add(delete
+                ? "删除后本人声纹模板将从受管服务撤销，当前监听立即关闭。"
+                : "重新录入会撤销当前模板，并重新采集三段语音和一段本人验证语音。");
+        items.add("该操作必须由现场操作者确认，AI 不会代替确认。" );
+        items.add("供应商密钥仍只保存在服务器，眼镜不会保存长期密钥或模板正文。" );
+        OperationDetail detail = new OperationDetail(
+                "二次确认",
+                delete ? "确认删除声纹？" : "确认重新录入？",
+                delete ? "删除后如需声纹监听，必须重新同意并录入。"
+                        : "重新录入期间声纹监听保持关闭。",
+                items,
+                delete ? "voiceprint_confirm_delete" : "voiceprint_confirm_reenroll",
+                delete ? "确认删除" : "确认重新录入",
+                "voiceprint_settings_refresh",
+                "取消");
+        showHudOperationDetail("voiceprint_settings", detail, false);
+    }
+
+    private void runVoiceprintSettingsRequest(final String action) {
+        final VoiceprintDeviceClient client = voiceprintDeviceClient;
+        if (client == null) {
+            voiceprintSettingsMessage = "声纹服务未配置，未执行任何变更";
+            voiceprintEnrollmentFlow.apply(
+                    false, "", "voiceprint_unavailable", 0, false);
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        if (voiceprintSettingsRequestInFlight) {
+            setChatStatus("声纹请求处理中，请稍候");
+            return;
+        }
+        stopVoiceprintEnrollmentCapture("settings_request_" + action);
+        final long generation = voiceprintSettingsRequestGate.begin();
+        if (generation < 0L) return;
+        voiceprintSettingsRequestInFlight = true;
+        voiceprintSettingsMessage = voiceprintRequestLabel(action);
+        showVoiceprintSettingsDetail(true);
+        voiceprintExecutor.execute(new Runnable() {
+            @Override public void run() {
+                VoiceprintDeviceClient.Result result = null;
+                try {
+                    if ("consent".equals(action)) {
+                        result = client.consent(
+                                VOICEPRINT_CONSENT_VERSION,
+                                "vp-consent-" + UUID.randomUUID().toString());
+                    } else if ("reenroll".equals(action)) {
+                        result = client.reenroll(
+                                VOICEPRINT_CONSENT_VERSION,
+                                "vp-reenroll-" + UUID.randomUUID().toString());
+                    } else if ("delete".equals(action)) {
+                        result = client.delete(
+                                "vp-delete-" + UUID.randomUUID().toString());
+                    } else {
+                        result = client.profile();
+                    }
+                } catch (IOException ignored) {
+                    result = null;
+                }
+                final VoiceprintDeviceClient.Result response = result;
+                mainHandler.post(new Runnable() {
+                    @Override public void run() {
+                        finishVoiceprintSettingsRequest(generation, action, response);
+                    }
+                });
+            }
+        });
+    }
+
+    private void finishVoiceprintSettingsRequest(
+            long generation,
+            String action,
+            VoiceprintDeviceClient.Result result) {
+        if (!voiceprintSettingsRequestGate.isCurrent(generation)) {
+            return;
+        }
+        voiceprintSettingsRequestInFlight = false;
+        if (result == null) {
+            voiceprintEnrollmentFlow.apply(
+                    false, "", "voiceprint_unavailable", 0, false);
+            voiceprintSettingsMessage = "声纹服务请求失败，未执行本地替代操作";
+        } else {
+            voiceprintEnrollmentFlow.apply(
+                    result.ok(), result.status(), result.error(), result.sampleCount(),
+                    result.verified());
+            voiceprintSettingsMessage = voiceprintResultLabel(action, result);
+            if ("delete".equals(action) && result.ok()) {
+                disableVoiceprintListening("settings_delete", false);
+            }
+        }
+        showVoiceprintSettingsDetail(false);
+    }
+
+    private String voiceprintRequestLabel(String action) {
+        if ("consent".equals(action)) return "正在提交本人授权";
+        if ("reenroll".equals(action)) return "正在撤销旧模板并准备重新录入";
+        if ("delete".equals(action)) return "正在删除受管声纹模板";
+        return "正在刷新受管声纹状态";
+    }
+
+    private String voiceprintResultLabel(String action, VoiceprintDeviceClient.Result result) {
+        if (!result.ok()) {
+            if ("voiceprint_not_enrolled".equals(result.error())) return "尚未录入声纹";
+            if ("voiceprint_locked".equals(result.error()) || "locked".equals(result.status())) {
+                return "声纹已锁定，请重新录入";
+            }
+            return "服务端拒绝或网络不可用，状态未改变";
+        }
+        if ("consent".equals(action)) return "本人授权已记录，请开始第一段录入";
+        if ("reenroll".equals(action)) return "旧模板已撤销，请重新完成三段录入";
+        if ("delete".equals(action)) return "声纹模板已删除，监听保持关闭";
+        return "受管声纹状态已刷新";
+    }
+
+    private void showVoiceprintSettingsDetail(boolean preservePage) {
+        if (hudPresentation == null) {
+            setChatStatus(voiceprintSettingsMessage);
+            return;
+        }
+        showHudOperationDetail(
+                "voiceprint_settings",
+                voiceprintSettingsDetail(),
+                preservePage);
+    }
+
+    private OperationDetail voiceprintSettingsDetail() {
+        VoiceprintEnrollmentFlow.Stage stage = voiceprintEnrollmentFlow.stage();
+        DeviceActivationUiPolicy activationPolicy = currentDeviceActivationPolicy();
+        List<String> items = new ArrayList<>();
+        List<String> actions = new ArrayList<>();
+        items.add("设备激活：" + activationPolicy.statusLabel());
+        actions.add(activationPolicy.state() == DeviceActivationUiPolicy.State.LOCAL_ACTIVE
+                ? "device_activation_request_reactivate"
+                : activationPolicy.canActivate() ? "device_activation_enter_code" : "");
+        if (activationPolicy.canActivate()) {
+            items.add("扫描一次性激活二维码");
+            actions.add("device_activation_scan_qr");
+        }
+        if (activationPolicy.canClearLocalAuthorization()) {
+            items.add("删除本机激活授权");
+            actions.add("device_activation_request_clear");
+        }
+        if (deviceActivationMessage.length() > 0) {
+            items.add(deviceActivationMessage);
+            actions.add("");
+        }
+        items.add("当前语音模式：" + currentVoiceModeLabel());
+        actions.add("");
+        items.add("受管声纹状态：" + voiceprintStageLabel(stage)
+                + " · 录入 " + voiceprintEnrollmentFlow.sampleCount() + " / 3");
+        actions.add("");
+        items.add("隐私边界：音频仅在本次录入或 1:1 验证时上传；原始音频、模板正文和供应商长期密钥不保存在眼镜。" );
+        actions.add("");
+        if (voiceprintSettingsMessage.length() > 0) {
+            items.add(voiceprintSettingsMessage);
+            actions.add("");
+        }
+
+        boolean activationRequired = activationPolicy.state()
+                == DeviceActivationUiPolicy.State.ACTIVATION_REQUIRED;
+        String primaryAction = activationRequired
+                ? "device_activation_enter_code" : "voiceprint_settings_refresh";
+        String primaryLabel = deviceActivationRequestInFlight
+                ? "激活处理中"
+                : activationRequired ? "激活设备"
+                : voiceprintSettingsRequestInFlight ? "处理中" : "刷新状态";
+        String secondaryAction = "";
+        String secondaryLabel = "";
+        if (deviceActivationRequestInFlight) {
+            primaryAction = "";
+        } else if (!activationRequired && !voiceprintSettingsRequestInFlight) {
+            if (stage == VoiceprintEnrollmentFlow.Stage.CONSENT_REQUIRED) {
+                primaryAction = "voiceprint_consent";
+                primaryLabel = "同意并开始录入";
+            } else if (stage == VoiceprintEnrollmentFlow.Stage.ENROLLING) {
+                primaryAction = "voiceprint_capture_sample";
+                primaryLabel = "录入第 " + voiceprintEnrollmentFlow.nextSampleIndex() + " 段";
+                secondaryAction = "voiceprint_request_delete";
+                secondaryLabel = "取消录入并删除";
+            } else if (stage == VoiceprintEnrollmentFlow.Stage.VERIFICATION_REQUIRED) {
+                primaryAction = "voiceprint_capture_verification";
+                primaryLabel = "开始本人验证";
+                secondaryAction = "voiceprint_request_reenroll";
+                secondaryLabel = "重新录入";
+            } else if (stage == VoiceprintEnrollmentFlow.Stage.ACTIVE) {
+                items.add("实体键双击开启或关闭声纹监听；关闭后不录音、不转写、不上传。" );
+                actions.add("");
+                items.add("重新录入当前声纹");
+                actions.add("voiceprint_request_reenroll");
+                items.add("删除当前声纹");
+                actions.add("voiceprint_request_delete");
+            } else if (stage == VoiceprintEnrollmentFlow.Stage.LOCKED) {
+                primaryAction = "voiceprint_request_reenroll";
+                primaryLabel = "重新录入";
+                secondaryAction = "voiceprint_request_delete";
+                secondaryLabel = "删除声纹";
+            }
+        }
+        return new OperationDetail(
+                "系统设置",
+                "设备、声纹与语音模式",
+                "设备授权通过后才连接受管服务；小叮当唤醒与声纹监听保持互斥。",
+                items,
+                actions,
+                primaryAction,
+                primaryLabel,
+                secondaryAction,
+                secondaryLabel);
+    }
+
+    private String currentVoiceModeLabel() {
+        boolean backendProvisioned = runtimeConfiguration != null
+                && runtimeConfiguration.isBackendProvisioned();
+        boolean wakeAuthorized = runtimeConfiguration != null
+                && runtimeConfiguration.hasIflytekCredentials();
+        return runtimeVoiceModeLabel(
+                SECURE_RUNTIME,
+                backendProvisioned,
+                currentVoiceGuideMode(),
+                OFFLINE_WAKE_ENABLED,
+                wakeAuthorized);
+    }
+
+    private String currentVoiceGuideMode() {
+        AudioCaptureCoordinator.VoiceMode mode = audioCaptureCoordinator.voiceMode();
+        if (SECURE_RUNTIME && (runtimeConfiguration == null
+                || !runtimeConfiguration.isBackendProvisioned())) {
+            return "unavailable";
+        }
+        if (mode == AudioCaptureCoordinator.VoiceMode.VOICEPRINT) return "voiceprint";
+        if (mode == AudioCaptureCoordinator.VoiceMode.PASSIVE) return "passive";
+        if (SECURE_RUNTIME && OFFLINE_WAKE_ENABLED
+                && !runtimeConfiguration.hasIflytekCredentials()) {
+            return "unavailable";
+        }
+        return "wake";
+    }
+
+    static String runtimeStandbyLabel(boolean secureRuntime, boolean backendProvisioned,
+            boolean offlineWakeEnabled, boolean wakeAuthorized) {
+        if (secureRuntime && !backendProvisioned) return "设备待激活";
+        if (secureRuntime && offlineWakeEnabled && !wakeAuthorized) return "语音未授权";
+        return "语音待命";
+    }
+
+    static String runtimeVoiceModeLabel(
+            boolean secureRuntime,
+            boolean backendProvisioned,
+            String guideMode,
+            boolean offlineWakeEnabled,
+            boolean wakeAuthorized) {
+        if (secureRuntime && !backendProvisioned) {
+            return "服务不可用 · 设备待激活";
+        }
+        String mode = guideMode == null ? "" : guideMode.trim();
+        if ("voiceprint".equals(mode)) return "声纹监听已开启";
+        if ("passive".equals(mode)) return "监听关闭";
+        if (secureRuntime && offlineWakeEnabled && !wakeAuthorized) {
+            return "小叮当未授权";
+        }
+        if ("unavailable".equals(mode)) return "服务不可用";
+        return "小叮当唤醒";
+    }
+
+    static String runtimeStandbyNotice(boolean secureRuntime, boolean backendProvisioned,
+            boolean offlineWakeEnabled, boolean wakeAuthorized) {
+        if (secureRuntime && !backendProvisioned) {
+            return "设备未激活 · 请进入设置完成设备激活";
+        }
+        if (secureRuntime && offlineWakeEnabled && !wakeAuthorized) {
+            return "小叮当唤醒未授权 · 请联系管理员完成受管配置";
+        }
+        return "";
+    }
+
+    static boolean shouldStartManagedOfflineWake(
+            boolean offlineWakeEnabled, boolean wakeAuthorized) {
+        return offlineWakeEnabled && wakeAuthorized;
+    }
+
+    private static String voiceprintStageLabel(VoiceprintEnrollmentFlow.Stage stage) {
+        if (stage == VoiceprintEnrollmentFlow.Stage.CONSENT_REQUIRED) return "等待本人授权";
+        if (stage == VoiceprintEnrollmentFlow.Stage.ENROLLING) return "录入中";
+        if (stage == VoiceprintEnrollmentFlow.Stage.VERIFICATION_REQUIRED) return "等待本人验证";
+        if (stage == VoiceprintEnrollmentFlow.Stage.ACTIVE) return "可用";
+        if (stage == VoiceprintEnrollmentFlow.Stage.LOCKED) return "已锁定";
+        return "服务不可用";
+    }
+
+    private void startVoiceprintEnrollmentSampleCapture() {
+        int sampleIndex = voiceprintEnrollmentFlow.nextSampleIndex();
+        if (sampleIndex <= 0) {
+            voiceprintSettingsMessage = "当前服务端状态不接受新的录入样本";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        startVoiceprintEnrollmentCapture(false, sampleIndex);
+    }
+
+    private void startVoiceprintEnrollmentVerificationCapture() {
+        if (!voiceprintEnrollmentFlow.canVerify()) {
+            voiceprintSettingsMessage = "三段录入尚未完成，暂不能进行本人验证";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        startVoiceprintEnrollmentCapture(true, 0);
+    }
+
+    private void startVoiceprintEnrollmentCapture(boolean verification, int sampleIndex) {
+        if (voiceprintDeviceClient == null || voiceprintSettingsRequestInFlight
+                || voiceprintEnrollmentRecording) {
+            setChatStatus("声纹录入当前不可用或正在处理中");
+            return;
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            voiceprintSettingsMessage = "麦克风权限未开启，录入未开始";
+            showVoiceprintSettingsDetail(false);
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_AUDIO);
+            return;
+        }
+        cancelForegroundVoiceListening();
+        AudioCaptureCoordinator.AcquireResult acquired =
+                audioCaptureCoordinator.acquireVoiceprintEnrollment();
+        if (acquired != AudioCaptureCoordinator.AcquireResult.ACQUIRED) {
+            voiceprintSettingsMessage = "当前音频正在使用，录入未开始";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        final long generation = ++voiceprintEnrollmentGeneration;
+        try {
+            int minimum = AudioRecord.getMinBufferSize(
+                    VOICE_SAMPLE_RATE_HZ,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT);
+            final int bufferSize = Math.max(minimum, VOICE_SAMPLE_RATE_HZ);
+            final AudioRecord recorder = new AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    VOICE_SAMPLE_RATE_HZ,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize);
+            if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
+                recorder.release();
+                throw new IllegalStateException("voiceprint_enrollment_recorder_unavailable");
+            }
+            recorder.startRecording();
+            voiceprintEnrollmentRecorder = recorder;
+            voiceprintEnrollmentSegmenter = new VoiceprintPcmSegmenter(
+                    VOICE_SAMPLE_RATE_HZ,
+                    VOICE_SILENCE_RMS_THRESHOLD,
+                    3_000,
+                    800,
+                    10_000);
+            voiceprintEnrollmentRecording = true;
+            voiceprintSettingsMessage = verification
+                    ? "正在采集本人验证语音，请连续说话至少 3 秒"
+                    : "正在录入第 " + sampleIndex + " 段，请连续说话至少 3 秒";
+            showVoiceprintSettingsDetail(true);
+            voiceprintEnrollmentRecordThread = new Thread(new Runnable() {
+                @Override public void run() {
+                    byte[] buffer = new byte[bufferSize];
+                    try {
+                        while (voiceprintEnrollmentRecording
+                                && recorder == voiceprintEnrollmentRecorder) {
+                            int read = recorder.read(buffer, 0, buffer.length);
+                            if (read <= 0) continue;
+                            VoiceprintPcmSegmenter segmenter = voiceprintEnrollmentSegmenter;
+                            if (segmenter == null) break;
+                            VoiceprintPcmSegmenter.Decision decision = segmenter.accept(buffer, read);
+                            if (decision == VoiceprintPcmSegmenter.Decision.CONTINUE) continue;
+                            final byte[] wav = segmenter.wavBytes();
+                            segmenter.reset();
+                            final VoiceprintPcmSegmenter.Decision terminal = decision;
+                            mainHandler.post(new Runnable() {
+                                @Override public void run() {
+                                    onVoiceprintEnrollmentSegmentReady(
+                                            generation, verification, sampleIndex, terminal, wav);
+                                }
+                            });
+                            break;
+                        }
+                    } catch (RuntimeException ignored) {
+                        mainHandler.post(new Runnable() {
+                            @Override public void run() {
+                                if (generation == voiceprintEnrollmentGeneration) {
+                                    stopVoiceprintEnrollmentCapture("recording_failed");
+                                    voiceprintSettingsMessage = "声纹录音失败，请重新开始当前步骤";
+                                    showVoiceprintSettingsDetail(false);
+                                }
+                            }
+                        });
+                    } finally {
+                        Arrays.fill(buffer, (byte) 0);
+                    }
+                }
+            }, "DingdangVoiceprintEnrollment");
+            voiceprintEnrollmentRecordThread.start();
+        } catch (Exception ignored) {
+            stopVoiceprintEnrollmentCapture("start_failed");
+            voiceprintSettingsMessage = "声纹录音启动失败，请检查麦克风后重试";
+            showVoiceprintSettingsDetail(false);
+        }
+    }
+
+    private void onVoiceprintEnrollmentSegmentReady(
+            long generation,
+            boolean verification,
+            int sampleIndex,
+            VoiceprintPcmSegmenter.Decision decision,
+            byte[] wav) {
+        if (generation != voiceprintEnrollmentGeneration) {
+            clearVoiceprintAudio(wav, null);
+            return;
+        }
+        stopVoiceprintEnrollmentCapture("segment_ready");
+        if (decision == VoiceprintPcmSegmenter.Decision.NO_SPEECH_TIMEOUT
+                || wav == null || wav.length <= VOICE_WAV_HEADER_BYTES) {
+            clearVoiceprintAudio(wav, null);
+            voiceprintSettingsMessage = "未检测到连续语音，请重新录制当前步骤";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        submitVoiceprintEnrollmentAudio(verification, sampleIndex, wav);
+    }
+
+    private void submitVoiceprintEnrollmentAudio(
+            final boolean verification,
+            final int sampleIndex,
+            final byte[] wav) {
+        final VoiceprintDeviceClient client = voiceprintDeviceClient;
+        if (voiceprintSettingsRequestInFlight || client == null) {
+            clearVoiceprintAudio(wav, null);
+            voiceprintSettingsMessage = "声纹服务当前忙碌，本段未提交";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        final long requestGeneration = voiceprintSettingsRequestGate.begin();
+        if (requestGeneration < 0L) {
+            clearVoiceprintAudio(wav, null);
+            return;
+        }
+        voiceprintSettingsRequestInFlight = true;
+        voiceprintSettingsMessage = verification
+                ? "正在进行讯飞 1:1 本人声纹验证"
+                : "正在提交第 " + sampleIndex + " 段录入";
+        showVoiceprintSettingsDetail(true);
+        voiceprintExecutor.execute(new Runnable() {
+            @Override public void run() {
+                VoiceprintDeviceClient.Result result = null;
+                try {
+                    if (verification) {
+                        result = client.verify(
+                                wav, "vp-enrollment-verify-" + UUID.randomUUID().toString());
+                    } else {
+                        result = client.enrollSample(
+                                sampleIndex,
+                                wav,
+                                "vp-sample-" + sampleIndex + "-" + UUID.randomUUID().toString());
+                    }
+                } catch (IOException ignored) {
+                    result = null;
+                } finally {
+                    clearVoiceprintAudio(wav, null);
+                }
+                final VoiceprintDeviceClient.Result response = result;
+                mainHandler.post(new Runnable() {
+                    @Override public void run() {
+                        finishVoiceprintEnrollmentAudioRequest(
+                                requestGeneration, verification, sampleIndex, response);
+                    }
+                });
+            }
+        });
+    }
+
+    private void finishVoiceprintEnrollmentAudioRequest(
+            long generation,
+            boolean verification,
+            int sampleIndex,
+            VoiceprintDeviceClient.Result result) {
+        if (!voiceprintSettingsRequestGate.isCurrent(generation)) return;
+        voiceprintSettingsRequestInFlight = false;
+        if (result == null) {
+            voiceprintSettingsMessage = "声纹服务请求失败，当前步骤未完成";
+            showVoiceprintSettingsDetail(false);
+            return;
+        }
+        voiceprintEnrollmentFlow.apply(
+                result.ok(), result.status(), result.error(), result.sampleCount(),
+                result.verified());
+        if (!result.ok()) {
+            voiceprintSettingsMessage = "服务端拒绝当前声纹步骤："
+                    + voiceprintSettingsErrorLabel(result.error());
+        } else if (verification && result.verified()) {
+            voiceprintSettingsMessage = "本人验证通过，声纹监听可通过实体键双击开启";
+        } else if (verification) {
+            voiceprintSettingsMessage = "本人验证未通过，未开启监听，请重新验证";
+        } else if (sampleIndex >= 3) {
+            voiceprintSettingsMessage = "三段录入完成，请继续进行独立本人验证";
+        } else {
+            voiceprintSettingsMessage = "第 " + sampleIndex + " 段已录入，请继续下一段";
+        }
+        showVoiceprintSettingsDetail(false);
+    }
+
+    private static String voiceprintSettingsErrorLabel(String error) {
+        if ("voiceprint_replay_detected".equals(error)) return "检测到重复音频";
+        if ("voiceprint_sample_order_invalid".equals(error)) return "录入顺序已变化，请刷新";
+        if ("voiceprint_locked".equals(error)) return "声纹已锁定";
+        if ("voiceprint_unavailable".equals(error)) return "供应商暂不可用";
+        return "请求未被接受";
+    }
+
+    private void stopVoiceprintEnrollmentCapture(String reason) {
+        voiceprintEnrollmentGeneration++;
+        voiceprintEnrollmentRecording = false;
+        AudioRecord recorder = voiceprintEnrollmentRecorder;
+        voiceprintEnrollmentRecorder = null;
+        try {
+            if (recorder != null) recorder.stop();
+        } catch (Exception ignored) {
+        }
+        if (recorder != null) recorder.release();
+        VoiceprintPcmSegmenter segmenter = voiceprintEnrollmentSegmenter;
+        voiceprintEnrollmentSegmenter = null;
+        if (segmenter != null) segmenter.reset();
+        audioCaptureCoordinator.releaseVoiceprintEnrollment();
+        Log.d(KEY_LOG_TAG, "Voiceprint enrollment capture stopped reason=" + reason);
+    }
+
+    private void leaveVoiceprintSettingsIfNeeded(String reason) {
+        if (!shouldInvalidateVoiceprintSettingsOnNavigation(
+                hudOperationAbilityId,
+                voiceprintEnrollmentRecording,
+                voiceprintSettingsRequestInFlight)) {
+            return;
+        }
+        stopVoiceprintEnrollmentCapture(reason);
+        voiceprintSettingsRequestGate.invalidate();
+        voiceprintSettingsRequestInFlight = false;
+    }
+
+    static boolean shouldInvalidateVoiceprintSettingsOnNavigation(
+            String abilityId,
+            boolean enrollmentRecording,
+            boolean requestInFlight) {
+        return "voiceprint_settings".equals(abilityId)
+                || enrollmentRecording
+                || requestInFlight;
+    }
+
+    private void toggleVoiceprintListeningMode() {
+        if (audioCaptureCoordinator.voiceMode()
+                == AudioCaptureCoordinator.VoiceMode.VOICEPRINT) {
+            disableVoiceprintListening("user_double_click", true);
+            return;
+        }
+        final VoiceprintDeviceClient client = voiceprintDeviceClient;
+        if (client == null) {
+            setChatStatus("声纹服务未配置，已保持当前语音模式");
+            return;
+        }
+        if (screenMode != ScreenMode.CHAT
+                || sceneVideoRecording || sceneVideoStarting || pendingSceneVideoCapture
+                || recordingVoice || voiceprintVerifying
+                || streamingAssistantIndex >= 0
+                || voiceStreamState != VoiceStreamState.IDLE) {
+            setChatStatus("当前音频正在使用，暂时不能开启声纹监听");
+            return;
+        }
+        final long generation = ++voiceprintGeneration;
+        setChatStatus("正在检查声纹授权");
+        voiceprintExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final VoiceprintDeviceClient.Result result = client.profile();
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (generation != voiceprintGeneration) return;
+                            if (result.ok() && "active".equals(result.status())) {
+                                AudioCaptureCoordinator.ToggleResult toggle =
+                                        audioCaptureCoordinator.toggleVoiceprint();
+                                if (toggle == AudioCaptureCoordinator.ToggleResult.ENABLED) {
+                                    cancelWakeListeningOnly();
+                                    setChatStatus("声纹监听已开启，请直接说指令或问题");
+                                    scheduleVoiceprintListening("voiceprint_enabled");
+                                } else {
+                                    setChatStatus("当前音频正在使用，声纹监听未开启");
+                                }
+                                return;
+                            }
+                            if ("voiceprint_not_enrolled".equals(result.error())) {
+                                setChatStatus("尚未录入声纹，请先在设置中完成三段录入");
+                            } else if ("locked".equals(result.status())
+                                    || "voiceprint_locked".equals(result.error())) {
+                                setChatStatus("声纹已锁定，请在设置中重新录入");
+                            } else {
+                                setChatStatus("声纹授权不可用，请检查网络后重试");
+                            }
+                        }
+                    });
+                } catch (final IOException error) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            if (generation == voiceprintGeneration) {
+                                setChatStatus("声纹服务请求失败，请检查网络后重试");
+                            }
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void scheduleVoiceprintListening(String reason) {
+        if (voiceprintRestartRunnable != null) {
+            mainHandler.removeCallbacks(voiceprintRestartRunnable);
+            voiceprintRestartRunnable = null;
+        }
+        if (!shouldStartVoiceprintListening()) {
+            return;
+        }
+        final long generation = voiceprintGeneration;
+        voiceprintRestartRunnable = new Runnable() {
+            @Override public void run() {
+                voiceprintRestartRunnable = null;
+                if (generation == voiceprintGeneration && shouldStartVoiceprintListening()) {
+                    startVoiceprintCapture(reason);
+                }
+            }
+        };
+        mainHandler.postDelayed(
+                voiceprintRestartRunnable,
+                reason != null && reason.contains("retry") ? VOICEPRINT_RETRY_DELAY_MS : 120L);
+    }
+
+    private boolean shouldStartVoiceprintListening() {
+        return voiceprintDeviceClient != null
+                && audioCaptureCoordinator.shouldStartVoiceprint()
+                && screenMode == ScreenMode.CHAT
+                && !recordingVoice
+                && !voiceprintRecording
+                && !voiceprintVerifying
+                && !sceneVideoRecording
+                && !sceneVideoStarting
+                && !pendingSceneVideoCapture
+                && streamingAssistantIndex < 0
+                && voiceStreamState == VoiceStreamState.IDLE
+                && (voiceSessionPurpose == VoiceSessionPurpose.NONE
+                || voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT)
+                && checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void startVoiceprintCapture(String reason) {
+        AudioCaptureCoordinator.AcquireResult acquired = audioCaptureCoordinator.acquire(
+                AudioCaptureCoordinator.Owner.VOICEPRINT_CAPTURE);
+        if (acquired != AudioCaptureCoordinator.AcquireResult.ACQUIRED
+                && acquired != AudioCaptureCoordinator.AcquireResult.ALREADY_OWNED) {
+            return;
+        }
+        cancelWakeListeningOnly();
+        try {
+            int minimum = AudioRecord.getMinBufferSize(
+                    VOICE_SAMPLE_RATE_HZ,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT);
+            final int bufferSize = Math.max(minimum, VOICE_SAMPLE_RATE_HZ);
+            final AudioRecord recorder = new AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    VOICE_SAMPLE_RATE_HZ,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize);
+            recorder.startRecording();
+            voiceprintRecorder = recorder;
+            voiceprintSegmenter = new VoiceprintPcmSegmenter(
+                    VOICE_SAMPLE_RATE_HZ,
+                    VOICE_SILENCE_RMS_THRESHOLD,
+                    3_000,
+                    800,
+                    10_000);
+            voiceprintRecording = true;
+            voiceInteractionStartedAtMs = SystemClock.elapsedRealtime();
+            setChatStatus("声纹监听中，请直接说指令或问题");
+            voiceprintRecordThread = new Thread(new Runnable() {
+                @Override public void run() {
+                    byte[] buffer = new byte[bufferSize];
+                    try {
+                        while (voiceprintRecording && recorder == voiceprintRecorder) {
+                            int read = recorder.read(buffer, 0, buffer.length);
+                            if (read <= 0) continue;
+                            VoiceprintPcmSegmenter segmenter = voiceprintSegmenter;
+                            if (segmenter == null) break;
+                            VoiceprintPcmSegmenter.Decision decision = segmenter.accept(buffer, read);
+                            if (decision == VoiceprintPcmSegmenter.Decision.CONTINUE) continue;
+                            final byte[] wav = segmenter.wavBytes();
+                            final byte[] pcm = segmenter.pcmBytesCopy();
+                            segmenter.reset();
+                            final long generation = voiceprintGeneration;
+                            final VoiceprintPcmSegmenter.Decision terminal = decision;
+                            mainHandler.post(new Runnable() {
+                                @Override public void run() {
+                                    onVoiceprintSegmentReady(generation, terminal, wav, pcm);
+                                }
+                            });
+                            break;
+                        }
+                    } catch (RuntimeException error) {
+                        final long generation = voiceprintGeneration;
+                        mainHandler.post(new Runnable() {
+                            @Override public void run() {
+                                if (generation == voiceprintGeneration) {
+                                    stopVoiceprintCapture("recording_failed");
+                                    audioCaptureCoordinator.releaseAfterVoiceprintFailure();
+                                    setChatStatus("声纹录音失败，请重新双击开启");
+                                }
+                            }
+                        });
+                    } finally {
+                        Arrays.fill(buffer, (byte) 0);
+                    }
+                }
+            }, "DingdangVoiceprintRecorder");
+            voiceprintRecordThread.start();
+            Log.i(KEY_LOG_TAG, "Voiceprint capture started reason=" + reason);
+        } catch (Exception error) {
+            stopVoiceprintCapture("start_failed");
+            audioCaptureCoordinator.releaseAfterVoiceprintFailure();
+            setChatStatus("声纹录音启动失败，请检查麦克风后重试");
+        }
+    }
+
+    private void onVoiceprintSegmentReady(
+            long generation,
+            VoiceprintPcmSegmenter.Decision decision,
+            byte[] wav,
+            byte[] pcm) {
+        stopVoiceprintCapture("segment_ready");
+        if (generation != voiceprintGeneration
+                || audioCaptureCoordinator.voiceMode()
+                != AudioCaptureCoordinator.VoiceMode.VOICEPRINT) {
+            clearVoiceprintAudio(wav, pcm);
+            return;
+        }
+        if (decision == VoiceprintPcmSegmenter.Decision.NO_SPEECH_TIMEOUT) {
+            clearVoiceprintAudio(wav, pcm);
+            setChatStatus("声纹监听中，请直接说指令或问题");
+            scheduleVoiceprintListening("voiceprint_silence_retry");
+            return;
+        }
+        verifyVoiceprintSegment(generation, wav, pcm);
+    }
+
+    private void verifyVoiceprintSegment(final long generation, final byte[] wav, final byte[] pcm) {
+        final VoiceprintDeviceClient client = voiceprintDeviceClient;
+        if (client == null) {
+            clearVoiceprintAudio(wav, pcm);
+            audioCaptureCoordinator.releaseAfterVoiceprintFailure();
+            setChatStatus("声纹服务未配置，未转写、未执行指令");
+            return;
+        }
+        AudioCaptureCoordinator.AcquireResult acquired = audioCaptureCoordinator.acquire(
+                AudioCaptureCoordinator.Owner.VOICEPRINT_VERIFY);
+        if (acquired != AudioCaptureCoordinator.AcquireResult.ACQUIRED) {
+            clearVoiceprintAudio(wav, pcm);
+            scheduleVoiceprintListening("voiceprint_verify_busy_retry");
+            return;
+        }
+        voiceprintVerifying = true;
+        setChatStatus("正在确认本人声纹");
+        voiceprintExecutor.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    final VoiceprintDeviceClient.Result result = client.verify(
+                            wav, "vp-verify-" + UUID.randomUUID().toString());
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            finishVoiceprintVerification(generation, result, wav, pcm);
+                        }
+                    });
+                } catch (final IOException error) {
+                    mainHandler.post(new Runnable() {
+                        @Override public void run() {
+                            finishVoiceprintVerification(generation, null, wav, pcm);
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private void finishVoiceprintVerification(
+            long generation,
+            VoiceprintDeviceClient.Result result,
+            byte[] wav,
+            byte[] pcm) {
+        voiceprintVerifying = false;
+        if (generation != voiceprintGeneration
+                || audioCaptureCoordinator.voiceMode()
+                != AudioCaptureCoordinator.VoiceMode.VOICEPRINT) {
+            audioCaptureCoordinator.release(AudioCaptureCoordinator.Owner.VOICEPRINT_VERIFY);
+            clearVoiceprintAudio(wav, pcm);
+            return;
+        }
+        if (result != null && result.ok() && result.verified()) {
+            audioCaptureCoordinator.release(AudioCaptureCoordinator.Owner.VOICEPRINT_VERIFY);
+            clearVoiceprintAudio(wav, null);
+            startVerifiedVoiceprintAsr(pcm);
+            return;
+        }
+        String error = result == null ? "voiceprint_unavailable" : result.error();
+        if ("voiceprint_locked".equals(error) || (result != null && "locked".equals(result.status()))) {
+            audioCaptureCoordinator.release(AudioCaptureCoordinator.Owner.VOICEPRINT_VERIFY);
+            audioCaptureCoordinator.selectPassiveMode();
+            clearVoiceprintAudio(wav, pcm);
+            setChatStatus("声纹已锁定，监听已关闭，请在设置中重新录入");
+            return;
+        }
+        audioCaptureCoordinator.releaseAfterVoiceprintFailure();
+        clearVoiceprintAudio(wav, pcm);
+        setChatStatus(result == null || "voiceprint_unavailable".equals(error)
+                ? "声纹服务请求失败，未转写、未执行指令"
+                : "未识别为授权操作者，未转写、未执行指令");
+        scheduleVoiceprintListening("voiceprint_verify_retry");
+    }
+
+    private void startVerifiedVoiceprintAsr(byte[] pcm) {
+        AudioCaptureCoordinator.AcquireResult acquired = audioCaptureCoordinator.acquireAsr(
+                voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT);
+        if (acquired != AudioCaptureCoordinator.AcquireResult.ACQUIRED || realtimeAsrClient == null) {
+            clearVoiceprintAudio(null, pcm);
+            audioCaptureCoordinator.releaseAsr();
+            setChatStatus("语音转写暂不可用，当前指令未执行");
+            scheduleVoiceprintListening("voiceprint_asr_unavailable_retry");
+            return;
+        }
+        if (voiceSessionPurpose != VoiceSessionPurpose.WORKFLOW_INPUT) {
+            voiceSessionPurpose = VoiceSessionPurpose.COMMAND;
+        }
+        setChatStatus("声纹已通过，正在转写");
+        startRealtimeAsr();
+        for (int offset = 0; offset < pcm.length; offset += 32 * 1024) {
+            int length = Math.min(32 * 1024, pcm.length - offset);
+            byte[] chunk = Arrays.copyOfRange(pcm, offset, offset + length);
+            realtimeAsrClient.acceptPcm(chunk, chunk.length);
+            Arrays.fill(chunk, (byte) 0);
+        }
+        finishRealtimeAsr("voiceprint_verified");
+        clearVoiceprintAudio(null, pcm);
+    }
+
+    private void stopVoiceprintCapture(String reason) {
+        if (voiceprintRestartRunnable != null) {
+            mainHandler.removeCallbacks(voiceprintRestartRunnable);
+            voiceprintRestartRunnable = null;
+        }
+        voiceprintRecording = false;
+        AudioRecord recorder = voiceprintRecorder;
+        voiceprintRecorder = null;
+        try {
+            if (recorder != null) recorder.stop();
+        } catch (Exception ignored) {
+        }
+        if (recorder != null) recorder.release();
+        VoiceprintPcmSegmenter segmenter = voiceprintSegmenter;
+        voiceprintSegmenter = null;
+        if (segmenter != null) segmenter.reset();
+        audioCaptureCoordinator.release(AudioCaptureCoordinator.Owner.VOICEPRINT_CAPTURE);
+        Log.d(KEY_LOG_TAG, "Voiceprint capture stopped reason=" + reason);
+    }
+
+    private void disableVoiceprintListening(String reason, boolean showStatus) {
+        boolean wasVoiceprint = audioCaptureCoordinator.voiceMode()
+                == AudioCaptureCoordinator.VoiceMode.VOICEPRINT;
+        AudioCaptureCoordinator.Owner owner = audioCaptureCoordinator.owner();
+        if (!wasVoiceprint && !voiceprintRecording && !voiceprintVerifying) return;
+        voiceprintGeneration++;
+        if (wasVoiceprint) audioCaptureCoordinator.toggleVoiceprint();
+        stopVoiceprintCapture(reason);
+        voiceprintVerifying = false;
+        if (owner == AudioCaptureCoordinator.Owner.MANUAL_ASR
+                || owner == AudioCaptureCoordinator.Owner.WORKFLOW_ASR) {
+            voiceAsrSessionGate.invalidate();
+            if (realtimeAsrClient != null) realtimeAsrClient.cancel();
+            voiceSessionPurpose = VoiceSessionPurpose.NONE;
+            voiceStreamState = VoiceStreamState.IDLE;
+            audioCaptureCoordinator.releaseAsr();
+        }
+        cancelWakeListeningOnly();
+        if (showStatus) {
+            setChatStatus("声纹监听已关闭，当前不录音、不转写、不上传");
+        }
+    }
+
+    private void disableVoiceprintForLifecycle(String reason) {
+        if (audioCaptureCoordinator.voiceMode()
+                == AudioCaptureCoordinator.VoiceMode.VOICEPRINT) {
+            disableVoiceprintListening(reason, false);
+        }
+    }
+
+    private static void clearVoiceprintAudio(byte[] wav, byte[] pcm) {
+        if (wav != null) Arrays.fill(wav, (byte) 0);
+        if (pcm != null) Arrays.fill(pcm, (byte) 0);
+    }
+
     private void scheduleForegroundVoiceListening(String reason) {
+        if (SECURE_RUNTIME && (runtimeConfiguration == null
+                || !runtimeConfiguration.isBackendProvisioned())) {
+            cancelForegroundVoiceListening();
+            setChatStatus(runtimeStandbyNotice(true, false, OFFLINE_WAKE_ENABLED, false));
+            return;
+        }
+        if (audioCaptureCoordinator.voiceMode()
+                == AudioCaptureCoordinator.VoiceMode.VOICEPRINT) {
+            cancelWakeListeningOnly();
+            scheduleVoiceprintListening(reason);
+            return;
+        }
+        if (audioCaptureCoordinator.voiceMode()
+                == AudioCaptureCoordinator.VoiceMode.PASSIVE) {
+            cancelForegroundVoiceListening();
+            return;
+        }
         if (!isForegroundWakeListeningEnabled()) {
             cancelForegroundVoiceListening();
             return;
         }
         if (OFFLINE_WAKE_ENABLED) {
+            boolean wakeAuthorized = runtimeConfiguration != null
+                    && runtimeConfiguration.hasIflytekCredentials();
+            if (!shouldStartManagedOfflineWake(true, wakeAuthorized)) {
+                cancelForegroundVoiceListening();
+                setChatStatus(runtimeStandbyNotice(
+                        SECURE_RUNTIME, true, true, wakeAuthorized));
+                return;
+            }
             voiceAutoListenArmed = false;
             boolean shouldListen = shouldStartOfflineWakeListening();
             boolean running = wakeWordEngine != null && wakeWordEngine.isRunning();
@@ -7620,6 +12860,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 return;
             }
             if (shouldListen) {
+                AudioCaptureCoordinator.AcquireResult acquired =
+                        audioCaptureCoordinator.acquire(AudioCaptureCoordinator.Owner.WAKE);
+                if (acquired == AudioCaptureCoordinator.AcquireResult.BUSY
+                        || acquired == AudioCaptureCoordinator.AcquireResult.DISABLED) {
+                    return;
+                }
                 Log.i(KEY_LOG_TAG, "Offline wake start reason=" + reason);
                 setChatStatus("小叮当待命中");
                 wakeWordEngine.start(new WakeWordEngine.Listener() {
@@ -7704,6 +12950,35 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void cancelForegroundVoiceListening() {
+        stopVoiceprintCapture("foreground_cancel");
+        cancelWakeListeningOnly();
+    }
+
+    private void acquireExclusiveAudioOwner(
+            AudioCaptureCoordinator.Owner owner,
+            String reason) {
+        cancelForegroundVoiceListening();
+        stopVoiceprintEnrollmentCapture(reason);
+        stopVoiceRecording(false, reason);
+        AudioCaptureCoordinator.Preemption preemption =
+                audioCaptureCoordinator.acquireExclusive(owner);
+        if (!preemption.voiceprintDisabled()) {
+            return;
+        }
+        voiceprintGeneration++;
+        stopVoiceprintCapture(reason);
+        voiceprintVerifying = false;
+        voiceAsrSessionGate.invalidate();
+        if (realtimeAsrClient != null) {
+            realtimeAsrClient.cancel();
+        }
+        voiceSessionPurpose = VoiceSessionPurpose.NONE;
+        voiceStreamState = VoiceStreamState.IDLE;
+        Log.i(KEY_LOG_TAG, "Voiceprint listening disabled by exclusive audio owner="
+                + owner + " preempted=" + preemption.preemptedOwner());
+    }
+
+    private void cancelWakeListeningOnly() {
         if (foregroundAutoVoiceStartRunnable != null) {
             mainHandler.removeCallbacks(foregroundAutoVoiceStartRunnable);
             foregroundAutoVoiceStartRunnable = null;
@@ -7712,10 +12987,12 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (wakeWordEngine != null) {
             wakeWordEngine.stop();
         }
+        audioCaptureCoordinator.release(AudioCaptureCoordinator.Owner.WAKE);
     }
 
     private void resetVoiceSessionForForegroundWake() {
         voiceAsrSessionGate.invalidate();
+        audioCaptureCoordinator.releaseAsr();
         voiceSessionPurpose = VoiceSessionPurpose.NONE;
         voiceStreamState = VoiceStreamState.IDLE;
         voiceStartedFromAutoWindow = false;
@@ -7726,6 +13003,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     private boolean shouldStartOfflineWakeListening() {
         return isVoiceControlAvailableOnCurrentScreen()
                 && isForegroundWakeListeningEnabled()
+                && (!SECURE_RUNTIME || (runtimeConfiguration != null
+                        && runtimeConfiguration.isBackendProvisioned()
+                        && runtimeConfiguration.hasIflytekCredentials()))
                 && !pendingSceneVideoCapture
                 && !sceneVideoStarting
                 && !sceneVideoRecording
@@ -7811,6 +13091,19 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             waitForWakeAudioReleaseThenStartAsr(0);
             return;
         }
+        AudioCaptureCoordinator.AcquireResult audioOwnership =
+                audioCaptureCoordinator.acquireAsr(workflowVoiceInputStart);
+        if (audioOwnership != AudioCaptureCoordinator.AcquireResult.ACQUIRED
+                && audioOwnership != AudioCaptureCoordinator.AcquireResult.ALREADY_OWNED) {
+            if (workflowVoiceInputStart) {
+                failWorkflowVoiceInput(
+                        "workflow_voice_audio_busy",
+                        "当前音频正在使用，工作流语音未开始");
+            } else {
+                setChatStatus("当前音频正在使用，请稍后重试");
+            }
+            return;
+        }
         try {
             if (!autoWindowStart && voiceSessionPurpose == VoiceSessionPurpose.NONE) {
                 voiceSessionPurpose = VoiceSessionPurpose.COMMAND;
@@ -7867,6 +13160,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             renderComposer();
         } catch (Exception error) {
             recordingVoice = false;
+            audioCaptureCoordinator.releaseAsr();
             if (workflowVoiceInputStart) {
                 stopVoiceRecording(false, "workflow_voice_start_failed");
                 failWorkflowVoiceInput(
@@ -7879,6 +13173,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private long workflowVoiceInputMaximumDurationMillis() {
+        WorkflowFormVoiceInputSession formSession = workflowFormVoiceInputSession;
+        if (formSession != null) return formSession.maximumDurationMillis();
         WorkflowVoiceInputSession session = workflowVoiceInputSession;
         return session == null
                 ? VOICE_RECORDING_MS
@@ -7901,8 +13197,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }
 
             @Override
-            public void onFinal(String text) {
-                onAsrFinal(asrSessionId, text);
+            public void onFinal(String text, String source) {
+                onAsrFinal(asrSessionId, text, source);
             }
 
             @Override
@@ -8051,6 +13347,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 if (realtimeAsrClient != null) {
                     realtimeAsrClient.cancel();
                 }
+                audioCaptureCoordinator.releaseAsr();
                 realtimeAsrFinished = false;
                 voiceStartedFromAutoWindow = false;
                 if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
@@ -8127,6 +13424,14 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
 
     private void stopVoiceRecording(boolean transcribe, String stopReason) {
         if (!recordingVoice && voiceRecorder == null) {
+            if (!transcribe) {
+                cancelVoiceAsrFinishTimeout();
+                voiceAsrSessionGate.invalidate();
+                if (realtimeAsrClient != null) {
+                    realtimeAsrClient.cancel();
+                }
+                audioCaptureCoordinator.releaseAsr();
+            }
             return;
         }
         if (voiceStopRunnable != null) {
@@ -8153,6 +13458,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (recorder != null) {
             recorder.release();
         }
+        audioCaptureCoordinator.releaseAsr();
         if (transcribe) {
             finishRealtimeAsr(stopReason);
         } else if (realtimeAsrClient != null) {
@@ -8171,6 +13477,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
     }
 
     private void stopVoiceCaptureAfterAsrFinal() {
+        audioCaptureCoordinator.releaseAsr();
         if (!recordingVoice && voiceRecorder == null) {
             return;
         }
@@ -8243,11 +13550,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         });
     }
 
-    private void onAsrFinal(final long asrSessionId, final String text) {
+    private void onAsrFinal(final long asrSessionId, final String text, final String source) {
         final String finalText = sanitizeTranscriptForDisplay(text);
+        final String finalSource = source == null ? "" : source.trim();
         Log.i(KEY_LOG_TAG, "Voice latency stage=asr_final session=" + asrSessionId
                 + " asrElapsedMs=" + elapsedSince(currentAsrStartedAtMs)
                 + " totalElapsedMs=" + voiceLatencyElapsedMs()
+                + " source=" + finalSource
                 + " textChars=" + finalText.length());
         mainHandler.post(new Runnable() {
             @Override
@@ -8273,6 +13582,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     onVoiceUnclear(asrSessionId, "voice-filler-retry");
                     return;
                 }
+                showLocalAsrSourceNotice(finalSource);
                 if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
                     voiceAsrSessionGate.invalidate();
                     stopVoiceCaptureAfterAsrFinal();
@@ -8379,6 +13689,37 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         });
     }
 
+    private void showLocalAsrSourceNotice(String source) {
+        String notice = localAsrSourceNotice(source);
+        if (notice.length() == 0) {
+            return;
+        }
+        setChatStatus(notice);
+        Toast.makeText(this, notice, Toast.LENGTH_LONG).show();
+    }
+
+    static String localAsrSourceNotice(String source) {
+        String value = source == null ? "" : source.trim();
+        if ("local-after-primary-failure".equals(value)) {
+            return "网络语音不可用，已使用本地识别";
+        }
+        if ("local-timeout-fallback".equals(value)) {
+            return "网络语音响应较慢，已使用本地识别";
+        }
+        if (value.startsWith("local")) {
+            return "已使用本地识别";
+        }
+        return "";
+    }
+
+    static boolean shouldDeliverLocalAsrImmediately(boolean primaryDone) {
+        return primaryDone;
+    }
+
+    static long localAsrGraceMillis(boolean primaryHasPartial) {
+        return primaryHasPartial ? 1200L : 250L;
+    }
+
     private void updateLiveTranscriptDraft(String partial) {
         composerTranscript = sanitizeTranscriptForDisplay(partial);
     }
@@ -8396,8 +13737,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 }
                 cancelVoiceAsrFinishTimeout();
                 voiceAsrSessionGate.invalidate();
+                stopVoiceCaptureAfterAsrFinal();
                 if (voiceSessionPurpose == VoiceSessionPurpose.WORKFLOW_INPUT) {
-                    stopVoiceCaptureAfterAsrFinal();
                     voiceStartedFromAutoWindow = false;
                     failWorkflowVoiceInput(
                             "workflow_voice_" + code,
@@ -8413,7 +13754,6 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 }
                 if (realtimeAsrFinished && composerTranscript.trim().length() > 0) {
                     if (!voiceStartedFromAutoWindow && shouldSendDraftOnAsrFinished(code)) {
-                        stopVoiceCaptureAfterAsrFinal();
                         voiceStartedFromAutoWindow = false;
                         voiceSessionPurpose = VoiceSessionPurpose.NONE;
                         voiceStreamState = VoiceStreamState.AI_PENDING;
@@ -8423,7 +13763,6 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     }
                     return;
                 }
-                stopVoiceCaptureAfterAsrFinal();
                 voiceSessionPurpose = VoiceSessionPurpose.NONE;
                 voiceStreamState = VoiceStreamState.VOICE_UNCLEAR;
                 // An empty first utterance belongs to the landing page, not a second composer.
@@ -9243,6 +14582,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (screenMode != ScreenMode.CAMERA) {
             enterCameraScreen("scene-video");
         }
+        acquireExclusiveAudioOwner(AudioCaptureCoordinator.Owner.VIDEO, "scene_video_start");
         cameraStatusText.setText("正在准备现场短视频取证");
         startSceneVideoCaptureIfReady();
     }
@@ -9306,6 +14646,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                         "workflow_video_start_failed",
                         "工作流录像启动失败，请重试");
             } else {
+                audioCaptureCoordinator.acquireExclusive(AudioCaptureCoordinator.Owner.CAMERA);
                 scheduleForegroundVoiceListening("scene-video-failed");
             }
         }
@@ -9394,6 +14735,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                                             "workflow_video_session_failed",
                                             "工作流录像相机会话创建失败，请重试");
                                 } else {
+                                    audioCaptureCoordinator.acquireExclusive(
+                                            AudioCaptureCoordinator.Owner.CAMERA);
                                     createPreviewSession();
                                     scheduleForegroundVoiceListening(
                                             "scene-video-session-failed");
@@ -9441,6 +14784,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 : completedSceneVideoDurationSeconds(
                         completedVideo, completedWorkflowPlan);
         releaseSceneVideoRecorder();
+        audioCaptureCoordinator.acquireExclusive(AudioCaptureCoordinator.Owner.CAMERA);
         sceneVideoFile = null;
         sceneVideoStartedAtMs = 0L;
         if (completedWorkflowPlan != null) {
@@ -9977,6 +15321,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         if (previewView != null) {
             previewView.setAlpha(0f);
         }
+        audioCaptureCoordinator.release(AudioCaptureCoordinator.Owner.VIDEO);
+        audioCaptureCoordinator.release(AudioCaptureCoordinator.Owner.CAMERA);
     }
 
     private void abortSceneVideoCapture() {
@@ -10307,17 +15653,23 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         private final String apiKey;
 
         DirectGptClient(String baseUrl, String model, String reasoningEffort, String apiKey) {
-            this.baseUrl = trimSlash(baseUrl == null || baseUrl.length() == 0 ? "https://api.openai.com/v1" : baseUrl);
-            this.model = model == null || model.length() == 0 ? "gpt-4.1-mini" : model;
+            this.baseUrl = trimSlash(baseUrl == null || baseUrl.length() == 0
+                    ? "https://dashscope.aliyuncs.com/compatible-mode/v1" : baseUrl);
+            this.model = model == null ? "" : model.trim();
             this.reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
             this.apiKey = apiKey == null ? "" : apiKey;
         }
 
         @Override
-        public void send(final String prompt, final String imageId, final byte[] jpegBytes, final StreamingCallback callback) {
+        public void send(final String prompt, final String imageId, final byte[] jpegBytes,
+                final AiExecutionContext executionContext, final StreamingCallback callback) {
             new Thread(new Runnable() {
                 @Override
                 public void run() {
+                    if (model.length() == 0) {
+                        callback.onError(new IllegalStateException("DIRECT_GPT_MODEL missing"));
+                        return;
+                    }
                     if (apiKey.length() == 0) {
                         callback.onError(new IllegalStateException("DIRECT_GPT_API_KEY missing"));
                         return;
@@ -10373,7 +15725,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
 
         private static String chatCompletionsUrl(String baseUrl) {
-            String base = trimSlash(baseUrl == null || baseUrl.length() == 0 ? "https://api.openai.com/v1" : baseUrl);
+            String base = trimSlash(baseUrl == null || baseUrl.length() == 0
+                    ? "https://dashscope.aliyuncs.com/compatible-mode/v1" : baseUrl);
             if (base.endsWith("/chat/completions")) {
                 return base;
             }
@@ -10503,16 +15856,22 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
 
         private final BackendChatClient backendChatClient;
+        private final TaskStartRegistrationGate taskStartRegistrationGate;
         private final SessionProvider sessionProvider;
 
-        BackendGptClient(BackendChatClient backendChatClient, SessionProvider sessionProvider) {
+        BackendGptClient(BackendChatClient backendChatClient,
+                TaskStartRegistrationGate taskStartRegistrationGate,
+                SessionProvider sessionProvider) {
             this.backendChatClient = backendChatClient;
+            this.taskStartRegistrationGate = taskStartRegistrationGate;
             this.sessionProvider = sessionProvider;
         }
 
         @Override
-        public void send(String prompt, String imageId, byte[] jpegBytes, StreamingCallback callback) {
-            backendChatClient.sendDiagnosis(sessionProvider.sessionId(), imageId, prompt, callback);
+        public void send(String prompt, String imageId, byte[] jpegBytes,
+                AiExecutionContext executionContext, StreamingCallback callback) {
+            backendChatClient.sendDiagnosis(sessionProvider.sessionId(), imageId, prompt,
+                    executionContext, taskStartRegistrationGate, callback);
         }
     }
 
@@ -10547,9 +15906,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
 
         @Override
-        public void send(String prompt, String imageId, byte[] jpegBytes, StreamingCallback callback) {
+        public void send(String prompt, String imageId, byte[] jpegBytes,
+                AiExecutionContext executionContext, StreamingCallback callback) {
             String sessionId = sessionProvider == null ? "" : sessionProvider.sessionId();
-            sendDiagnosis(sessionId, imageId, prompt, callback);
+            sendDiagnosis(sessionId, imageId, prompt, executionContext, null, callback);
         }
 
         void uploadImageForChat(final String sessionId, final byte[] jpegBytes, final BackendImageUploadCallback callback) {
@@ -10596,22 +15956,25 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             }, "BackendImageUpload").start();
         }
 
-        void sendDiagnosis(final String sessionId, final String imageId, final String finalText, final StreamingCallback callback) {
+        void sendDiagnosis(final String sessionId, final String imageId, final String finalText,
+                final AiExecutionContext executionContext,
+                final TaskStartRegistrationGate taskStartRegistrationGate,
+                final StreamingCallback callback) {
             new Thread(new Runnable() {
                 @Override
                 public void run() {
                     HttpURLConnection connection = null;
                     OutputStream output = null;
                     try {
+                        if (taskStartRegistrationGate != null) {
+                            taskStartRegistrationGate.ensureRegistered(executionContext);
+                        }
                         requireProvisionedBackend();
                         if (baseUrl.length() == 0) {
                             throw new IllegalStateException("DINGDANG_BACKEND_BASE_URL missing");
                         }
-                        JSONObject payload = new JSONObject();
-                        payload.put("image_id", imageId);
-                        payload.put("final_text", finalText);
-                        payload.put("client_context", new JSONObject()
-                                .put("source", "dingdang-android"));
+                        JSONObject payload = BackendDiagnosisRequest.create(
+                                imageId, finalText, executionContext);
                         connection = openBackendConnection(backendDiagnoseStreamUrl(sessionId), "POST", "application/json; charset=utf-8");
                         connection.setRequestProperty("Accept", "text/event-stream");
                         output = connection.getOutputStream();
@@ -10785,13 +16148,13 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
 
         @Override
-        public void onFinal(String text) {
+        public void onFinal(String text, String source) {
             BackendAsrEvent event = parseBackendAsrEvent("final", text);
             if (delegate == null) {
                 return;
             }
             if (event.text.length() > 0) {
-                delegate.onFinal(event.text);
+                delegate.onFinal(event.text, source);
             } else {
                 delegate.onUnclear("asr_final_empty");
             }
@@ -10877,7 +16240,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 }
 
                 @Override
-                public void onFinal(String text) {
+                public void onFinal(String text, String source) {
                     onPrimaryFinal(text);
                 }
 
@@ -10993,8 +16356,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 onLocalUnclear("local_asr_empty");
                 return;
             }
-            if (!primaryHasPartial || primaryDone) {
-                deliverFinal(localFinal, "local");
+            if (shouldDeliverLocalAsrImmediately(primaryDone)) {
+                deliverFinal(localFinal, "local-after-primary-failure");
                 return;
             }
             cancelLocalFinalFallback();
@@ -11009,7 +16372,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     }
                 }
             };
-            handler.postDelayed(localFinalFallback, PRIMARY_FINAL_GRACE_MS);
+            handler.postDelayed(localFinalFallback, localAsrGraceMillis(primaryHasPartial));
         }
 
         private synchronized void onLocalUnclear(String diagnosticCode) {
@@ -11035,7 +16398,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
             callback = null;
             primary.cancel();
             local.cancel();
-            target.onFinal(text);
+            target.onFinal(text, source);
         }
 
         private void deliverUnclear(String diagnosticCode) {
@@ -11202,7 +16565,8 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         private final RealtimeAsrCallback callback;
         private final boolean backendMode;
         private final Object lock = new Object();
-        private final ArrayList<byte[]> queuedChunks = new ArrayList<>();
+        private final RealtimeAsrPendingAudio queuedChunks =
+                new RealtimeAsrPendingAudio(512 * 1024);
         private Socket socket;
         private InputStream input;
         private OutputStream output;
@@ -11257,14 +16621,23 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 return;
             }
             byte[] copy = Arrays.copyOf(pcm, length);
+            boolean queueRejected = false;
             synchronized (lock) {
                 if (closed) {
                     return;
                 }
                 if (!connected || output == null || (!backendMode && !taskStarted)) {
-                    queuedChunks.add(copy);
-                    return;
+                    if (queuedChunks.offer(copy)) {
+                        return;
+                    }
+                    queueRejected = true;
                 }
+            }
+            if (queueRejected) {
+                if (callback != null) {
+                    callback.onError(new IOException("asr_audio_queue_full"));
+                }
+                return;
             }
             writeBinary(copy);
         }
@@ -11324,6 +16697,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 }
                 if (backendMode) {
                     sendBackendStart();
+                    flushQueuedChunks();
                 } else {
                     sendRunTask();
                 }
@@ -11455,10 +16829,9 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         }
 
         private void flushQueuedChunks() {
-            ArrayList<byte[]> chunks;
+            List<byte[]> chunks;
             synchronized (lock) {
-                chunks = new ArrayList<>(queuedChunks);
-                queuedChunks.clear();
+                chunks = queuedChunks.drain();
             }
             for (int i = 0; i < chunks.size(); i++) {
                 writeBinary(chunks.get(i));
@@ -11480,7 +16853,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 if (!backendMode && finishing && finalText.length() > 0 && !finalDelivered) {
                     finalDelivered = true;
                     if (callback != null) {
-                        callback.onFinal(finalText);
+                        callback.onFinal(finalText, "cloud");
                     }
                     return;
                 }
@@ -11523,7 +16896,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                     if (callback != null) {
                         if (finalText.length() > 0 && !finalDelivered) {
                             finalDelivered = true;
-                            callback.onFinal(finalText);
+                            callback.onFinal(finalText, "cloud");
                         } else if (finalText.length() == 0) {
                             if ("task-failed".equals(eventName)) {
                                 AsrProviderFailure failure =
@@ -11565,7 +16938,7 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
                 if ("final".equals(type)) {
                     if (callback != null) {
                         if (candidate.length() > 0) {
-                            callback.onFinal(candidate);
+                            callback.onFinal(candidate, "cloud");
                         } else {
                             callback.onUnclear("asr_final_empty");
                         }

@@ -50,6 +50,20 @@ function assertFiniteNumber(container, key, failures, label) {
 function validateSummary(summary) {
   const failures = [];
 
+  if (summary.packageName !== "com.codex.air3nativecamera.dingdangexpert.v9") {
+    failures.push({
+      key: "packageName",
+      expected: "com.codex.air3nativecamera.dingdangexpert.v9",
+      actual: summary.packageName,
+    });
+  }
+  if (summary.versionCode !== 900000) {
+    failures.push({ key: "versionCode", expected: 900000, actual: summary.versionCode });
+  }
+  if (summary.versionName !== "9.0.0") {
+    failures.push({ key: "versionName", expected: "9.0.0", actual: summary.versionName });
+  }
+
   if (summary.provider !== "real") {
     failures.push({ key: "provider", expected: "real", actual: summary.provider });
   }
@@ -60,12 +74,28 @@ function validateSummary(summary) {
     "cameraUiVisible",
     "returnedToChatAfterPhoto",
     "imageAttached",
+    "photoContextReady",
     "asrPartialVisible",
     "asrFinalVisible",
+    "asrFinalSourceObserved",
+    "asrFinalFromCloud",
     "gptFirstDeltaObserved",
     "inDingdang",
     "latencyWithinBudget",
   ].forEach((key) => assertTrue(summary, key, failures));
+
+  if (typeof summary.photoContextImageId !== "string" ||
+      summary.photoContextImageId.length === 0 ||
+      summary.photoContextImageId === "local-photo") {
+    failures.push({
+      key: "photoContextImageId",
+      expected: "non-local server image id",
+      actual: summary.photoContextImageId,
+    });
+  }
+  if (summary.asrProviderSource !== "cloud") {
+    failures.push({ key: "asrProviderSource", expected: "cloud", actual: summary.asrProviderSource });
+  }
 
   const latencyMs = summary.latencyMs;
   const latencyBudgetsMs = summary.latencyBudgetsMs;
@@ -109,13 +139,21 @@ function validateSummary(summary) {
 function selfTest() {
   const valid = {
     provider: "real",
+    packageName: "com.codex.air3nativecamera.dingdangexpert.v9",
+    versionCode: 900000,
+    versionName: "9.0.0",
     backendBaseUrlProvided: true,
     healthOk: true,
     cameraUiVisible: true,
     returnedToChatAfterPhoto: true,
     imageAttached: true,
+    photoContextReady: true,
+    photoContextImageId: "image-server-123",
     asrPartialVisible: true,
     asrFinalVisible: true,
+    asrFinalSourceObserved: true,
+    asrFinalFromCloud: true,
+    asrProviderSource: "cloud",
     gptFirstDeltaObserved: true,
     inDingdang: true,
     latencyWithinBudget: true,
@@ -144,6 +182,10 @@ function selfTest() {
     ...valid,
     provider: "mock",
     healthOk: false,
+    photoContextReady: false,
+    photoContextImageId: "local-photo",
+    asrFinalFromCloud: false,
+    asrProviderSource: "local-after-primary-failure",
     latencyMs: {
       ...valid.latencyMs,
       gptFirstDelta: 9000,

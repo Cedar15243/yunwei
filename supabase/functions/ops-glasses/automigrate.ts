@@ -422,12 +422,6 @@ async function createStorageBucket(client: Client): Promise<void> {
 
 async function seedData(client: Client): Promise<void> {
   await client.queryArray(`
-    insert into public.ops_assets (asset_tag, display_name, host, ssh_port, app_port)
-    values ('ASSET-CONSOLE-001', 'SSH console recovery demo server', '192.168.1.50', 22, null)
-    on conflict (asset_tag) do nothing;
-  `);
-
-  await client.queryArray(`
     insert into public.safe_commands (command_key, command_text, description)
     values
       ('ssh_status', 'sudo systemctl status ssh --no-pager', '检查 Ubuntu/Debian SSH 服务状态'),

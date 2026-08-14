@@ -1,5 +1,8 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { auditExternalAcceptance } from "./v9-external-acceptance.mjs";
 
 const root = process.cwd();
 
@@ -21,6 +24,23 @@ function exists(relativePath) {
   return fs.existsSync(path.join(root, relativePath));
 }
 
+function sha256File(relativePath) {
+  if (!exists(relativePath)) {
+    return null;
+  }
+  return crypto.createHash("sha256")
+    .update(fs.readFileSync(path.join(root, relativePath)))
+    .digest("hex")
+    .toUpperCase();
+}
+
+function readSha256Sidecar(relativePath) {
+  if (!exists(relativePath)) {
+    return null;
+  }
+  return readText(relativePath).trim().split(/\s+/)[0]?.toUpperCase() || null;
+}
+
 function includesAll(text, markers) {
   return markers.every((marker) => text.includes(marker));
 }
@@ -38,6 +58,64 @@ function evidence(relativePath) {
 
 function firstExisting(relativePaths) {
   return relativePaths.find((relativePath) => exists(relativePath)) || relativePaths[0];
+}
+
+export function collectFiles(relativePaths, scanRoot = root) {
+  const excludedDirectories = new Set([".git", "build", "node_modules"]);
+  const normalizedRoot = path.resolve(scanRoot);
+  const files = [];
+
+  function visit(relativePath) {
+    const absolutePath = path.resolve(normalizedRoot, relativePath);
+    const relativeToRoot = path.relative(normalizedRoot, absolutePath);
+    if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot) || !fs.existsSync(absolutePath)) {
+      return;
+    }
+
+    const stat = fs.lstatSync(absolutePath);
+    if (stat.isSymbolicLink()) {
+      return;
+    }
+    if (stat.isDirectory()) {
+      if (excludedDirectories.has(path.basename(absolutePath))) {
+        return;
+      }
+      for (const entry of fs.readdirSync(absolutePath, { withFileTypes: true })) {
+        visit(path.join(relativeToRoot, entry.name));
+      }
+      return;
+    }
+    if (stat.isFile()) {
+      files.push(relativeToRoot.replaceAll("\\", "/"));
+    }
+  }
+
+  for (const relativePath of relativePaths) {
+    visit(relativePath);
+  }
+  return [...new Set(files)].sort();
+}
+
+export function findCommittedSecretLikeMarkers(relativePaths, scanRoot = root) {
+  const secretPattern = /(?:^|[^A-Za-z0-9])sk-[A-Za-z0-9][A-Za-z0-9_-]{19,}(?=$|[^A-Za-z0-9])/g;
+  const findings = [];
+
+  for (const relativePath of collectFiles(relativePaths, scanRoot)) {
+    const absolutePath = path.join(scanRoot, relativePath);
+    const buffer = fs.readFileSync(absolutePath);
+    if (buffer.includes(0)) {
+      continue;
+    }
+    const lines = buffer.toString("utf8").split(/\r?\n/);
+    lines.forEach((line, index) => {
+      secretPattern.lastIndex = 0;
+      if (secretPattern.test(line)) {
+        findings.push({ path: relativePath, line: index + 1 });
+      }
+    });
+  }
+
+  return findings;
 }
 
 function latestFileUnder(prefix, fileName) {
@@ -185,6 +263,86 @@ const finalRunbookPath = "docs/dingdang-final-verification-runbook.md";
 const finalRunbook = exists(finalRunbookPath) ? readText(finalRunbookPath) : "";
 const installUiPath = "tmp/dingdang-ops-ai-610-ui.xml";
 const installUi = exists(installUiPath) ? readText(installUiPath) : "";
+const v9CompletionMatrixPath = "docs/audits/2026-08-06-v9-completion-matrix.md";
+const v9CompletionMatrix = exists(v9CompletionMatrixPath) ? readText(v9CompletionMatrixPath) : "";
+const v9ReleaseManifestPath = firstExisting([
+  "output/v9.0.0-formal-release-current/release-manifest.json",
+  "output/v9.0.0-formal-release/release-manifest.json",
+  "output/v9.0.0-formal-delivery/android/release-manifest.json",
+]);
+const v9ReleaseManifest = exists(v9ReleaseManifestPath) ? readJson(v9ReleaseManifestPath) : null;
+const v9ReleaseDir = path.dirname(v9ReleaseManifestPath).replaceAll("\\", "/");
+const v9ReleaseApkPath = `${v9ReleaseDir}/DingdangAI-V9-9.0.0-release.apk`;
+const v9ReleaseApkSha256 = sha256File(v9ReleaseApkPath);
+const v9ReleaseApkSha256Matches = Boolean(
+  v9ReleaseManifest?.sha256 && v9ReleaseApkSha256 === String(v9ReleaseManifest.sha256).toUpperCase(),
+);
+const v9DeliveryManifestPath = "output/v9.0.0-formal-delivery/DELIVERY_MANIFEST.json";
+const v9DeliveryManifest = exists(v9DeliveryManifestPath) ? readJson(v9DeliveryManifestPath) : null;
+const v9DeliveryZipPath = "output/DingdangAI-V9-9.0.0-formal-delivery.zip";
+const v9DeliveryZipSidecarPath = `${v9DeliveryZipPath}.sha256`;
+const v9DeliveryChecksumsPath = "output/v9.0.0-formal-delivery/SHA256SUMS.txt";
+const v9DeliveryZipSha256 = sha256File(v9DeliveryZipPath);
+const v9DeliveryZipSidecar = readSha256Sidecar(v9DeliveryZipSidecarPath);
+const v9DeliveryManifestArtifacts = Array.isArray(v9DeliveryManifest?.artifacts)
+  ? v9DeliveryManifest.artifacts.length
+  : 0;
+const v9DeliveryChecksummedFiles = exists(v9DeliveryChecksumsPath)
+  ? readText(v9DeliveryChecksumsPath).split(/\r?\n/).filter(Boolean).length
+  : 0;
+const v9DeliveryApkArtifact = v9DeliveryManifest?.artifacts?.find((artifact) =>
+  artifact?.path === "android/DingdangAI-V9-9.0.0-release.apk",
+);
+const v9DeliveryManifestValid = Boolean(
+  v9DeliveryManifest?.applicationId === "com.codex.air3nativecamera.dingdangexpert.v9" &&
+    v9DeliveryManifest?.versionCode === 900000 &&
+    v9DeliveryManifest?.secureRuntime === true &&
+    v9DeliveryManifest?.modelContract?.ai === "qwen3-vl-plus" &&
+    v9DeliveryManifest?.modelContract?.asr === "fun-asr-realtime" &&
+    v9DeliveryManifest?.modelContract?.voiceprint === "s1aa729d0" &&
+    v9DeliveryApkArtifact?.sha256 === v9ReleaseManifest?.sha256 &&
+    v9DeliveryZipSha256 !== null &&
+    v9DeliveryZipSha256 === v9DeliveryZipSidecar &&
+    v9DeliveryManifestArtifacts > 0 &&
+    v9DeliveryChecksummedFiles === v9DeliveryManifestArtifacts + 1,
+);
+const v9SecretScanRoots = [
+  "air3-dingdang-expert-integrated-app",
+  "ops-management-web",
+  "supabase/functions/ops-glasses",
+  "v9-ops-gateway",
+  "scripts",
+  "docs",
+];
+const v9SecretFindings = findCommittedSecretLikeMarkers(v9SecretScanRoots);
+const v9ReleaseManifestValid = Boolean(
+  v9ReleaseManifest?.applicationId === "com.codex.air3nativecamera.dingdangexpert.v9" &&
+    v9ReleaseManifest?.versionCode === 900000 &&
+    v9ReleaseManifest?.versionName === "9.0.0" &&
+    v9ReleaseManifest?.aiModel === "qwen3-vl-plus" &&
+    v9ReleaseManifest?.asrModel === "fun-asr-realtime" &&
+    v9ReleaseManifest?.voiceprintService === "s1aa729d0" &&
+    v9ReleaseManifest?.secureRuntime === true &&
+    v9ReleaseManifest?.directGptEnabled === false &&
+    v9ReleaseApkSha256Matches,
+);
+const v9LocalCandidateProven = v9ReleaseManifestValid &&
+  v9DeliveryManifestValid &&
+  v9CompletionMatrix.includes("本地候选版：通过，可构建、可回归、可审计、可交付");
+const v9ExternalAcceptanceManifestPath = "evidence/v9-external-acceptance/manifest.json";
+const v9ExternalAcceptance = auditExternalAcceptance({
+  root,
+  manifestPath: v9ExternalAcceptanceManifestPath,
+  expectedTrustStoreSha256: process.env.V9_EXTERNAL_ACCEPTANCE_TRUST_STORE_SHA256 || "",
+  expectedRelease: {
+    applicationId: v9ReleaseManifest?.applicationId,
+    versionCode: v9ReleaseManifest?.versionCode,
+    versionName: v9ReleaseManifest?.versionName,
+    apkSha256: v9ReleaseManifest?.sha256,
+    deliveryZipSha256: v9DeliveryZipSha256,
+    generatedAt: v9ReleaseManifest?.builtAt,
+  },
+});
 
 items.push(makeItem(
   "superpowers-plan",
@@ -457,22 +615,29 @@ items.push(makeItem(
     "npm run validate:real-smoke-summary",
     "scripts\\run-dingdang-real-live-smoke.ps1",
     "scripts\\test-dingdang-air3-shortcuts.ps1",
-    "allComplete=true",
+    "npm run audit:v9-external-acceptance",
+    "currentV9Gate.localCandidate.status=proven",
+    "currentV9Gate.productionDeployment.status=proven",
+    "currentV9Gate.marketGa.status=proven",
+    "currentV9Gate.delivery.status=proven",
+    "currentV9Gate.secretScan.status=proven",
   ])),
-  "This proves the remaining external steps have an auditable execution path, but it does not replace running those steps.",
+  "The runbook uses the currentV9Gate contract and release-bound external evidence instead of the superseded legacy allComplete flag.",
   [evidence(finalRunbookPath)],
 ));
 
 items.push(makeItem(
   "secrets-safety",
   "No real API keys are stored in source, scripts, docs, or APK config",
-  statusFromBoolean(
-    context.includes("真实 DashScope/GPT key 不进入 APK") &&
-      bugs.includes("必须轮换") &&
-      nativeCode.includes("GeneratedConfig.DINGDANG_BACKEND_API_KEY"),
-  ),
-  "This audit checks policy markers; run `rg -n \"sk-[A-Za-z0-9_-]{12,}\" .` for a concrete scan.",
-  ["agent_memory/context.md", "agent_memory/bugs.md"],
+  statusFromBoolean(v9ReleaseManifestValid && v9SecretFindings.length === 0),
+  v9SecretFindings.length === 0
+    ? "Boundary-aware scan found no provider-key markers in the current V9 Android, management Web, Supabase Edge, gateway, scripts, or docs; the formal release manifest also confirms secure runtime."
+    : "Boundary-aware scan found " + v9SecretFindings.length + " secret-like location(s); values are intentionally not printed.",
+  [
+    evidence(v9ReleaseManifestPath),
+    evidence(v9CompletionMatrixPath),
+    ...v9SecretFindings.map((finding) => finding.path + ":" + finding.line),
+  ],
 ));
 
 const counts = items.reduce((acc, item) => {
@@ -483,12 +648,73 @@ const counts = items.reduce((acc, item) => {
 const allComplete = items.every((item) => item.status === "proven");
 const result = {
   generatedAt: new Date().toISOString(),
+  scope: "legacy-chat-prototype-baseline",
+  supersededBy: "V9 full product contract and release gates documented in docs/audits/2026-08-06-v9-completion-matrix.md",
   allComplete,
   counts,
+  currentV9Gate: {
+    contract: {
+      status: exists(v9CompletionMatrixPath) ? "proven" : "incomplete",
+      evidence: [v9CompletionMatrixPath],
+    },
+    localCandidate: {
+      status: v9LocalCandidateProven ? "proven" : "incomplete",
+      details: v9LocalCandidateProven
+        ? "The current V9 local candidate has a matching secure release manifest, APK hash, delivery manifest, ZIP sidecar, and completed local release matrix."
+        : "The current V9 local candidate is missing a matching release artifact, delivery integrity proof, or completion-matrix proof.",
+      evidence: [v9ReleaseManifestPath, v9ReleaseApkPath, v9DeliveryManifestPath, v9DeliveryZipSidecarPath, v9CompletionMatrixPath],
+    },
+    productionDeployment: {
+      status: v9ExternalAcceptance.productionDeploymentStatus,
+      details: v9ExternalAcceptance.productionDeploymentStatus === "proven"
+        ? "Release-bound production Supabase, isolated management cloud, and device activation evidence passed the external acceptance gate."
+        : "Production credentials, account/RLS checks, isolated cloud deployment, and device activation remain external gates.",
+      evidence: [v9ExternalAcceptanceManifestPath],
+    },
+    marketGa: {
+      status: v9ExternalAcceptance.marketGaStatus,
+      details: v9ExternalAcceptance.marketGaStatus === "proven"
+        ? "All release-bound production, Air3, MVS, expert collaboration, resilience, security, and supplier approval gates passed."
+        : "Market GA remains blocked until the release-bound external acceptance evidence is complete and valid.",
+      evidence: [v9ExternalAcceptanceManifestPath],
+    },
+    externalAcceptance: v9ExternalAcceptance,
+    release: v9ReleaseManifest ? {
+      manifestPath: v9ReleaseManifestPath,
+      apkPath: v9ReleaseApkPath,
+      apkSha256Matches: v9ReleaseApkSha256Matches,
+      applicationId: v9ReleaseManifest.applicationId,
+      versionCode: v9ReleaseManifest.versionCode,
+      versionName: v9ReleaseManifest.versionName,
+      sha256: v9ReleaseManifest.sha256,
+      aiModel: v9ReleaseManifest.aiModel,
+      asrModel: v9ReleaseManifest.asrModel,
+      voiceprintService: v9ReleaseManifest.voiceprintService,
+      secureRuntime: v9ReleaseManifest.secureRuntime,
+      directGptEnabled: v9ReleaseManifest.directGptEnabled,
+    } : null,
+    delivery: {
+      status: v9DeliveryManifestValid ? "proven" : "incomplete",
+      manifestPath: v9DeliveryManifestPath,
+      zipPath: v9DeliveryZipPath,
+      zipSha256: v9DeliveryZipSha256,
+      zipSha256Matches: v9DeliveryZipSha256 !== null && v9DeliveryZipSha256 === v9DeliveryZipSidecar,
+      manifestArtifacts: v9DeliveryManifestArtifacts,
+      checksummedFiles: v9DeliveryChecksummedFiles,
+    },
+    secretScan: {
+      status: v9ReleaseManifestValid && v9SecretFindings.length === 0 ? "proven" : "incomplete",
+      roots: v9SecretScanRoots,
+      findingCount: v9SecretFindings.length,
+      findings: v9SecretFindings,
+    },
+  },
   items,
   nextRequiredActions: items
     .filter((item) => item.status !== "proven")
     .map((item) => ({ id: item.id, requirement: item.requirement, details: item.details })),
 };
 
-console.log(JSON.stringify(result, null, 2));
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  console.log(JSON.stringify(result, null, 2));
+}

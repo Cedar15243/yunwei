@@ -1,0 +1,22 @@
+[Unit]
+Description=Dingdang V9 independent availability and backup monitor
+After=network-online.target dingdang-v9-gateway.service dingdang-v9-backup.timer
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/dingdang-v9-monitor.env
+ExecStart=/usr/bin/python3 /opt/dingdang-v9-monitor/current/monitoring_probe.py
+StateDirectory=dingdang-v9-monitor
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadOnlyPaths=/var/backups/dingdang-v9-gateway
+ReadWritePaths=/var/lib/dingdang-v9-monitor

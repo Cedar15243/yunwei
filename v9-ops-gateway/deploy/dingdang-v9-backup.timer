@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Dingdang V9 gateway backup
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=dingdang-v9-backup.service
+
+[Install]
+WantedBy=timers.target

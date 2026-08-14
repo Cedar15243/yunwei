@@ -1,6 +1,9 @@
-node_modules
-dist
+.git
 .env
 .env.*
-coverage
-
+!.env.cloud.example
+deploy-state
+dist
+node_modules
+npm-debug.log*
+test_deployment.py

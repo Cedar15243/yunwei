@@ -29,7 +29,7 @@ public final class AIAbilityConfig {
         EXPERT_COLLAB,
         SKILL_CENTER,
         AGENT_CENTER,
-        PLACEHOLDER
+        OPERATION_DETAIL
     }
 
     private final String id;
@@ -54,7 +54,7 @@ public final class AIAbilityConfig {
         this.title = requireText(title, "title");
         this.icon = requireText(icon, "icon");
         this.status = status == null ? Status.PREVIEW : status;
-        this.route = route == null ? Route.PLACEHOLDER : route;
+        this.route = route == null ? Route.OPERATION_DETAIL : route;
         this.summary = requireText(summary, "summary");
         this.pageDescription = requireText(pageDescription, "pageDescription");
         this.voiceCommand = requireText(voiceCommand, "voiceCommand");
@@ -85,22 +85,22 @@ public final class AIAbilityConfig {
                 "expert_collab", "专家协同", "专", Status.ONLINE, Route.EXPERT_COLLAB,
                 "远程视频与现场指导", "复用现有专家实时视频协同与标注流程。", "可以说：“小叮当，呼叫专家”"));
         configs.add(new AIAbilityConfig(
-                "perception", "现场拍照", "拍", Status.ONLINE, Route.PLACEHOLDER,
+                "perception", "现场拍照", "拍", Status.ONLINE, Route.OPERATION_DETAIL,
                 "照片与语音联合取证", "拍摄全景、近景或验证照片，并与本轮语音描述一起关联到当前维修任务。", "可以说：“小叮当，现场拍照”"));
         configs.add(new AIAbilityConfig(
-                "video_evidence", "短视频取证", "录", Status.ONLINE, Route.PLACEHOLDER,
+                "video_evidence", "短视频取证", "录", Status.ONLINE, Route.OPERATION_DETAIL,
                 "最长 15 秒现场记录", "录制设备运行、异响或操作过程，并关联当前任务供复核。", "可以说：“小叮当，短视频取证”"));
         configs.add(new AIAbilityConfig(
-                "inspection", "巡检任务", "巡", Status.LOCAL, Route.PLACEHOLDER,
+                "inspection", "巡检任务", "巡", Status.LOCAL, Route.OPERATION_DETAIL,
                 "逐点拍照与 AI 识别", "逐点拍照、AI 识别、前后值比较和人工确认，并生成本机巡检记录。", "可以说：“小叮当，巡检任务”"));
         configs.add(new AIAbilityConfig(
-                "tasks", "维修任务", "任", Status.LOCAL, Route.PLACEHOLDER,
+                "tasks", "维修任务", "任", Status.LOCAL, Route.OPERATION_DETAIL,
                 "当前维修步骤与记录", "展示本机当前维修任务、证据和步骤进度。", "可以说：“小叮当，维修任务”"));
         configs.add(new AIAbilityConfig(
-                "knowledge", "华方知识库", "知", Status.LOCAL, Route.PLACEHOLDER,
+                "knowledge", "华方知识库", "知", Status.LOCAL, Route.OPERATION_DETAIL,
                 "SOP、手册与技术资料", "查看本机资料与企业知识服务连接状态，并按系统浏览目录。", "可以说：“小叮当，华方知识库”"));
         configs.add(new AIAbilityConfig(
-                "device_brain", "设备记忆", "忆", Status.LOCAL, Route.PLACEHOLDER,
+                "device_brain", "设备记忆", "忆", Status.LOCAL, Route.OPERATION_DETAIL,
                 "设备事实、故障与经验", "查看本机设备目录中的品牌、型号、数量、巡检与维修记录。", "可以说：“小叮当，设备记忆”"));
         configs.add(new AIAbilityConfig(
                 "agent_center", "AI运维技能", "技", Status.LOCAL, Route.AGENT_CENTER,

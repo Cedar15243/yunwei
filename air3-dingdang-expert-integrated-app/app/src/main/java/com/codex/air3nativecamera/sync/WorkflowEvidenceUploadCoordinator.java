@@ -49,6 +49,26 @@ public final class WorkflowEvidenceUploadCoordinator {
                 throws IOException;
     }
 
+    /** Allows the transport to stream persisted media with resumable chunks. */
+    public interface ResumableTransport extends Transport {
+        String uploadResumable(PendingEvidence evidence, File file, String capturedAt)
+                throws IOException;
+    }
+
+    public interface CancellableResumableTransport extends ResumableTransport {
+        void cancelActiveUpload();
+    }
+
+    public static final class UploadCancelledException extends IOException {
+        public UploadCancelledException() {
+            super("workflow evidence upload cancelled");
+        }
+
+        public UploadCancelledException(Throwable cause) {
+            super("workflow evidence upload cancelled", cause);
+        }
+    }
+
     public interface Acknowledger {
         boolean acknowledge(String assignmentId, String localEvidenceId, String remoteAssetId);
     }
@@ -118,6 +138,7 @@ public final class WorkflowEvidenceUploadCoordinator {
     private final Map<String, Long> retryAt = new HashMap<>();
     private boolean running;
     private boolean rerunRequested;
+    private boolean cancelled;
 
     public WorkflowEvidenceUploadCoordinator(
             File filesRoot,
@@ -151,6 +172,7 @@ public final class WorkflowEvidenceUploadCoordinator {
     }
 
     public synchronized void request() {
+        if (cancelled) return;
         if (running) {
             rerunRequested = true;
             return;
@@ -181,6 +203,14 @@ public final class WorkflowEvidenceUploadCoordinator {
         return running;
     }
 
+    public synchronized void cancel() {
+        cancelled = true;
+        rerunRequested = false;
+        if (transport instanceof CancellableResumableTransport) {
+            ((CancellableResumableTransport) transport).cancelActiveUpload();
+        }
+    }
+
     private void deliver() {
         List<PendingEvidence> values;
         try {
@@ -194,15 +224,23 @@ public final class WorkflowEvidenceUploadCoordinator {
         Set<String> seen = new HashSet<>();
         int attempted = 0;
         for (PendingEvidence evidence : values) {
+            if (isCancelled()) break;
             if (evidence == null || attempted >= MAX_UPLOADS_PER_RUN) break;
             String key = evidence.assignmentId() + ":" + evidence.localEvidenceId();
             if (!seen.add(key) || !ready(key, clock.now())) continue;
             attempted++;
             try {
                 File file = resolve(evidence.localReference());
-                byte[] bytes = read(file, evidence.maximumBytes());
-                String remoteAssetId = transport.upload(
-                        evidence, bytes, timestamp(file.lastModified()));
+                String capturedAt = timestamp(file.lastModified());
+                String remoteAssetId;
+                if (transport instanceof ResumableTransport) {
+                    remoteAssetId = ((ResumableTransport) transport).uploadResumable(
+                            evidence, file, capturedAt);
+                } else {
+                    byte[] bytes = read(file, evidence.maximumBytes());
+                    remoteAssetId = transport.upload(evidence, bytes, capturedAt);
+                }
+                if (isCancelled()) throw new UploadCancelledException();
                 if (!acknowledger.acknowledge(
                         evidence.assignmentId(), evidence.localEvidenceId(), remoteAssetId)) {
                     throw new IOException("workflow_evidence_acknowledge_failed");
@@ -211,10 +249,17 @@ public final class WorkflowEvidenceUploadCoordinator {
                     failureCounts.remove(key);
                     retryAt.remove(key);
                 }
+            } catch (UploadCancelledException exception) {
+                break;
             } catch (IOException | RuntimeException exception) {
+                if (isCancelled()) break;
                 markFailed(key, clock.now());
             }
         }
+    }
+
+    private synchronized boolean isCancelled() {
+        return cancelled;
     }
 
     private synchronized boolean ready(String key, long now) {

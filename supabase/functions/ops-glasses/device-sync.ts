@@ -31,6 +31,15 @@ export type DeviceSyncGateway = {
   appendEvent(identity: DeviceSyncIdentity, event: DeviceSyncEvent): Promise<{ duplicate: boolean }>;
 };
 
+class DeviceSyncHttpError extends Error {
+  constructor(
+    readonly code: string,
+    readonly status: 403 | 409,
+  ) {
+    super(code);
+  }
+}
+
 const eventTypes = new Set([
   "task_started", "user_message", "voice_transcript", "photo_captured", "video_recorded",
   "ai_response", "step_changed", "task_completed", "task_closed", "media_upload_failed",
@@ -69,8 +78,15 @@ export async function routeDeviceSync(request: Request, gateway: DeviceSyncGatew
 
   const event = await request.json().catch(() => null);
   if (!isDeviceSyncEvent(event)) return response({ ok: false, error: "invalid_event" }, 400);
-  const result = await gateway.appendEvent(identity, event);
-  return response({ ok: true, duplicate: result.duplicate }, 202);
+  try {
+    const result = await gateway.appendEvent(identity, event);
+    return response({ ok: true, duplicate: result.duplicate }, 202);
+  } catch (error) {
+    if (error instanceof DeviceSyncHttpError) {
+      return response({ ok: false, error: error.code }, error.status);
+    }
+    throw error;
+  }
 }
 
 export function createDeviceSyncGateway(supabase: any): DeviceSyncGateway {
@@ -114,7 +130,7 @@ export function createDeviceSyncGateway(supabase: any): DeviceSyncGateway {
       };
     },
     async appendEvent(identity, event) {
-      const project = await upsertProject(supabase, identity, event);
+      const project = await resolveProject(supabase, identity, event);
       const task = await upsertTask(supabase, identity, event, project.id);
       const { data: existing, error: existingError } = await supabase
         .from("task_events")
@@ -141,16 +157,91 @@ export function createDeviceSyncGateway(supabase: any): DeviceSyncGateway {
   };
 }
 
-async function upsertProject(supabase: any, identity: DeviceSyncIdentity, event: DeviceSyncEvent): Promise<{ id: string }> {
-  const { data, error } = await supabase.from("ops_projects").upsert({
-    organization_id: identity.organizationId,
-    created_by: identity.actorProfileId,
-    local_project_id: event.localProjectId,
-    title: event.projectTitle,
-    status: "active",
-  }, { onConflict: "organization_id,local_project_id" }).select("id").single();
+async function resolveProject(
+  supabase: any,
+  identity: DeviceSyncIdentity,
+  event: DeviceSyncEvent,
+): Promise<{ id: string }> {
+  const { data: existing, error: existingError } = await supabase
+    .from("ops_projects")
+    .select("id, status")
+    .eq("organization_id", identity.organizationId)
+    .eq("local_project_id", event.localProjectId)
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing) {
+    if (existing.status !== "active") {
+      throw new DeviceSyncHttpError("project_inactive", 409);
+    }
+    if (!await deviceMayAccessProject(supabase, identity, String(existing.id))) {
+      throw new DeviceSyncHttpError("project_access_forbidden", 403);
+    }
+    return { id: String(existing.id) };
+  }
+
+  if (event.eventType !== "task_started") {
+    throw new DeviceSyncHttpError("project_not_registered", 409);
+  }
+  if (!await hasCompatibleDeviceBinding(supabase, identity, null)) {
+    throw new DeviceSyncHttpError("project_access_forbidden", 403);
+  }
+
+  const { data, error } = await supabase.rpc("register_device_project_from_task_start", {
+    target_organization_id: identity.organizationId,
+    target_actor_profile_id: identity.actorProfileId,
+    target_device_id: identity.deviceId,
+    target_local_project_id: event.localProjectId,
+    target_project_title: event.projectTitle,
+  });
+  if (error) throw projectRegistrationHttpError(error) ?? error;
+  const registered = firstRow(data);
+  if (!registered || registered.project_status !== "active") {
+    throw new DeviceSyncHttpError("project_inactive", 409);
+  }
+  const projectId = String(registered.project_id ?? "");
+  if (!projectId || !await deviceMayAccessProject(supabase, identity, projectId)) {
+    throw new DeviceSyncHttpError("project_access_forbidden", 403);
+  }
+  return { id: projectId };
+}
+
+export async function deviceMayAccessProject(
+  supabase: any,
+  identity: DeviceSyncIdentity,
+  projectId: string,
+): Promise<boolean> {
+  const [{ data: membership, error: membershipError }, bindingAllowed] = await Promise.all([
+    supabase
+      .from("ops_project_memberships")
+      .select("id")
+      .eq("organization_id", identity.organizationId)
+      .eq("project_id", projectId)
+      .eq("profile_id", identity.actorProfileId)
+      .eq("status", "active")
+      .maybeSingle(),
+    hasCompatibleDeviceBinding(supabase, identity, projectId),
+  ]);
+  if (membershipError) throw membershipError;
+  return Boolean(membership) && bindingAllowed;
+}
+
+async function hasCompatibleDeviceBinding(
+  supabase: any,
+  identity: DeviceSyncIdentity,
+  projectId: string | null,
+): Promise<boolean> {
+  const { data: bindings, error } = await supabase
+    .from("device_bindings")
+    .select("id, project_id")
+    .eq("organization_id", identity.organizationId)
+    .eq("device_id", identity.deviceId)
+    .eq("profile_id", identity.actorProfileId)
+    .eq("status", "active");
   if (error) throw error;
-  return data;
+  if (!Array.isArray(bindings)) return false;
+  return bindings.some((binding: Record<string, unknown>) =>
+    projectId === null ? binding.project_id === null : binding.project_id === null || binding.project_id === projectId
+  );
 }
 
 async function upsertTask(
@@ -175,6 +266,20 @@ function taskStatus(eventType: string): "active" | "completed" | "closed" {
   if (eventType === "task_completed") return "completed";
   if (eventType === "task_closed") return "closed";
   return "active";
+}
+
+function projectRegistrationHttpError(error: unknown): DeviceSyncHttpError | null {
+  const message = String((error as Record<string, unknown> | null)?.message ?? error).toLowerCase();
+  if (message.includes("project_access_forbidden")) {
+    return new DeviceSyncHttpError("project_access_forbidden", 403);
+  }
+  if (message.includes("project_inactive")) {
+    return new DeviceSyncHttpError("project_inactive", 409);
+  }
+  if (message.includes("project_not_registered")) {
+    return new DeviceSyncHttpError("project_not_registered", 409);
+  }
+  return null;
 }
 
 function isDeviceSyncEvent(value: unknown): value is DeviceSyncEvent {

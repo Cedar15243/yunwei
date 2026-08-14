@@ -54,6 +54,13 @@ public final class TaskSessionManager {
         return true;
     }
 
+    public boolean complete(String taskId) {
+        TaskSession session = find(taskId);
+        if (session == null) return false;
+        session.setStatus(TaskSession.Status.COMPLETED);
+        return true;
+    }
+
     public boolean resume(String taskId) {
         TaskSession session = find(taskId);
         if (session == null || session.status() == TaskSession.Status.COMPLETED) {
@@ -72,8 +79,11 @@ public final class TaskSessionManager {
 
     public TaskSession findProject(String projectId) {
         if (projectId != null) {
-            for (TaskSession session : sessions.values()) {
-                if (projectId.equals(session.projectId())) {
+            List<TaskSession> ordered = new ArrayList<>(sessions.values());
+            for (int index = ordered.size() - 1; index >= 0; index--) {
+                TaskSession session = ordered.get(index);
+                if (projectId.equals(session.projectId())
+                        && session.status() != TaskSession.Status.COMPLETED) {
                     return session;
                 }
             }

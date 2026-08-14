@@ -1,0 +1,85 @@
+.governance-loading{min-height:420px}
+.governance-directory-grid{display:grid;grid-template-columns:300px minmax(0,1fr);min-height:520px;border:1px solid var(--line);background:var(--glass)}
+.governance-directory-list{border-right:1px solid var(--line);background:rgba(247,250,248,.56)}
+.governance-directory-row{display:grid;grid-template-columns:34px minmax(0,1fr) 28px;gap:10px;align-items:center;width:100%;min-height:70px;padding:12px 14px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}
+.governance-directory-row:hover,.governance-directory-row.selected{background:var(--mint-soft)}
+.governance-directory-row small{display:block;margin-top:4px;color:var(--muted)}
+.directory-count{display:grid;place-items:center;width:25px;height:25px;border:1px solid var(--line);background:#fff;color:var(--muted);font-size:11px}
+.governance-detail-pane{min-width:0}
+.governance-pane-state{min-height:180px;padding:28px;color:var(--muted)}
+.governance-pane-state.error{color:#8c302b}
+.governance-version-row{border-bottom:1px solid var(--line);padding:18px;background:rgba(255,255,255,.32)}
+.version-primary,.version-primary>div,.version-actions,.assignment-list>header,.assignment-row{display:flex;align-items:center}
+.version-primary{justify-content:space-between;gap:16px}
+.version-primary>div{gap:9px}.version-primary>div>strong{font-size:17px}
+.version-metadata{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:14px 0 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.version-metadata>div{min-width:0;padding:12px;border-right:1px solid var(--line)}
+.version-metadata>div:last-child{border-right:0}
+.version-metadata dt{color:var(--muted);font-size:11px}
+.version-metadata dd{margin:6px 0 0;overflow-wrap:anywhere;font-size:12px;line-height:1.5}
+.version-metadata code{font-size:11px}
+.knowledge-metadata{grid-template-columns:repeat(4,minmax(0,1fr))}
+.version-summary{margin:12px 0 0;color:var(--muted);font-size:13px;line-height:1.65}
+.version-actions{flex-wrap:wrap;gap:8px;padding:14px 0}
+.danger-button{border-color:#d7b5b2;color:#8c302b}
+.assignment-list{border-top:1px solid var(--line)}
+.assignment-list>header{justify-content:space-between;min-height:42px;color:var(--muted);font-size:12px}
+.assignment-row{display:grid;grid-template-columns:minmax(0,1fr) 150px 90px;gap:12px;min-height:56px;border-top:1px solid var(--line)}
+.assignment-row small{display:block;margin-top:4px;color:var(--muted);font-size:11px}
+.assignment-empty{margin:0;padding:14px 0;color:var(--muted);font-size:12px}
+.inline-danger{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:32px;border:1px solid #d7b5b2;background:#fff;color:#8c302b;cursor:pointer}
+.sensitivity{padding:3px 7px;border:1px solid var(--line);font-size:11px;color:var(--muted)}
+.sensitivity.confidential,.sensitivity.restricted{border-color:#d3ad76;background:#fff8e8;color:#7d551a}
+.processing-error{padding:10px;border:1px solid #d6a6a2;background:#fffafa;color:#8c302b;font-size:12px}
+.status.draft,.status.uploaded,.status.parsed{background:#edf0ee;color:#59665f}
+.status.review_pending,.status.scanning,.status.parsing{background:#fff2d8;color:#825817}
+.status.published{background:var(--mint-soft);color:#155b44}
+.status.deprecated,.status.expired,.status.archived,.status.revoked{background:#ece8e6;color:#6f5f58}
+.governance-dialog{width:min(760px,100%)}
+.governance-dialog .dialog-copy{margin:0;color:var(--muted);font-size:13px;line-height:1.65}
+.dialog-grid{display:grid;gap:14px}.dialog-grid.two-column{grid-template-columns:1fr 1fr}
+.governance-dialog form{gap:14px}.governance-dialog label{margin:0}
+.governance-directory-row:focus-visible,.inline-danger:focus-visible{outline:3px solid rgba(44,141,114,.28);outline-offset:-3px}
+.knowledge-attachments{margin-top:14px;border-top:1px solid var(--line);padding-top:14px}
+.knowledge-attachments>header{display:flex;align-items:center;justify-content:space-between;min-height:36px;color:var(--muted);font-size:12px}
+.knowledge-attachment-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:10px 0;border-top:1px solid var(--line)}
+.knowledge-attachment-main{display:flex;min-width:0;gap:8px;align-items:flex-start}
+.knowledge-attachment-main>svg{flex:0 0 auto;margin-top:2px;color:var(--mint)}
+.knowledge-attachment-main>span{display:grid;min-width:0;gap:4px}
+.knowledge-attachment-main strong{overflow-wrap:anywhere;font-size:12px}
+.knowledge-attachment-main small{overflow-wrap:anywhere;color:var(--muted);font-size:11px;line-height:1.45}
+.knowledge-attachment-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+.attachment-current{padding:3px 7px;background:var(--mint-soft);color:#155b44;font-size:11px;white-space:nowrap}
+.knowledge-attachment-upload{position:relative;overflow:hidden;width:max-content;margin-top:12px}
+.knowledge-attachment-upload input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.knowledge-attachment-upload input:disabled{cursor:wait}
+
+@media(max-width:1200px){
+  .shell{grid-template-columns:220px 1fr}
+  .nav{padding-inline:12px}
+  .command-bar{padding-inline:28px}
+  .content{margin-inline:28px}
+  .governance-directory-grid{grid-template-columns:260px minmax(0,1fr)}
+  .knowledge-metadata{grid-template-columns:1fr 1fr}
+  .assignment-row{grid-template-columns:minmax(0,1fr) 120px 80px}
+}
+
+@media(max-width:1080px){
+  body:has(.governance-page){min-width:0}
+}
+@media(max-width:720px){
+  .governance-directory-grid{grid-template-columns:1fr;min-height:0}
+  .governance-directory-list{max-height:220px;overflow:auto;border-right:0;border-bottom:1px solid var(--line)}
+  .governance-directory-row{min-height:58px;padding:10px 12px}
+  .governance-version-row{padding:14px}
+  .version-primary{align-items:flex-start;flex-direction:column;gap:8px}
+  .version-primary>div{flex-wrap:wrap}
+  .version-metadata,.knowledge-metadata{grid-template-columns:1fr}
+  .version-metadata>div{border-right:0;border-bottom:1px solid var(--line)}
+  .version-metadata>div:last-child{border-bottom:0}
+  .assignment-row{grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:10px 0}
+  .assignment-row time{grid-column:1/-1;grid-row:2}
+  .assignment-row .inline-danger{grid-column:2;grid-row:1/3;align-self:center}
+  .knowledge-attachment-row{grid-template-columns:1fr}
+  .knowledge-attachment-actions{justify-content:flex-start}
+}

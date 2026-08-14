@@ -1,7 +1,12 @@
-# Install this as a separate Caddy site block after DNS points the management
-# subdomain to the cloud server. Do not add it to the existing expert site block.
+# Rendered by deploy/merge_caddy.py as a separately managed site block.
+# Do not place management routes inside the existing expert site block.
 {$OPS_MANAGEMENT_DOMAIN} {
     encode gzip zstd
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        -Server
+    }
     reverse_proxy 127.0.0.1:8788
 }
-

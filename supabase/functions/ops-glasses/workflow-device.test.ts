@@ -462,6 +462,17 @@ Deno.test("rejects direct revocation malformed reports and backward transitions"
     ),
     gateway(),
   );
+  const completedDirectly = await routeWorkflowDevice(
+    request(
+      "POST",
+      "/device-sync/workflows/assignments/assignment-a/status",
+      {
+        token: "access-token",
+        body: { status: "completed", idempotencyKey: "completed-a" },
+      },
+    ),
+    gateway(),
+  );
   const backward = await routeWorkflowDevice(
     request(
       "POST",
@@ -483,6 +494,7 @@ Deno.test("rejects direct revocation malformed reports and backward transitions"
 
   assertEquals(revoked.status, 400);
   assertEquals(failedWithoutReason.status, 400);
+  assertEquals(completedDirectly.status, 400);
   assertEquals(backward.status, 409);
   assertEquals(
     (await backward.json()).error,

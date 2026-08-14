@@ -1,10 +1,10 @@
 param(
   [string]$Serial = "YM00FCF3NW0031",
-  [string]$Package = "com.codex.air3nativecamera.dingdangops",
+  [string]$Package = "com.codex.air3nativecamera.dingdangexpert.v9",
   [string]$Activity = "com.codex.air3nativecamera.MainActivity",
   [string]$SystemCameraPackage = "com.inmo.camera_extreme",
-  [int]$ExpectedVersionCode = 602,
-  [string]$ExpectedVersionName = "6.0.2-chat",
+  [int]$ExpectedVersionCode = 900000,
+  [string]$ExpectedVersionName = "9.0.0",
   [ValidateSet("SystemCamera", "AppCameraWhenDelivered")]
   [string]$CameraKeyMode = "SystemCamera",
   [int]$WaitSeconds = 30,
@@ -19,16 +19,50 @@ $OutputEncoding = $utf8NoBom
 [Console]::InputEncoding = $utf8NoBom
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+function Resolve-AdbPath {
+  $candidates = New-Object System.Collections.Generic.List[string]
+  $candidates.Add((Join-Path $repoRoot "tmp\tools\platform-tools\adb.exe"))
+  try {
+    $gitCommonDirValue = (& git -C $repoRoot rev-parse --git-common-dir 2>$null | Select-Object -First 1)
+    if ($LASTEXITCODE -eq 0 -and $gitCommonDirValue) {
+      $gitCommonDir = if ([System.IO.Path]::IsPathRooted($gitCommonDirValue)) {
+        $gitCommonDirValue
+      } else {
+        Join-Path $repoRoot $gitCommonDirValue
+      }
+      $mainRepoRoot = Split-Path -Parent ([System.IO.Path]::GetFullPath($gitCommonDir))
+      $candidates.Add((Join-Path $mainRepoRoot "tmp\tools\platform-tools\adb.exe"))
+    }
+  } catch {
+  }
+  foreach ($sdk in @(
+      $env:ANDROID_SDK_ROOT,
+      $env:ANDROID_HOME,
+      "C:\Users\59979\UnityEditors\2022.3.62f3c1\Editor\Data\PlaybackEngines\AndroidPlayer\SDK")) {
+    if ($sdk) {
+      $candidates.Add((Join-Path $sdk "platform-tools\adb.exe"))
+    }
+  }
+  foreach ($candidate in ($candidates | Select-Object -Unique)) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+      return $candidate
+    }
+  }
+  $pathCommand = Get-Command adb.exe -ErrorAction SilentlyContinue
+  if ($pathCommand) {
+    return $pathCommand.Source
+  }
+  throw "adb.exe was not found in the worktree, main repository, Android SDK, or PATH."
+}
+
 if (-not $OutDir) {
   $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
   $OutDir = Join-Path $repoRoot "tmp\sidekey-shortcut-regression-$stamp"
 }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-$adb = Join-Path $repoRoot "tmp\tools\platform-tools\adb.exe"
-if (-not (Test-Path -LiteralPath $adb)) {
-  $adb = "adb"
-}
+$adb = Resolve-AdbPath
 
 function Invoke-AdbText {
   param([string[]]$Arguments)

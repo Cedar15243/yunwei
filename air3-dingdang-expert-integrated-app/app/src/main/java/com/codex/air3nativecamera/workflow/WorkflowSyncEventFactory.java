@@ -13,7 +13,7 @@ import java.util.Set;
 
 public final class WorkflowSyncEventFactory {
     private static final Set<String> ASSIGNMENT_STATUSES = set(
-            "delivered", "verified", "ready", "active", "completed", "failed");
+            "delivered", "verified", "ready", "active", "failed");
     private static final Set<String> STEP_STATUSES = set(
             "pending", "active", "draft_saved", "waiting_upload",
             "waiting_server", "completed", "skipped", "failed");

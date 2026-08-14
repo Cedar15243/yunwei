@@ -95,6 +95,13 @@ public final class WorkflowSyncEventFactoryTest {
         assertEquals(EXECUTION_ID, new JSONObject(start.payload()).getString("executionId"));
     }
 
+    @Test
+    public void refusesToQueueDirectAssignmentCompletion() {
+        assertThrows(IllegalArgumentException.class, () -> WorkflowSyncEventFactory.assignmentStatus(
+                "project-a", "task-a", "assignment-a", "completed",
+                null, null, 1000L, "assignment-a:completed"));
+    }
+
     private WorkflowRuntimeState state() {
         return new WorkflowRuntimeState(
                 "33333333-3333-4333-8333-333333333333",

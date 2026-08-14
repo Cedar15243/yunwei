@@ -17,6 +17,7 @@ public final class VoiceCommandRouter {
         PERCEPTION,
         RECORD,
         DEVICE,
+        PROJECT_MEMORY,
         KNOWLEDGE,
         SKILL_CENTER,
         AGENT_CENTER,
@@ -69,9 +70,11 @@ public final class VoiceCommandRouter {
         register(Command.PERCEPTION, "现场感知", "现场采集");
         register(Command.RECORD, "记录");
         register(Command.DEVICE, "设备", "设备记忆", "打开设备记忆");
+        register(Command.PROJECT_MEMORY, "项目记忆", "打开项目记忆", "历史项目", "查看历史项目",
+                "查看之前的项目记录", "查看项目记录", "继续之前的项目");
         register(Command.KNOWLEDGE, "知识库", "知识", "华方知识库", "打开华方知识库");
-        register(Command.SKILL_CENTER, "技能中心", "AI技能中心", "技能");
-        register(Command.AGENT_CENTER, "AI运维技能", "打开AI运维技能", "ai运维技能", "打开ai运维技能",
+        register(Command.AGENT_CENTER, "技能中心", "AI技能中心", "技能",
+                "AI运维技能", "打开AI运维技能", "ai运维技能", "打开ai运维技能",
                 "AI运维技能中心", "运维技能", "运维技能中心",
                 "智能体中心", "AI智能体", "Agent中心", "agent中心",
                 "AI Agent中心", "AIAgent中心", "打开AI Agent中心");
@@ -162,6 +165,7 @@ public final class VoiceCommandRouter {
             case INSPECTION:
             case KNOWLEDGE:
             case DEVICE:
+            case PROJECT_MEMORY:
             case AGENT_CENTER:
             case AGENT_SKILL_ACTION:
             case ENABLE_ENVIRONMENT_AGENT:

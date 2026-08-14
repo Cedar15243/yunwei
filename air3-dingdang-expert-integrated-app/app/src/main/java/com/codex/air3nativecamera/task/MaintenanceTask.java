@@ -1,5 +1,7 @@
 package com.codex.air3nativecamera.task;
 
+import com.codex.air3nativecamera.text.HudTextNormalizer;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -251,6 +253,10 @@ public final class MaintenanceTask {
         return repairSteps.isEmpty() ? "等待 AI 生成维修步骤" : repairSteps.get(repairStepIndex);
     }
 
+    public String currentRepairStepForHud() {
+        return HudTextNormalizer.normalize(currentRepairStep());
+    }
+
     public boolean advanceRepairStep() {
         if (repairSteps.isEmpty()) {
             return false;
@@ -450,13 +456,14 @@ public final class MaintenanceTask {
 
     private List<String> paginate(String text, int maxCharacters, String fallback) {
         int limit = Math.max(1, maxCharacters);
-        String source = text == null || text.length() == 0 ? fallback : text;
+        String source = HudTextNormalizer.normalize(
+                text == null || text.length() == 0 ? fallback : text);
         ArrayList<String> result = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         for (String sentence : splitSentences(source)) {
             int sentenceBudget = displayBudget(sentence);
             if (current.length() > 0 && displayBudget(current.toString()) + sentenceBudget > limit) {
-                result.add(current.toString());
+                addDisplayPage(result, current.toString());
                 current.setLength(0);
             }
             if (sentenceBudget > limit) {
@@ -466,10 +473,10 @@ public final class MaintenanceTask {
                     int characterBudget = sentence.charAt(index) == '\n' ? 25 : 1;
                     if (chunkBudget > 0 && chunkBudget + characterBudget > limit) {
                         if (current.length() > 0) {
-                            result.add(current.toString());
+                            addDisplayPage(result, current.toString());
                             current.setLength(0);
                         }
-                        result.add(sentence.substring(chunkStart, index));
+                        addDisplayPage(result, sentence.substring(chunkStart, index));
                         chunkStart = index;
                         chunkBudget = 0;
                     }
@@ -477,7 +484,7 @@ public final class MaintenanceTask {
                 }
                 if (chunkStart < sentence.length()) {
                     if (current.length() > 0) {
-                        result.add(current.toString());
+                        addDisplayPage(result, current.toString());
                         current.setLength(0);
                     }
                     current.append(sentence.substring(chunkStart));
@@ -487,9 +494,26 @@ public final class MaintenanceTask {
             }
         }
         if (current.length() > 0) {
-            result.add(current.toString());
+            addDisplayPage(result, current.toString());
         }
         return result;
+    }
+
+    private static void addDisplayPage(List<String> pages, String text) {
+        if (text == null || text.trim().length() == 0) {
+            return;
+        }
+        int start = 0;
+        int end = text.length();
+        while (start < end && (text.charAt(start) == '\n' || text.charAt(start) == '\r')) {
+            start++;
+        }
+        while (end > start && (text.charAt(end - 1) == '\n' || text.charAt(end - 1) == '\r')) {
+            end--;
+        }
+        if (start < end) {
+            pages.add(text.substring(start, end));
+        }
     }
 
     private static int displayBudget(String text) {

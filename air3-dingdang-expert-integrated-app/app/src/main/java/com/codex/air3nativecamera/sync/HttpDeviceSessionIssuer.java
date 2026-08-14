@@ -9,9 +9,18 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
 /** Exchanges a managed bootstrap credential for a short-lived access token. */
 public final class HttpDeviceSessionIssuer implements DeviceSessionManager.SessionIssuer {
+    private static final Set<String> AUTHORITATIVE_REVOCATION_CODES = new HashSet<>(
+            Arrays.asList(
+                    "device_revoked",
+                    "bootstrap_revoked",
+                    "account_disabled",
+                    "device_binding_revoked"));
     private final DeviceSyncConfiguration configuration;
     private final HttpConnectionFactory connectionFactory;
 
@@ -46,7 +55,7 @@ public final class HttpDeviceSessionIssuer implements DeviceSessionManager.Sessi
                     ? connection.getInputStream()
                     : connection.getErrorStream());
             if (status < 200 || status >= 300) {
-                throw new IOException("device_session_http_" + status);
+                throw httpFailure(status, responseBody);
             }
             JSONObject response = new JSONObject(responseBody);
             String accessToken = response.optString("accessToken", "").trim();
@@ -77,5 +86,39 @@ public final class HttpDeviceSessionIssuer implements DeviceSessionManager.Sessi
         int read;
         while ((read = input.read(buffer)) >= 0) output.write(buffer, 0, read);
         return output.toString(StandardCharsets.UTF_8.name());
+    }
+
+    private static DeviceSessionException httpFailure(int status, String responseBody) {
+        String errorCode = status >= 400 && status < 500
+                ? responseErrorCode(responseBody) : "";
+        if (errorCode.length() == 0) errorCode = "device_session_http_" + status;
+        return new DeviceSessionException(
+                errorCode,
+                status,
+                status >= 400 && status < 500
+                        && AUTHORITATIVE_REVOCATION_CODES.contains(errorCode));
+    }
+
+    private static String responseErrorCode(String responseBody) {
+        try {
+            JSONObject response = new JSONObject(responseBody == null ? "" : responseBody);
+            String candidate = safeCode(response.opt("error"));
+            if (candidate.length() == 0) candidate = safeCode(response.opt("code"));
+            return candidate;
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private static String safeCode(Object value) {
+        if (value instanceof JSONObject) {
+            JSONObject object = (JSONObject) value;
+            String nested = safeCode(object.opt("code"));
+            if (nested.length() > 0) return nested;
+            return safeCode(object.opt("error"));
+        }
+        if (!(value instanceof String)) return "";
+        String candidate = ((String) value).trim();
+        return candidate.matches("[a-z0-9_]{1,80}") ? candidate : "";
     }
 }

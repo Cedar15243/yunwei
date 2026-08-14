@@ -89,9 +89,9 @@
 @media(max-width:680px){#conversation .task-workspace{padding:19px 18px 16px}.conversation-query{max-width:88%;font-size:16px;margin-top:7px}.conversation-query .query-copy{padding:12px 15px}.conversation-query .query-user{width:31px;height:31px;font-size:15px}#conversation .task-evidence{max-width:88%}#conversation .answer{height:clamp(230px,48vh,360px);padding:19px 20px;border-radius:18px;font-size:17px}#conversation .conversation-pager span{font-size:12px}#conversation .conversation-actions{gap:18px;margin-top:14px}#conversation .conversation-actions button{font-size:14px}#conversation .conversation-actions .capture{min-width:112px;padding:12px 16px}#conversation .conversation-actions .voice-core{width:58px;height:58px;font-size:25px}#conversation .conversation-actions .continue{min-width:125px;padding:13px 15px}#conversation .task-nav{top:13px;right:14px}.app:has(#conversation.active) .view{padding:0}}
 </style>
 </head>
-<body><div class="app"><header class="top"><div class="brand"><button class="menu" data-a="openCapabilities" aria-label="AI能力中心">☰</button><div class="icon"><img src="brand-icon.png" alt=""></div><div><b>叮当 AI</b></div></div><div class="device"><i class="dot"></i>Air3 已连接</div></header><main class="view">
-<section id="standby" class="state active"><div class="tag">语音待命</div><h1>叮当 AI 运维助手</h1><div class="core"><svg class="mic-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><path d="M12 19v3"></path><path d="M8 22h8"></path></svg></div><div class="online">请说“小叮当”唤醒 · 听到提示音后再说命令</div><div class="quick-actions"><button class="camera" data-a="capturePhoto"><i>📷</i>现场拍照</button><button class="expert" data-a="openExpert"><i>☎</i>呼叫专家</button><button class="ability" data-a="openCapabilities"><i>✦</i>AI 能力中心</button></div><div class="learning-links"><button class="learning-link voice" data-a="openVoiceGuide"><i aria-hidden="true"></i><span><b>语音帮助</b><small>唤醒后说“帮助”</small></span></button><button class="learning-link glasses" data-a="openGlassesTutorial"><i aria-hidden="true">?</i><span><b>眼镜使用教学</b><small>唤醒后说“眼镜教学”</small></span></button></div></section>
-<section id="voiceGuide" class="state"><div class="box voice-guide"><button class="guide-close" data-a="goBack" aria-label="返回">×</button><div class="tag">语音帮助</div><h2>按当前页面说指令</h2><p class="lead">先说“小叮当”，听到提示音后，再说下面的指令。</p><div class="guide-grid"><div class="guide-card"><strong>全局导航</strong><span>返回 · 返回首页</span><span>打开 AI 能力中心</span><span>眼镜教学</span></div><div class="guide-card"><strong>现场采集</strong><span>现场拍照 · 短视频取证</span><span>仅发送图片 · 重拍</span><span>呼叫专家</span></div><div class="guide-card"><strong>任务对话与维修</strong><span>上一页 · 下一页 · 重复</span><span>补拍 · 重新分析</span><span>下一步 · 完成 · 异常</span></div><div class="guide-card"><strong>巡检与技能</strong><span>巡检任务 · 进入第一个选项</span><span>开始实训室设备巡检 · AI运维技能</span><span>启用环境诊断技能 · 停用环境诊断技能</span></div></div><div class="page-command-hint">任意页面可说“返回”或“返回首页”</div></div></section>
+<body><div class="app"><header class="top"><div class="brand"><button class="menu" data-a="toggleMenu" aria-label="菜单">☰</button><div class="icon"><img src="brand-icon.png" alt=""></div><div><b>叮当 AI</b></div></div><div class="device"><i class="dot"></i>Air3 已连接</div></header><main class="view">
+<section id="standby" class="state active"><div id="standbyTag" class="tag">语音待命</div><h1>叮当 AI 运维助手</h1><div class="core"><svg class="mic-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><path d="M12 19v3"></path><path d="M8 22h8"></path></svg></div><div id="standbyNotice" class="online">请说“小叮当”唤醒 · 听到提示音后再说命令</div><div class="quick-actions"><button class="camera" data-a="capturePhoto"><i>📷</i>现场拍照</button><button class="expert" data-a="openExpert"><i>☎</i>呼叫专家</button><button class="ability" data-a="openCapabilities"><i>✦</i>AI 能力中心</button></div><div class="learning-links"><button class="learning-link voice" data-a="openVoiceGuide"><i aria-hidden="true"></i><span><b>语音帮助</b><small>唤醒后说“帮助”</small></span></button><button class="learning-link glasses" data-a="openGlassesTutorial"><i aria-hidden="true">?</i><span><b>眼镜使用教学</b><small>唤醒后说“眼镜教学”</small></span></button></div></section>
+<section id="voiceGuide" class="state"><div class="box voice-guide"><button class="guide-close" data-a="goBack" aria-label="返回">×</button><div class="tag">语音帮助</div><h2>按当前页面说指令</h2><p class="lead">先说“小叮当”，听到提示音后，再说下面的指令。</p><div class="guide-grid"><div class="guide-card"><strong>全局导航</strong><span>返回 · 返回首页</span><span>打开 AI 能力中心</span><span>眼镜教学</span></div><div class="guide-card"><strong>现场采集</strong><span>现场拍照 · 短视频取证</span><span>仅发送图片 · 重拍</span><span>呼叫专家</span></div><div class="guide-card"><strong>任务对话与维修</strong><span>上一页 · 下一页 · 重复</span><span>补拍 · 重新分析 · 下一步 · 异常</span><span>结束当前任务 · 关闭当前任务并返回首页</span><span>以后在这个项目遇到……先……</span><span>确认执行 · 取消</span></div><div class="guide-card"><strong>巡检与技能</strong><span>巡检任务 · 进入第一个选项</span><span>开始实训室设备巡检 · AI运维技能</span><span>启用环境诊断技能 · 停用环境诊断技能</span></div></div><div class="page-command-hint">任意页面可说“返回”或“返回首页”</div></div></section>
 <section id="glassesGuide" class="state"><div class="box voice-guide"><button class="guide-close" data-a="goBack" aria-label="返回">×</button><div class="tag">眼镜使用教学</div><h2>现场使用四步</h2><p class="lead">每次唤醒后等待提示音，再说操作指令。</p><div class="guide-grid"><div class="guide-card"><strong>1. 确认待命</strong><span>确认 Air3 已连接</span><span>确认麦克风权限已开启</span><span>首页显示“语音待命”</span></div><div class="guide-card"><strong>2. 唤醒并说指令</strong><span>先说：小叮当</span><span>听到提示音</span><span>再说：开始诊断</span></div><div class="guide-card"><strong>3. 提交现场证据</strong><span>拍照后照片会等待 30 秒</span><span>可唤醒后补充现场描述</span><span>也可说：仅发送图片</span></div><div class="guide-card"><strong>4. 继续任务</strong><span>结果过长可说：下一页</span><span>维修时可说：下一步</span><span>需人工支持可说：呼叫专家</span></div></div><div class="page-command-hint">可说“返回”退出教学，或“返回首页”回到待命</div></div></section>
 <section id="photoDraft" class="state"><div class="box task-workspace"><div class="task-presence"><i></i><span>现场证据已保留</span><small>照片尚未发送给 AI</small></div><div class="tag">照片待发送</div><h2>是否补充现场描述？</h2><p class="lead">如需补充描述，请说“小叮当”唤醒，再说出现场问题。</p><div class="page-command-hint">照片将等待 30 秒 · 超时无输入将自动仅发送图片 · 也可直接说“仅发送图片”</div></div></section>
 <section id="listening" class="state"><div class="tag">正在监听</div><h2>请描述现场问题</h2><div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="online" id="transcript">正在识别现场描述</div><div class="input-summary"><span id="imageStatus">图片：未上传</span><span id="voiceStatus">语音：正在识别</span></div><div class="page-command-hint">可说：“返回首页”退出本次输入</div></section>
@@ -104,11 +104,12 @@
 <section id="error" class="state"><div class="box task-workspace"><div class="task-presence"><i></i><span>AI 运维指导</span><small id="errorTranscript">本轮语音和现场证据仍保留在当前任务</small></div><div class="tag">AI 服务暂不可用</div><h2>未生成诊断结论</h2><div id="errorMessage" class="answer">请说“重试”重新描述现场问题，或说“呼叫专家”进入远程协同。</div><div class="pager"><span>不会将本次错误写入维修记录</span><button id="errorAction" class="command" data-a="retryAi">语音重试</button></div></div></section>
 <section id="abilityDetail" class="state"><div class="box task-workspace"><div class="task-presence"><i></i><span>AI 能力说明</span><small id="abilityCommand">可通过语音调用</small></div><div id="abilityTag" class="tag">AI 能力</div><h2 id="abilityTitle">能力说明</h2><div id="abilityDescription" class="answer">该能力的接入范围会显示在这里。</div><div class="pager"><button class="command" data-a="openCapabilities">返回能力中心</button><button class="command" data-a="goBack">返回待命</button></div><div class="page-command-hint">可说：“返回”回能力中心，或“返回首页”回待命页</div></div></section>
 <section id="operationDetail" class="state"><div class="box task-workspace"><div class="task-presence"><i></i><span>AI 本地任务能力</span><small id="operationScope">本机任务数据已加载</small></div><div id="operationTag" class="tag">本地能力</div><h2 id="operationTitle">能力详情</h2><p id="operationDescription" class="lead"></p><div id="operationItems" class="operation-items"></div><div class="operation-pager"><button id="operationPrevious" aria-label="上一页">‹</button><span id="operationPage">1 / 1</span><button id="operationNext" aria-label="下一页">›</button></div><div class="operation-actions"><button id="operationSecondary" class="command" hidden></button><button id="operationPrimary" class="command" hidden></button><button class="command" data-a="openCapabilities">返回能力中心</button></div><div class="page-command-hint">可说：“上一页 / 下一页 / 返回 / 返回首页”</div></div></section>
-<section id="capabilities" class="state"><div class="box"><div class="tag">AI 能力中心</div><h2>现场能力</h2><div class="caps"><button class="cap" data-r="listening"><i>诊</i><strong>AI 故障诊断</strong><small>图片与语音联合分析</small><em>可说：开始诊断</em></button><button class="cap" data-r="expert"><i>专</i><strong>专家协同</strong><small>实时视频、标注与远程指导</small><em>可说：呼叫专家</em></button><button class="cap" data-a="capturePhoto"><i>拍</i><strong>现场拍照</strong><small>补充全景、近景与验证照片</small><em>可说：现场拍照</em></button><button class="cap" data-a="captureVideo"><i>录</i><strong>短视频取证</strong><small>最长 15 秒，关联当前维修任务</small><em>可说：短视频取证</em></button><button class="cap" data-r="inspection"><i>巡</i><strong>巡检任务</strong><small>逐点拍照、AI 识别与记录</small><em>可说：巡检任务</em></button><button class="cap" data-r="tasks"><i>任</i><strong>维修任务</strong><small>任务恢复、步骤与维修记录</small><em>可说：维修任务</em></button><button class="cap" data-r="knowledge"><i>知</i><strong>华方知识库</strong><small>本机资料与企业连接状态</small><em>可说：华方知识库</em></button><button class="cap" data-r="memory"><i>忆</i><strong>设备记忆</strong><small>品牌、型号、巡检与维修记录</small><em>可说：设备记忆</em></button><button class="cap" data-r="agent"><i>技</i><strong>AI运维技能</strong><small>现场技能包与本机授权</small><em>可说：AI运维技能</em></button></div><div class="page-command-hint">可说：“返回”关闭能力中心，或“返回首页”回待命页</div><button class="command" data-a="goBack">返回待命</button></div></section>
+<section id="capabilities" class="state"><div class="box"><div class="tag">AI 能力中心</div><h2>现场能力</h2><div class="capability-shortcuts" hidden><button data-r="project_memory"><i>项</i><span>项目记忆</span></button><button data-r="settings"><i>设</i><span>设置</span></button></div><div class="caps"><button class="cap" data-r="listening"><i>诊</i><strong>AI 故障诊断</strong><small>图片与语音联合分析</small><em>可说：开始诊断</em></button><button class="cap" data-r="expert"><i>专</i><strong>专家协同</strong><small>实时视频、标注与远程指导</small><em>可说：呼叫专家</em></button><button class="cap" data-a="capturePhoto"><i>拍</i><strong>现场拍照</strong><small>补充全景、近景与验证照片</small><em>可说：现场拍照</em></button><button class="cap" data-a="captureVideo"><i>录</i><strong>短视频取证</strong><small>最长 15 秒，关联当前维修任务</small><em>可说：短视频取证</em></button><button class="cap" data-r="inspection"><i>巡</i><strong>巡检任务</strong><small>逐点拍照、AI 识别与记录</small><em>可说：巡检任务</em></button><button class="cap" data-r="tasks"><i>任</i><strong>维修任务</strong><small>任务恢复、步骤与维修记录</small><em>可说：维修任务</em></button><button class="cap" data-r="knowledge"><i>知</i><strong>华方知识库</strong><small>本机资料与企业连接状态</small><em>可说：华方知识库</em></button><button class="cap" data-r="memory"><i>忆</i><strong>设备记忆</strong><small>品牌、型号、巡检与维修记录</small><em>可说：设备记忆</em></button><button class="cap" data-r="agent"><i>技</i><strong>AI运维技能</strong><small>现场技能包与本机授权</small><em>可说：AI运维技能</em></button></div><div class="page-command-hint">可说：“返回”关闭能力中心，或“返回首页”回待命页</div><button class="command" data-a="goBack">返回待命</button></div></section>
 </main><div class="dock"><button data-a="capturePhoto">📷 现场拍照</button><button class="primary" data-a="startVoice">🎙 语音提问</button></div></div>
 <script>(function(){var lastTranscript='正在保留本轮语音与图片证据';function q(s){return document.querySelector(s)}function t(s,v){var n=q(s);if(n)n.textContent=v||''}function call(a,v){if(window.NativeHud&&window.NativeHud[a])window.NativeHud[a](v||'')}function show(s){document.querySelectorAll('.state').forEach(function(n){n.classList.toggle('active',n.id===s)});q('.dock').style.display=s==='standby'||s==='capabilities'?'none':'flex'}window.HudPresentation={showState:show,setTranscript:function(v){lastTranscript=v||lastTranscript;t('#transcript',v);t('#recognized',v);t('#conversationTranscript',lastTranscript);t('#taskTranscript',lastTranscript);t('#repairTranscript',lastTranscript);t('#errorTranscript',lastTranscript)},setInputStatus:function(i,v){t('#imageStatus','图片：'+i);t('#voiceStatus','语音：'+v)},setAnalysisInput:function(v){t('#analysisInput',v)},setConversation:function(v){t('#conversationResponse',v);t('#conversationTranscript',lastTranscript)},setResponse:function(a,b){this.setResponsePage(a,b,1,1,0)},setResponsePage:function(a,b,p,c,confidence){t('#responseTitle',a);t('#response',b);t('#taskTranscript',lastTranscript);t('#page',p+' / '+c+' · 可说“下一页”');t('#confidence',confidence>0?'异常概率：'+confidence+'%':'')},setGuidanceStep:function(step,total,action){t('#step','维修步骤 '+step+' / '+total);t('#stepTitle',action);t('#stepAction',action);t('#repairTranscript',lastTranscript)},setError:function(v){t('#errorMessage',v);t('#errorTranscript',lastTranscript)},setCollabStatus:function(){}};document.querySelectorAll('[data-a]').forEach(function(n){n.onclick=function(){call(n.dataset.a)}});document.querySelectorAll('[data-r]').forEach(function(n){n.onclick=function(){var r=n.dataset.r;if(r==='expert')call('openExpert');else if(r==='listening')call('openDiagnosis');else call('openAbility',r)}});show('standby')}())</script>
 <script>(function(){if(!window.HudPresentation)return;window.HudPresentation.setErrorAction=function(action,label){var n=document.querySelector('#errorAction');if(n){n.dataset.a=action||'retryAi';n.textContent=label||'语音重试'}}})()</script>
 <script>(function(){function t(s,v){var n=document.querySelector(s);if(n)n.textContent=v||''}if(!window.HudPresentation)return;window.HudPresentation.setAbilityDetail=function(title,description,command){t('#abilityTag','AI 能力 · '+title);t('#abilityTitle',title);t('#abilityDescription',description);t('#abilityCommand',command)}}())</script>
+<script>(function(){if(!window.HudPresentation)return;window.HudPresentation.setManagedMenuEnabled=function(enabled){var n=document.querySelector('.capability-shortcuts');if(n)n.hidden=!enabled}})()</script>
 <script>(function(){if(!window.HudPresentation)return;var originalShow=window.HudPresentation.showState;function text(selector,value){var node=document.querySelector(selector);if(node)node.textContent=value||''}function bind(selector,action,label){var node=document.querySelector(selector);if(!node)return;node.hidden=!action;if(!action)return;node.textContent=label;node.onclick=function(){if(window.NativeHud&&window.NativeHud.performOperation)window.NativeHud.performOperation(action)}}window.HudPresentation.showState=function(state){originalShow(state);if(state==='operationDetail'){document.querySelector('.dock').style.display='none'}};window.HudPresentation.setOperationDetail=function(tag,title,description,items,primaryAction,primaryLabel,secondaryAction,secondaryLabel){text('#operationTag',tag);text('#operationTitle',title);text('#operationDescription',description);text('#operationScope','仅展示本机已确认信息');var list=document.querySelector('#operationItems');if(list){while(list.firstChild)list.removeChild(list.firstChild);(items||[]).forEach(function(item){var row=document.createElement('div');row.className='operation-item';row.textContent=item;list.appendChild(row)})}bind('#operationPrimary',primaryAction,primaryLabel);bind('#operationSecondary',secondaryAction,secondaryLabel)}}())</script>
 <script>(function(){if(!window.HudPresentation)return;function call(action){if(window.NativeHud&&window.NativeHud[action])window.NativeHud[action]('')}function bind(node,action){if(node){node.onclick=function(){call(action)}}}function make(tag,className,text){var node=document.createElement(tag);node.className=className||'';if(text)node.textContent=text;return node}function addTaskWorkspaceUi(){var app=document.querySelector('.app');var header=document.querySelector('.top');if(header&&!header.querySelector('.home-nav')){var home=make('button','home-nav','首页');home.type='button';bind(home,'goHome');header.appendChild(home)}document.querySelectorAll('#photoDraft .task-workspace,#conversation .task-workspace,#diagnosis .task-workspace,#repair .task-workspace,#error .task-workspace,#complete .box').forEach(function(workspace){if(!workspace.querySelector('.task-evidence')){var evidence=make('div','task-evidence');evidence.hidden=true;var image=document.createElement('img');image.hidden=true;var copy=make('div','evidence-copy');evidence.appendChild(image);evidence.appendChild(copy);var anchor=workspace.querySelector('.task-presence');workspace.insertBefore(evidence,anchor?anchor.nextSibling:workspace.firstChild)}if(!workspace.querySelector('.task-voice')){var voice=make('div','task-voice');var core=make('button','task-voice-core','🎙');core.type='button';bind(core,'startVoice');var label=make('div','task-voice-label','说“小叮当”继续补充，或轻触语音图标');var photo=make('button','task-voice-photo','📷 补拍');photo.type='button';bind(photo,'capturePhoto');voice.appendChild(core);voice.appendChild(label);voice.appendChild(photo);workspace.appendChild(voice)}if(!workspace.querySelector('.task-nav')){var nav=make('div','task-nav');[['goBack','返回'],['goHome','首页'],['restartTask','重新开始']].forEach(function(item){var button=make('button','',item[1]);button.type='button';bind(button,item[0]);nav.appendChild(button)});workspace.appendChild(nav)}});var conversation=document.querySelector('#conversation .task-workspace');if(conversation&&!conversation.querySelector('.conversation-pager')){var pager=make('div','conversation-pager');var previous=make('button','round','‹');previous.type='button';bind(previous,'previousConversationPage');var page=make('span','conversation-page','1 / 1 · 可说“上一页”或“下一页”');var next=make('button','round','›');next.type='button';bind(next,'nextConversationPage');pager.appendChild(previous);pager.appendChild(page);pager.appendChild(next);var answer=document.querySelector('#conversationResponse');conversation.insertBefore(pager,answer?answer.nextSibling:null)}}function setEvidence(text,preview){addTaskWorkspaceUi();document.querySelectorAll('.task-evidence').forEach(function(node){var copy=node.querySelector('.evidence-copy');var image=node.querySelector('img');var hasImage=!!preview;if(copy)copy.textContent=text||'等待现场语音或文字描述';if(image){image.hidden=!hasImage;if(hasImage)image.src='data:image/jpeg;base64,'+preview}node.hidden=!text&&!hasImage})}function setVoice(state,label){addTaskWorkspaceUi();document.querySelectorAll('.task-voice').forEach(function(node){node.classList.toggle('thinking',state==='thinking');node.classList.toggle('listening',state==='listening');var copy=node.querySelector('.task-voice-label');if(copy)copy.textContent=label||'说“小叮当”继续补充，或轻触语音图标'})}var previousShow=window.HudPresentation.showState;window.HudPresentation.showState=function(state){previousShow(state);addTaskWorkspaceUi();var taskState=['photoDraft','conversation','diagnosis','repair','complete','error'].indexOf(state)>=0;var app=document.querySelector('.app');if(app)app.classList.toggle('task-active',taskState);var home=document.querySelector('.home-nav');if(home)home.style.display=state==='standby'?'none':'block'};window.HudPresentation.setTaskEvidence=setEvidence;window.HudPresentation.setTaskVoiceState=setVoice;window.HudPresentation.setConversationPage=function(detail,page,count){var answer=document.querySelector('#conversationResponse');if(answer)answer.textContent=detail||'等待 AI 回复';var label=document.querySelector('.conversation-page');if(label)label.textContent=page+' / '+count+' · 可说“上一页”或“下一页”'};var priorConversation=window.HudPresentation.setConversation;window.HudPresentation.setConversation=function(detail){priorConversation(detail);window.HudPresentation.setConversationPage(detail,1,1)};addTaskWorkspaceUi()})()</script>
     <script>(function(){if(!window.HudPresentation)return;function call(action){if(window.NativeHud&&window.NativeHud[action])window.NativeHud[action]('')}var header=document.querySelector('.top');if(header&&!header.querySelector('.global-back')){var back=document.createElement('button');back.className='global-back';back.type='button';back.textContent='返回';back.style.cssText='display:none;margin-left:auto;margin-right:8px;border:0;background:transparent;color:#52766a;font:700 13px Microsoft YaHei';back.onclick=function(){call('goBack')};header.insertBefore(back,header.lastElementChild)}var priorShow=window.HudPresentation.showState;window.HudPresentation.showState=function(state){priorShow(state);var back=document.querySelector('.global-back');if(back)back.style.display=state==='standby'?'none':'block'}})()</script>
@@ -138,6 +139,7 @@
 #capabilities .box{overflow:hidden;display:flex;width:100%;height:100%;min-height:0;flex-direction:column;padding:18px 24px}
 #capabilities .tag{align-self:flex-start;font-size:19px;padding:7px 13px}
 #capabilities h2{margin:8px 0 5px;font-size:30px}
+.capability-shortcuts{display:flex;justify-content:flex-end;gap:10px;margin:-42px 0 7px}.capability-shortcuts[hidden]{display:none}.capability-shortcuts button{display:flex;align-items:center;gap:7px;height:34px;padding:0 12px;border:1px solid #b7d9cc;border-radius:8px;background:rgba(248,253,251,.78);color:#255548;font:800 13px "Microsoft YaHei"}.capability-shortcuts i{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:#dff5ea;color:#087557;font-style:normal;font-size:12px}
 #capabilities .caps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));flex:1;min-height:0;gap:8px;margin-top:6px;overflow:hidden}
 #capabilities .cap{display:grid;grid-template-columns:38px minmax(0,1fr);grid-template-rows:auto auto auto;align-content:center;column-gap:12px;min-width:0;min-height:0;padding:14px 16px;overflow:hidden}
 #capabilities .cap i{grid-row:1 / 3;width:38px;height:38px;font-size:17px}
@@ -145,7 +147,7 @@
 #capabilities .cap small{min-width:0;margin-top:5px;font-size:17px;line-height:1.35;display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2}
 #capabilities .cap em{grid-column:1 / -1;margin-top:20px;font-size:16px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #capabilities>.box>.command{flex:0 0 auto;align-self:center;margin-top:8px;padding:7px 18px;font-size:13px}
-@media(max-width:900px){#capabilities.active{inset:66px 12px 10px}#capabilities .box{padding:12px 14px}#capabilities .caps{gap:6px}#capabilities .cap{padding:7px 8px;column-gap:7px}#capabilities .cap strong{font-size:13px}#capabilities .cap small,#capabilities .cap em{font-size:10px}}
+@media(max-width:900px){#capabilities.active{inset:66px 12px 10px}#capabilities .box{padding:12px 14px}.capability-shortcuts{gap:6px;margin:-36px 0 5px}.capability-shortcuts button{height:30px;padding:0 8px;font-size:11px}.capability-shortcuts i{width:19px;height:19px;font-size:10px}#capabilities .caps{gap:6px}#capabilities .cap{padding:7px 8px;column-gap:7px}#capabilities .cap strong{font-size:13px}#capabilities .cap small,#capabilities .cap em{font-size:10px}}
 </style>
 <style>
 /* Compact Air3 brand and the approved white-core, dual-ring standby presence. */
@@ -225,28 +227,31 @@
 <style id="low-power-hud-motion">
 /* Air3 WebView otherwise composites CSS infinite animations at display refresh rate while idle. */
 .core,.core:before,.core:after,.dot,.tag:before,.task-presence i,.task-voice-core,.task-voice-core:before,.task-voice-core:after,#conversation .conversation-actions .voice-core,.wave i,.analysis-core{animation:none!important;will-change:auto!important}
-#standby .core{transform:scale(var(--hud-breathe-scale,1))}
-.task-voice-core,#conversation .conversation-actions .voice-core{transform:scale(var(--hud-task-scale,1))}
-.dot,.tag:before,.task-presence i{opacity:var(--hud-pulse-opacity,1)}
 .analysis-core{transform:rotate(var(--hud-spin-angle,0deg))}
 .wave i{transform-origin:center;transform:scaleY(var(--hud-wave-scale,1))}
 </style>
 <script>(function(){
 var LOW_POWER_HUD_TICK_MS=250;
+var LOW_POWER_HUD_ACTIVE_STATES={listening:true,analysis:true};
 var lowPowerHudPhase=0;
 var lowPowerHudTimer=0;
+function activeLowPowerHudState(){return document.querySelector('.state.active')}
+function resetLowPowerHudMotion(){
+var analysis=document.querySelector('.analysis-core');
+if(analysis)analysis.style.removeProperty('--hud-spin-angle');
+var bars=document.querySelectorAll('.wave i');
+for(var index=0;index<bars.length;index++)bars[index].style.removeProperty('--hud-wave-scale');
+}
 function updateLowPowerHudMotion(){
 if(document.visibilityState!=='visible')return;
+var active=activeLowPowerHudState();
+if(!active||!LOW_POWER_HUD_ACTIVE_STATES[active.id]){syncLowPowerHudMotion();return;}
 lowPowerHudPhase=(lowPowerHudPhase+1)%16;
 var progress=lowPowerHudPhase/16;
-var pulse=(1-Math.cos(progress*Math.PI*2))/2;
-var root=document.documentElement;
-root.style.setProperty('--hud-breathe-scale',(0.98+pulse*0.065).toFixed(3));
-root.style.setProperty('--hud-task-scale',(1+pulse*0.06).toFixed(3));
-root.style.setProperty('--hud-pulse-opacity',(0.52+pulse*0.48).toFixed(2));
-root.style.setProperty('--hud-spin-angle',(lowPowerHudPhase*22.5)+'deg');
-var active=document.querySelector('.state.active');
-if(active&&active.id==='listening'){
+if(active.id==='analysis'){
+var analysis=active.querySelector('.analysis-core');
+if(analysis)analysis.style.setProperty('--hud-spin-angle',(lowPowerHudPhase*22.5)+'deg');
+}else if(active.id==='listening'){
 var bars=active.querySelectorAll('.wave i');
 for(var index=0;index<bars.length;index++){
 var amount=0.52+0.48*Math.abs(Math.sin((progress+index*0.13)*Math.PI*2));
@@ -255,19 +260,26 @@ bars[index].style.setProperty('--hud-wave-scale',amount.toFixed(2));
 }
 }
 function startLowPowerHudMotion(){
-if(lowPowerHudTimer||document.visibilityState!=='visible')return;
+var active=activeLowPowerHudState();
+if(lowPowerHudTimer||document.visibilityState!=='visible'||!active||!LOW_POWER_HUD_ACTIVE_STATES[active.id])return;
 updateLowPowerHudMotion();
 lowPowerHudTimer=setInterval(updateLowPowerHudMotion,LOW_POWER_HUD_TICK_MS);
 }
 function stopLowPowerHudMotion(){
-if(!lowPowerHudTimer)return;
-clearInterval(lowPowerHudTimer);
-lowPowerHudTimer=0;
+if(lowPowerHudTimer){clearInterval(lowPowerHudTimer);lowPowerHudTimer=0;}
+resetLowPowerHudMotion();
+}
+function syncLowPowerHudMotion(){
+var active=activeLowPowerHudState();
+if(document.visibilityState==='visible'&&active&&LOW_POWER_HUD_ACTIVE_STATES[active.id])startLowPowerHudMotion();else stopLowPowerHudMotion();
 }
 document.addEventListener('visibilitychange',function(){
-if(document.visibilityState==='visible')startLowPowerHudMotion();else stopLowPowerHudMotion();
+syncLowPowerHudMotion();
 });
-startLowPowerHudMotion();
+var lowPowerHudObserver=new MutationObserver(syncLowPowerHudMotion);
+var lowPowerHudStates=document.querySelectorAll('.state');
+for(var stateIndex=0;stateIndex<lowPowerHudStates.length;stateIndex++)lowPowerHudObserver.observe(lowPowerHudStates[stateIndex],{attributes:true,attributeFilter:['class']});
+syncLowPowerHudMotion();
 })()</script>
 <style>
 /* Repair guidance is a mode of the full-screen conversation, not a second page. */
@@ -395,7 +407,7 @@ var tutorialPages=[
 {title:'佩戴前确认',body:'先确认眼镜、权限和网络状态，再开始现场任务。',steps:['右上角显示 Air3 已连接','首页显示语音待命','麦克风权限已开启'],visual:'device'},
 {title:'唤醒并下达命令',body:'先说“小叮当”，听到提示音后再说完整命令。',steps:['先说：小叮当','听到提示音','再说：开始诊断 / 帮助'],visual:'wake'},
 {title:'提交现场照片',body:'拍照后画面会保留，现场人员可以补充语音描述，也可以只发送照片。',steps:['补充描述：唤醒后说现场现象','无需描述：说“仅发送图片”','画面不清：说“重拍”'],visual:'photo'},
-{title:'继续 AI 任务',body:'长回复和维修步骤都在当前任务中完成，不会跳回首页。',steps:['内容过长：上一页 / 下一页','维修推进：下一步 / 异常','人工支持：呼叫专家','结束任务：返回首页'],visual:'chat'}
+{title:'继续 AI 任务',body:'长回复和维修步骤都在当前任务中完成；返回首页只暂停并保留项目。',steps:['内容过长：上一页 / 下一页','维修推进：下一步 / 异常','人工支持：呼叫专家','保留项目：返回首页','结束任务：结束当前任务'],visual:'chat'}
 ];
 var tutorialPage=1;
 function make(tag,className,text){var node=document.createElement(tag);if(className)node.className=className;if(text)node.textContent=text;return node}
@@ -404,7 +416,7 @@ var grid=document.querySelector('#voiceGuide .guide-grid');if(!grid)return;
 var groups=[
 ['全局导航','返回 · 返回首页','打开 AI 能力中心','打开眼镜使用教学'],
 ['现场采集','现场拍照 · 短视频取证','仅发送图片 · 重拍','呼叫专家'],
-['AI 对话与维修','上一页 · 下一页 · 重复本页','补拍 · 重新分析','下一步 · 完成 · 异常'],
+['AI 对话与维修','上一页 · 下一页 · 重复本页','补拍 · 重新分析 · 下一步 · 异常','结束当前任务 · 关闭当前任务并返回首页','以后在这个项目遇到……先……','确认执行 · 取消'],
 ['巡检与技能','巡检任务 · 进入第一个选项','开始实训室设备巡检 · AI运维技能','启用环境诊断技能 · 停用环境诊断技能']
 ];
 grid.textContent='';groups.forEach(function(group,index){var card=make('div','guide-card');card.dataset.context=['home','home','task','inspection'][index];card.appendChild(make('strong','',group[0]));for(var i=1;i<group.length;i++)card.appendChild(make('span','',group[i]));grid.appendChild(card)});
@@ -461,5 +473,42 @@ var thinking=state==='thinking';
 app.classList.toggle('ai-thinking',thinking&&!/生成/.test(label||''));
 app.classList.toggle('ai-writing',thinking&&/生成/.test(label||''));
 };
+})()</script>
+<style>
+.device{display:flex;align-items:center}.settings-nav{width:28px;height:28px;margin:-4px -6px -4px 8px;border:0;background:transparent;color:#315d4f;font-size:18px}
+</style>
+<script>(function(){
+var device=document.querySelector('.device');
+if(!device||device.querySelector('.settings-nav'))return;
+var button=document.createElement('button');
+button.className='settings-nav';
+button.type='button';
+button.textContent='⚙';
+button.setAttribute('aria-label','设置');
+button.onclick=function(){if(window.NativeHud&&window.NativeHud.openAbility)window.NativeHud.openAbility('settings')};
+device.appendChild(button);
+})()</script>
+<script>(function(){
+if(!window.HudPresentation)return;
+var mode='wake';
+var context='home';
+var standbyNotice='';
+var standbyLabel='语音待命';
+var standbyAvailabilityNotice='';
+var priorContext=window.HudPresentation.setVoiceGuideContext;
+function applyVoiceMode(){
+var standby=document.querySelector('#standbyNotice');
+var tag=document.querySelector('#standbyTag');
+var lead=document.querySelector('#voiceGuide .lead');
+var labels={home:'首页可用命令',task:'当前 AI 任务可用命令',inspection:'当前巡检可用命令',capabilities:'能力中心可用命令',expert:'专家协同可用命令'};
+if(tag)tag.textContent=standbyLabel||'语音待命';
+if(standby)standby.textContent=standbyNotice||standbyAvailabilityNotice||(mode==='voiceprint'?'声纹监听中 · 直接说指令或问题':mode==='passive'?'监听已关闭 · 当前不录音、不转写、不上传':mode==='unavailable'?'语音服务未就绪 · 请进入设置检查设备激活与授权':'请说“小叮当”唤醒 · 听到提示音后再说命令');
+if(lead)lead.textContent=mode==='voiceprint'?'声纹验证通过后，直接说下面的'+(labels[context]||labels.home)+'。':mode==='passive'?'监听已关闭；双击实体键开启声纹监听，或在小叮当模式下唤醒。':mode==='unavailable'?'语音服务未就绪；请先进入设置完成设备激活与授权。':'先说“小叮当”，听到提示音后，再说下面的'+(labels[context]||labels.home)+'。';
+}
+window.HudPresentation.setVoiceGuideContext=function(value){context=value||'home';priorContext(value);applyVoiceMode()};
+window.HudPresentation.setVoiceMode=function(value){mode=value==='voiceprint'||value==='passive'||value==='unavailable'?value:'wake';applyVoiceMode()};
+window.HudPresentation.setStandbyNotice=function(value){standbyNotice=value||'';applyVoiceMode()};
+window.HudPresentation.setStandbyAvailability=function(label,notice){standbyLabel=label||'语音待命';standbyAvailabilityNotice=notice||'';applyVoiceMode()};
+applyVoiceMode();
 })()</script>
 </body></html>

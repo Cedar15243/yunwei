@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "evidenceType": "local_air3_ui_regression",
+  "device": {
+    "model": "IMA301",
+    "serialMasked": "YM00...0031"
+  },
+  "observations": {
+    "installCommand": "adb install -r -g",
+    "installSucceeded": true,
+    "coldStartMs": 272,
+    "followPreviewPackageCountBefore": 24,
+    "followPreviewPackageCountAfter": 24,
+    "packageSetHashBeforeAvailable": false,
+    "packageSetHashAfter": "DD629C76CD51CDCCB7BFC07BCEB2485FD897F1CD09E5304AC305A338D90F7148",
+    "inspectionTasks": [
+      "实训室设备巡检",
+      "水电暖系统巡检",
+      "空调系统巡检",
+      "消防系统巡检"
+    ],
+    "placeholderVisible": false,
+    "returnChain": [
+      "巡检详情",
+      "AI 能力中心",
+      "首页"
+    ],
+    "camera": {
+      "activeClients": 0,
+      "deviceState": "closed"
+    },
+    "crashBufferEmpty": true
+  },
+  "limitations": [
+    "managed_services_unavailable",
+    "production_voice_voiceprint_not_accepted",
+    "mvs_writeback_protocol_missing",
+    "raw_logcat_excluded_from_delivery"
+  ]
+}

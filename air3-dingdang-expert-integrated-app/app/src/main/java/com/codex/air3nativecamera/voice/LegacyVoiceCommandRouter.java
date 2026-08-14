@@ -4,7 +4,8 @@ package com.codex.air3nativecamera.voice;
 public final class LegacyVoiceCommandRouter {
     public enum Command {
         NONE, OPEN_EXPERT, OPEN_CAMERA, TAKE_PHOTO, RETAKE_PHOTO, SEND, BACK_TO_CHAT,
-        START_VOICE, NEW_PROJECT, NEXT_PROJECT, PREVIOUS_PROJECT, LATEST_PROJECT, SHOW_RECORDS
+        START_VOICE, NEW_PROJECT, NEXT_PROJECT, PREVIOUS_PROJECT, LATEST_PROJECT, SHOW_RECORDS,
+        OPEN_SETTINGS
     }
 
     private static final int MAX_COMMAND_CHARS = 16;
@@ -21,6 +22,7 @@ public final class LegacyVoiceCommandRouter {
     private static final String[] PREVIOUS_PROJECT = {"上一条记录", "上一个记录", "上一条"};
     private static final String[] LATEST_PROJECT = {"最新记录", "最近记录", "回到最新"};
     private static final String[] RECORDS = {"查看记录", "打开记录", "历史记录"};
+    private static final String[] SETTINGS = {"打开设置", "系统设置", "声纹设置", "声纹管理"};
 
     public Command route(String text) {
         String normalized = compact(text);
@@ -37,6 +39,7 @@ public final class LegacyVoiceCommandRouter {
         if (matches(normalized, PREVIOUS_PROJECT)) return Command.PREVIOUS_PROJECT;
         if (matches(normalized, LATEST_PROJECT)) return Command.LATEST_PROJECT;
         if (matches(normalized, RECORDS)) return Command.SHOW_RECORDS;
+        if (matches(normalized, SETTINGS)) return Command.OPEN_SETTINGS;
         return Command.NONE;
     }
 

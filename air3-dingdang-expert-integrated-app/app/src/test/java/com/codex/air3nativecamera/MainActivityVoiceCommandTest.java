@@ -14,11 +14,22 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
 
 public final class MainActivityVoiceCommandTest {
+    @Test
+    public void hamburgerMenuOpensOnceAndClosesWhenPressedAgain() throws Exception {
+        Method policy = MainActivity.class.getDeclaredMethod(
+                "shouldOpenCapabilityCenterOnMenuPress", boolean.class);
+        policy.setAccessible(true);
+
+        assertTrue((Boolean) policy.invoke(null, false));
+        assertFalse((Boolean) policy.invoke(null, true));
+    }
+
     @Test
     public void sceneWorkflowOnlyEvaluatesANewPhotoFromTheCurrentTurn() {
         assertTrue(MainActivity.shouldEvaluateSceneSkill(true, true));
@@ -40,6 +51,43 @@ public final class MainActivityVoiceCommandTest {
     }
 
     @Test
+    public void unprovisionedSecureRuntimeNeverClaimsVoiceStandby() {
+        assertEquals("设备待激活",
+                MainActivity.runtimeStandbyLabel(true, false, true, false));
+        assertEquals("设备未激活 · 请进入设置完成设备激活",
+                MainActivity.runtimeStandbyNotice(true, false, true, false));
+        assertFalse(MainActivity.shouldStartManagedOfflineWake(true, false));
+    }
+
+    @Test
+    public void secureRuntimeRequiresWakeAuthorizationBeforeClaimingXiaoDingdangReady() {
+        assertEquals("语音未授权",
+                MainActivity.runtimeStandbyLabel(true, true, true, false));
+        assertEquals("小叮当唤醒未授权 · 请联系管理员完成受管配置",
+                MainActivity.runtimeStandbyNotice(true, true, true, false));
+        assertFalse(MainActivity.shouldStartManagedOfflineWake(true, false));
+
+        assertEquals("语音待命",
+                MainActivity.runtimeStandbyLabel(true, true, true, true));
+        assertEquals("", MainActivity.runtimeStandbyNotice(true, true, true, true));
+        assertTrue(MainActivity.shouldStartManagedOfflineWake(true, true));
+    }
+
+    @Test
+    public void settingsVoiceModeReflectsRuntimeProvisioningInsteadOfBuildFlags() {
+        assertEquals("服务不可用 · 设备待激活", MainActivity.runtimeVoiceModeLabel(
+                true, false, "unavailable", true, false));
+        assertEquals("小叮当未授权", MainActivity.runtimeVoiceModeLabel(
+                true, true, "unavailable", true, false));
+        assertEquals("声纹监听已开启", MainActivity.runtimeVoiceModeLabel(
+                true, true, "voiceprint", true, false));
+        assertEquals("监听关闭", MainActivity.runtimeVoiceModeLabel(
+                true, true, "passive", true, false));
+        assertEquals("小叮当唤醒", MainActivity.runtimeVoiceModeLabel(
+                true, true, "wake", true, true));
+    }
+
+    @Test
     public void classifiesEveryLegacyChatControlCommand() {
         assertCommand("打开相机", LegacyVoiceCommandRouter.Command.OPEN_CAMERA);
         assertCommand("打开摄像头", LegacyVoiceCommandRouter.Command.OPEN_CAMERA);
@@ -55,6 +103,8 @@ public final class MainActivityVoiceCommandTest {
         assertCommand("上一条记录", LegacyVoiceCommandRouter.Command.PREVIOUS_PROJECT);
         assertCommand("最新记录", LegacyVoiceCommandRouter.Command.LATEST_PROJECT);
         assertCommand("查看记录", LegacyVoiceCommandRouter.Command.SHOW_RECORDS);
+        assertCommand("打开设置", LegacyVoiceCommandRouter.Command.OPEN_SETTINGS);
+        assertCommand("声纹设置", LegacyVoiceCommandRouter.Command.OPEN_SETTINGS);
     }
 
     @Test
@@ -156,6 +206,10 @@ public final class MainActivityVoiceCommandTest {
                 MainActivity.aiFailureNetworkState("managed_backend_credential_missing"));
         assertEquals("网络超时",
                 MainActivity.aiFailureNetworkState("ai_stream_terminal_timeout"));
+        assertEquals("任务同步未完成",
+                MainActivity.aiFailureNetworkState("task_registration_pending"));
+        assertEquals("任务上下文同步阶段",
+                MainActivity.aiFailureStage("task_registration_pending", "AI 对话阶段"));
 
         String message = MainActivity.recoverableAiFailureMessage(
                 "照片上传阶段", "managed_backend_credential_missing", "");
@@ -190,6 +244,31 @@ public final class MainActivityVoiceCommandTest {
     @Test
     public void repairGuidanceRemainsInTheFullScreenConversationWorkspace() {
         assertEquals("conversation", MainActivity.guidanceHudState());
+    }
+
+    @Test
+    public void v9RequiresConfirmationBeforeFinishingGuidance() {
+        assertTrue(MainActivity.shouldRequestManagedTaskEnd(
+                true, VoiceCommandRouter.Command.FINISH, 1, 3));
+        assertTrue(MainActivity.shouldRequestManagedTaskEnd(
+                true, VoiceCommandRouter.Command.NEXT, 3, 3));
+        assertFalse(MainActivity.shouldRequestManagedTaskEnd(
+                true, VoiceCommandRouter.Command.NEXT, 2, 3));
+    }
+
+    @Test
+    public void legacyRuntimeKeepsItsExistingGuidanceCompletionBehavior() {
+        assertFalse(MainActivity.shouldRequestManagedTaskEnd(
+                false, VoiceCommandRouter.Command.FINISH, 1, 3));
+        assertFalse(MainActivity.shouldRequestManagedTaskEnd(
+                false, VoiceCommandRouter.Command.NEXT, 3, 3));
+    }
+
+    @Test
+    public void navigationDropsOnlyAnUnsubmittedGovernanceDraft() {
+        assertTrue(MainActivity.shouldDiscardPendingGovernanceOnNavigation(true, false));
+        assertFalse(MainActivity.shouldDiscardPendingGovernanceOnNavigation(true, true));
+        assertFalse(MainActivity.shouldDiscardPendingGovernanceOnNavigation(false, false));
     }
 
     @Test
@@ -639,12 +718,136 @@ public final class MainActivityVoiceCommandTest {
     }
 
     @Test
+    public void workflowFormInputActionIsBoundOnlyToTheCurrentFormNode() throws Exception {
+        assertEquals("siteCode", invokeWorkflowFormFieldKey(
+                "workflow_input:form-1:siteCode", "form-1", "form"));
+        assertEquals("", invokeWorkflowFormFieldKey(
+                "workflow_input:form-2:siteCode", "form-1", "form"));
+        assertEquals("", invokeWorkflowFormFieldKey(
+                "workflow_input:form-1:siteCode", "form-1", "choice"));
+        assertEquals("", invokeWorkflowFormFieldKey(
+                "workflow_input:form-1:", "form-1", "form"));
+    }
+
+    @Test
+    public void workflowNextUsesDraftAwareAdvanceOnlyForAnUnconfirmedFormStep()
+            throws Exception {
+        assertTrue(invokeWorkflowFormAdvancePolicy("form", false));
+        assertFalse(invokeWorkflowFormAdvancePolicy("form", true));
+        assertFalse(invokeWorkflowFormAdvancePolicy("voice_input", false));
+    }
+
+    @Test
+    public void workflowNavigationClearsEitherKindOfPendingVoiceInput() {
+        assertTrue(MainActivity.shouldCancelWorkflowInputForNavigation(
+                true, false, false));
+        assertTrue(MainActivity.shouldCancelWorkflowInputForNavigation(
+                false, true, false));
+        assertTrue(MainActivity.shouldCancelWorkflowInputForNavigation(
+                false, false, true));
+        assertFalse(MainActivity.shouldCancelWorkflowInputForNavigation(
+                false, false, false));
+    }
+
+    @Test
+    public void voiceprintSettingsNavigationInvalidatesVisibleRecordingOrPendingState() {
+        assertTrue(MainActivity.shouldInvalidateVoiceprintSettingsOnNavigation(
+                "voiceprint_settings", false, false));
+        assertTrue(MainActivity.shouldInvalidateVoiceprintSettingsOnNavigation(
+                "", true, false));
+        assertTrue(MainActivity.shouldInvalidateVoiceprintSettingsOnNavigation(
+                "", false, true));
+        assertFalse(MainActivity.shouldInvalidateVoiceprintSettingsOnNavigation(
+                "", false, false));
+    }
+
+    @Test
     public void keepsVoiceRecoveryPromptsOutOfTaskEvidence() {
         assertEquals("", MainActivity.sanitizeTaskNarration("没有听清，请再说一次"));
         assertEquals("", MainActivity.sanitizeTaskNarration("没有听清，请重新提问"));
         assertEquals("", MainActivity.sanitizeTaskNarration("说话时间太短，请再说一次"));
         assertEquals("", MainActivity.sanitizeTaskNarration("语音服务未连接，请检查后端或网络"));
         assertEquals("设备没有响应", MainActivity.sanitizeTaskNarration("设备没有响应"));
+    }
+
+    @Test
+    public void localAsrWaitsForTheCloudGraceWindowUnlessCloudAlreadyFailed() {
+        assertFalse(MainActivity.shouldDeliverLocalAsrImmediately(false));
+        assertTrue(MainActivity.shouldDeliverLocalAsrImmediately(true));
+        assertEquals(250L, MainActivity.localAsrGraceMillis(false));
+        assertEquals(1200L, MainActivity.localAsrGraceMillis(true));
+    }
+
+    @Test
+    public void localAsrSourcesAlwaysProduceAnExplicitUserNotice() {
+        assertEquals("", MainActivity.localAsrSourceNotice("cloud"));
+        assertEquals("网络语音不可用，已使用本地识别",
+                MainActivity.localAsrSourceNotice("local-after-primary-failure"));
+        assertEquals("网络语音响应较慢，已使用本地识别",
+                MainActivity.localAsrSourceNotice("local-timeout-fallback"));
+        assertEquals("已使用本地识别",
+                MainActivity.localAsrSourceNotice("local"));
+    }
+
+    @Test
+    public void secureRuntimeRequiresExpertConfirmationBeforeEnteringVideoCollaboration() {
+        assertTrue(MainActivity.shouldConfirmExpertEntry(true));
+        assertFalse(MainActivity.shouldConfirmExpertEntry(false));
+    }
+
+    @Test
+    public void expertConfirmationCommandsAreDistinctFromWorkflowStepConfirmation() {
+        assertEquals("expert_confirmed", MainActivity.expertConfirmationAction(true));
+        assertEquals("expert_cancel", MainActivity.expertConfirmationAction(false));
+        assertEquals("workflow_expert_confirmed",
+                MainActivity.workflowExpertConfirmationAction(true));
+        assertEquals("workflow_expert_cancel",
+                MainActivity.workflowExpertConfirmationAction(false));
+    }
+
+    @Test
+    public void expertConfirmationVoiceOnlyAcceptsExplicitConfirmOrCancelCommands() {
+        assertEquals("expert_confirmed", MainActivity.expertConfirmationVoiceAction(
+                true, false, VoiceCommandRouter.Command.CONFIRM));
+        assertEquals("expert_cancel", MainActivity.expertConfirmationVoiceAction(
+                true, false, VoiceCommandRouter.Command.CANCEL));
+        assertEquals("expert_cancel", MainActivity.expertConfirmationVoiceAction(
+                true, false, VoiceCommandRouter.Command.BACK));
+        assertEquals("workflow_expert_confirmed", MainActivity.expertConfirmationVoiceAction(
+                false, true, VoiceCommandRouter.Command.CONFIRM));
+        assertEquals("workflow_expert_cancel", MainActivity.expertConfirmationVoiceAction(
+                false, true, VoiceCommandRouter.Command.CANCEL));
+        assertEquals("", MainActivity.expertConfirmationVoiceAction(
+                false, false, VoiceCommandRouter.Command.CONFIRM));
+        assertEquals("", MainActivity.expertConfirmationVoiceAction(
+                true, false, VoiceCommandRouter.Command.EXPERT));
+    }
+
+    @Test
+    public void pausingTheAppCancelsAnyVisibleExpertConfirmation() {
+        assertEquals("expert_cancel",
+                MainActivity.expertConfirmationLifecycleAction(true, false));
+        assertEquals("workflow_expert_cancel",
+                MainActivity.expertConfirmationLifecycleAction(false, true));
+        assertEquals("", MainActivity.expertConfirmationLifecycleAction(false, false));
+    }
+
+    @Test
+    public void cancellingExpertConfirmationRestoresTheSurfaceThatOpenedIt() {
+        assertEquals("ability", MainActivity.expertConfirmationReturnTarget(
+                true, true, true));
+        assertEquals("capabilities", MainActivity.expertConfirmationReturnTarget(
+                true, false, true));
+        assertEquals("task", MainActivity.expertConfirmationReturnTarget(
+                false, false, true));
+        assertEquals("home", MainActivity.expertConfirmationReturnTarget(
+                false, false, false));
+    }
+
+    @Test
+    public void secureRuntimeNeverExposesLegacyPlannedSkillOrAgentCatalogs() {
+        assertFalse(MainActivity.shouldExposeLegacyPlannedCatalog(true));
+        assertTrue(MainActivity.shouldExposeLegacyPlannedCatalog(false));
     }
 
     @Test
@@ -782,5 +985,39 @@ public final class MainActivityVoiceCommandTest {
 
     private void assertCommand(String phrase, LegacyVoiceCommandRouter.Command expected) {
         assertEquals(phrase, expected, router.route(phrase));
+    }
+
+    private static String invokeWorkflowFormFieldKey(
+            String action,
+            String currentNodeId,
+            String currentNodeType
+    ) throws Exception {
+        Method method;
+        try {
+            method = MainActivity.class.getDeclaredMethod(
+                    "workflowFormFieldKeyFromAction",
+                    String.class,
+                    String.class,
+                    String.class);
+        } catch (NoSuchMethodException missing) {
+            throw new AssertionError("workflow form input binding policy is missing", missing);
+        }
+        method.setAccessible(true);
+        return (String) method.invoke(null, action, currentNodeId, currentNodeType);
+    }
+
+    private static boolean invokeWorkflowFormAdvancePolicy(
+            String currentNodeType,
+            boolean confirmed
+    ) throws Exception {
+        Method method;
+        try {
+            method = MainActivity.class.getDeclaredMethod(
+                    "shouldAdvanceWorkflowForm", String.class, boolean.class);
+        } catch (NoSuchMethodException missing) {
+            throw new AssertionError("workflow form advance policy is missing", missing);
+        }
+        method.setAccessible(true);
+        return (Boolean) method.invoke(null, currentNodeType, confirmed);
     }
 }

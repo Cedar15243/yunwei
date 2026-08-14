@@ -12,12 +12,38 @@ public final class DeviceSessionManager implements DeviceAccessTokenProvider, Au
         DeviceAccessSession exchange(String bootstrapCredential) throws IOException;
     }
 
+    public interface BootstrapCredentialProvider {
+        CredentialSnapshot current() throws IOException;
+
+        void clearIfCurrent(CredentialSnapshot snapshot, String errorCode) throws IOException;
+    }
+
+    public static final class CredentialSnapshot {
+        private final String credential;
+
+        private CredentialSnapshot(String credential) {
+            this.credential = clean(credential);
+        }
+
+        public static CredentialSnapshot create(String credential) {
+            return new CredentialSnapshot(credential);
+        }
+
+        public boolean matches(String candidate) {
+            return credential.equals(clean(candidate));
+        }
+
+        private boolean isEmpty() {
+            return credential.length() == 0;
+        }
+    }
+
     interface Clock {
         long now();
     }
 
     private static final long DEFAULT_REFRESH_SKEW_MILLIS = 120_000L;
-    private final String bootstrapCredential;
+    private final BootstrapCredentialProvider credentialProvider;
     private final SessionIssuer issuer;
     private final Clock clock;
     private final Executor executor;
@@ -28,7 +54,13 @@ public final class DeviceSessionManager implements DeviceAccessTokenProvider, Au
     private IOException lastFailure;
 
     public DeviceSessionManager(String bootstrapCredential, SessionIssuer issuer) {
-        this.bootstrapCredential = clean(bootstrapCredential);
+        this(fixedCredentialProvider(bootstrapCredential), issuer);
+    }
+
+    public DeviceSessionManager(
+            BootstrapCredentialProvider credentialProvider,
+            SessionIssuer issuer) {
+        this.credentialProvider = credentialProvider;
         this.issuer = issuer;
         this.clock = new Clock() {
             @Override
@@ -54,7 +86,17 @@ public final class DeviceSessionManager implements DeviceAccessTokenProvider, Au
             Clock clock,
             Executor executor,
             long refreshSkewMillis) {
-        this.bootstrapCredential = clean(bootstrapCredential);
+        this(fixedCredentialProvider(bootstrapCredential), issuer, clock, executor,
+                refreshSkewMillis);
+    }
+
+    DeviceSessionManager(
+            BootstrapCredentialProvider credentialProvider,
+            SessionIssuer issuer,
+            Clock clock,
+            Executor executor,
+            long refreshSkewMillis) {
+        this.credentialProvider = credentialProvider;
         this.issuer = issuer;
         this.clock = clock;
         this.executor = executor;
@@ -125,21 +167,48 @@ public final class DeviceSessionManager implements DeviceAccessTokenProvider, Au
     private void refreshNow() {
         DeviceAccessSession issued = null;
         IOException failure = null;
+        CredentialSnapshot credential = null;
+        boolean credentialChanged = false;
         try {
-            if (bootstrapCredential.length() == 0 || issuer == null) {
+            if (credentialProvider == null || issuer == null) {
                 throw new IOException("device_bootstrap_credential_missing");
             }
-            issued = issuer.exchange(bootstrapCredential);
+            credential = credentialProvider.current();
+            if (credential == null || credential.isEmpty()) {
+                throw new IOException("device_bootstrap_credential_missing");
+            }
+            issued = issuer.exchange(credential.credential);
             if (!isValid(issued, clock.now())) {
                 throw new IOException("device_session_response_invalid");
+            }
+            CredentialSnapshot currentCredential = credentialProvider.current();
+            if (currentCredential == null || currentCredential.isEmpty()
+                    || !credential.matches(currentCredential.credential)) {
+                issued = null;
+                credentialChanged = true;
+                throw new IOException("device_session_credential_changed");
             }
         } catch (IOException error) {
             failure = error;
         } catch (RuntimeException error) {
             failure = new IOException("device_session_refresh_failed", error);
         }
+        boolean authoritativeRevocation = failure instanceof DeviceSessionException
+                && ((DeviceSessionException) failure).isAuthoritativeRevocation();
+        if (authoritativeRevocation && credential != null && credentialProvider != null) {
+            try {
+                credentialProvider.clearIfCurrent(
+                        credential, ((DeviceSessionException) failure).errorCode());
+            } catch (IOException clearFailure) {
+                failure.addSuppressed(clearFailure);
+            }
+        }
         synchronized (this) {
-            if (issued != null) session = issued;
+            if (authoritativeRevocation || credentialChanged) {
+                session = null;
+            } else if (issued != null) {
+                session = issued;
+            }
             lastFailure = failure;
             refreshing = false;
             notifyAll();
@@ -156,5 +225,20 @@ public final class DeviceSessionManager implements DeviceAccessTokenProvider, Au
 
     private static String clean(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static BootstrapCredentialProvider fixedCredentialProvider(String credential) {
+        final CredentialSnapshot snapshot = CredentialSnapshot.create(credential);
+        return new BootstrapCredentialProvider() {
+            @Override
+            public CredentialSnapshot current() {
+                return snapshot;
+            }
+
+            @Override
+            public void clearIfCurrent(CredentialSnapshot ignored, String errorCode) {
+                // MDM or legacy credentials remain controlled by their external authority.
+            }
+        };
     }
 }

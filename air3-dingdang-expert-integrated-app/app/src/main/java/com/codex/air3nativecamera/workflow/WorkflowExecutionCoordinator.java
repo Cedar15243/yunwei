@@ -2,6 +2,7 @@ package com.codex.air3nativecamera.workflow;
 
 import com.codex.air3nativecamera.sync.TaskSyncClient;
 import com.codex.air3nativecamera.sync.TaskSyncEvent;
+import com.codex.air3nativecamera.sync.AiExecutionContext;
 import com.codex.air3nativecamera.sync.WorkflowAssignmentRepository;
 import com.codex.air3nativecamera.sync.WorkflowDeviceHttpClient;
 
@@ -299,6 +300,15 @@ public final class WorkflowExecutionCoordinator {
         return new TaskDetail(assignment, entryAction(assignment, snapshot), snapshot);
     }
 
+    /** Returns the server execution identity owned by this workflow assignment. */
+    public synchronized AiExecutionContext executionContextFor(String assignmentId) {
+        WorkflowAssignmentRepository.CachedAssignment assignment = assignments.find(assignmentId);
+        if (assignment == null || assignment.projectId().isEmpty()) {
+            throw new IllegalArgumentException("workflow_assignment_context_missing");
+        }
+        return new AiExecutionContext(assignment.projectId(), taskId(assignment));
+    }
+
     public OpenResult startOrResume(String assignmentId) {
         return open(assignmentId, false);
     }
@@ -336,6 +346,62 @@ public final class WorkflowExecutionCoordinator {
                     step(snapshot.workflowPackage(), state));
         }
         return action(ActionCode.RECORDED, "", next, step(snapshot.workflowPackage(), next));
+    }
+
+    public synchronized ActionResult recordFormField(
+            String assignmentId,
+            String nodeId,
+            String fieldKey,
+            String rawValue
+    ) {
+        WorkflowAssignmentRepository.CachedAssignment assignment = assignments.find(assignmentId);
+        WorkflowSnapshot snapshot = executableSnapshot(assignment);
+        if (assignment == null) return action(ActionCode.NOT_FOUND, "assignment_not_found", null, null);
+        if (snapshot == null) return action(ActionCode.NOT_READY, "workflow_not_ready", null, null);
+        WorkflowRuntimeState state = snapshot.runtimeState();
+        WorkflowPackage.Node node = snapshot.workflowPackage().node(state.currentNodeId());
+        if (state.executionId().isEmpty() || node == null || !"form".equals(node.type())
+                || !node.nodeId().equals(nodeId)) {
+            return action(ActionCode.INVALID_STATE, "workflow_form_state_invalid", state,
+                    step(snapshot.workflowPackage(), state));
+        }
+        String value;
+        try {
+            value = WorkflowFormFieldPolicy.normalize(node, fieldKey, rawValue);
+        } catch (RuntimeException exception) {
+            return action(ActionCode.INVALID_STATE, exception.getMessage(), state,
+                    step(snapshot.workflowPackage(), state));
+        }
+        JSONObject variables;
+        try {
+            variables = new JSONObject(state.variables().toString()).put(fieldKey.trim(), value);
+        } catch (JSONException | RuntimeException exception) {
+            return action(ActionCode.INVALID_STATE, "workflow_form_fields_invalid", state,
+                    step(snapshot.workflowPackage(), state));
+        }
+        WorkflowRuntimeState next = state.retain(state.status(), variables);
+        if (!snapshots.save(assignment.assignmentId(), snapshot.envelope(), next)) {
+            return action(ActionCode.PERSIST_FAILED, "workflow_form_persist_failed", state,
+                    step(snapshot.workflowPackage(), state));
+        }
+        return action(ActionCode.RECORDED, "", next, step(snapshot.workflowPackage(), next));
+    }
+
+    public synchronized ActionResult advanceForm(String assignmentId) {
+        WorkflowAssignmentRepository.CachedAssignment assignment = assignments.find(assignmentId);
+        WorkflowSnapshot snapshot = executableSnapshot(assignment);
+        if (assignment == null) return action(ActionCode.NOT_FOUND, "assignment_not_found", null, null);
+        if (snapshot == null) return action(ActionCode.NOT_READY, "workflow_not_ready", null, null);
+        WorkflowRuntimeState state = snapshot.runtimeState();
+        WorkflowPackage.Node node = snapshot.workflowPackage().node(state.currentNodeId());
+        if (node == null || !"form".equals(node.type())) {
+            return action(ActionCode.INVALID_STATE, "workflow_form_state_invalid", state,
+                    step(snapshot.workflowPackage(), state));
+        }
+        return advance(assignmentId,
+                WorkflowFormFieldPolicy.contextFor(node, state.variables()),
+                WorkflowFormFieldPolicy.inputDataFor(node, state.variables()),
+                WorkflowFormFieldPolicy.outputDataFor(node, state.variables()));
     }
 
     public synchronized ActionResult advance(
@@ -780,7 +846,7 @@ public final class WorkflowExecutionCoordinator {
         String description = text(config, "description", "");
         List<String> items = new ArrayList<>();
         List<String> itemActions = new ArrayList<>();
-        actionsFor(node, config, items, itemActions);
+        actionsFor(node, config, state.variables(), items, itemActions);
         String[] primary = primaryAction(node.type());
         return new StepHud(
                 node.nodeId(), node.type(),
@@ -793,6 +859,7 @@ public final class WorkflowExecutionCoordinator {
     private static void actionsFor(
             WorkflowPackage.Node node,
             JSONObject config,
+            JSONObject variables,
             List<String> items,
             List<String> itemActions
     ) {
@@ -823,7 +890,9 @@ public final class WorkflowExecutionCoordinator {
                     String key = field.optString("key", "").trim();
                     String label = field.optString("label", "").trim();
                     if (key.isEmpty() || label.isEmpty()) continue;
-                    items.add(label + (field.optBoolean("required", false) ? "（必填）" : ""));
+                    String value = WorkflowFormFieldPolicy.displayValue(variables, key);
+                    items.add(label + (field.optBoolean("required", false) ? "（必填）" : "")
+                            + (value.isEmpty() ? "" : "：" + value));
                     itemActions.add("workflow_input:" + node.nodeId() + ":" + key);
                 }
             }

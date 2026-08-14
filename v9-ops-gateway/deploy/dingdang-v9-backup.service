@@ -1,0 +1,13 @@
+[Unit]
+Description=Dingdang V9 gateway database backup
+After=dingdang-v9-gateway.service
+Requires=dingdang-v9-gateway.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/dingdang-v9-gateway/current/backup.sh
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/dingdang-v9-gateway /var/backups/dingdang-v9-gateway

@@ -9,12 +9,14 @@ import org.junit.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Queue;
@@ -177,6 +179,147 @@ public final class WorkflowDeviceHttpClientTest {
         assertEquals("AQIDBA==", body.getString("dataBase64"));
     }
 
+    @Test
+    public void resumesPersistedEvidenceThroughSessionChunksAndComplete() throws Exception {
+        QueueConnectionFactory connections = new QueueConnectionFactory();
+        String uploadId = "88888888-8888-4888-8888-888888888888";
+        String assetId = "77777777-7777-4777-8777-777777777777";
+        String digest = "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81";
+        connections.enqueue(201, "{\"uploadId\":\"" + uploadId
+                + "\",\"assetId\":\"" + assetId
+                + "\",\"uploadStatus\":\"uploading\",\"byteSize\":3"
+                + ",\"sha256\":\"" + digest
+                + "\",\"chunkSize\":3,\"chunkCount\":1,\"receivedChunks\":[]"
+                + ",\"nextChunkIndex\":0}");
+        connections.enqueue(200, "{\"uploadId\":\"" + uploadId
+                + "\",\"assetId\":\"" + assetId
+                + "\",\"uploadStatus\":\"uploading\",\"byteSize\":3"
+                + ",\"sha256\":\"" + digest
+                + "\",\"chunkSize\":3,\"chunkCount\":1,\"receivedChunks\":[0]"
+                + ",\"nextChunkIndex\":1}");
+        connections.enqueue(201, "{\"assetId\":\"" + assetId
+                + "\",\"uploadStatus\":\"synced\",\"byteSize\":3"
+                + ",\"sha256\":\"" + digest + "\"}");
+        File file = Files.createTempFile("workflow-evidence", ".jpg").toFile();
+        Files.write(file.toPath(), new byte[]{1, 2, 3});
+        try {
+            String uploaded = client(configuration(), connections).uploadResumable(
+                    new WorkflowEvidenceUploadCoordinator.PendingEvidence(
+                            "33333333-3333-4333-8333-333333333333",
+                            EXECUTION_ID,
+                            "local-resumable",
+                            "photo-a",
+                            "nameplate",
+                            WorkflowEvidenceUploadCoordinator.MediaKind.PHOTO,
+                            "task-evidence/photo.jpg",
+                            0),
+                    file,
+                    "2026-08-02T02:00:00.000Z");
+            assertEquals(assetId, uploaded);
+            assertTrue(connections.opened.get(0).endsWith("/evidence/session"));
+            assertTrue(connections.opened.get(1).endsWith("/evidence/chunk"));
+            assertTrue(connections.opened.get(2).endsWith("/evidence/complete"));
+            assertEquals("AQID", new JSONObject(connections.used.get(1).requestText())
+                    .getString("dataBase64"));
+        } finally {
+            assertTrue(file.delete());
+        }
+    }
+
+    @Test
+    public void cancellationAfterSessionCreationCallsCancelWithoutUploadingChunks() throws Exception {
+        QueueConnectionFactory connections = new QueueConnectionFactory();
+        String uploadId = "88888888-8888-4888-8888-888888888888";
+        String assetId = "77777777-7777-4777-8777-777777777777";
+        String digest = "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81";
+        WorkflowDeviceHttpClient[] holder = new WorkflowDeviceHttpClient[1];
+        connections.enqueue(201, "{\"uploadId\":\"" + uploadId
+                + "\",\"assetId\":\"" + assetId
+                + "\",\"uploadStatus\":\"uploading\",\"byteSize\":3"
+                + ",\"sha256\":\"" + digest
+                + "\",\"chunkSize\":3,\"chunkCount\":1,\"receivedChunks\":[]"
+                + ",\"nextChunkIndex\":0}",
+                () -> holder[0].cancelActiveUpload());
+        connections.enqueue(200, "{\"uploadId\":\"" + uploadId
+                + "\",\"assetId\":\"" + assetId
+                + "\",\"uploadStatus\":\"cancelled\",\"receivedChunks\":[]}");
+        holder[0] = client(configuration(), connections);
+        File file = Files.createTempFile("workflow-cancel-evidence", ".jpg").toFile();
+        Files.write(file.toPath(), new byte[]{1, 2, 3});
+        try {
+            try {
+                holder[0].uploadResumable(
+                        new WorkflowEvidenceUploadCoordinator.PendingEvidence(
+                                "33333333-3333-4333-8333-333333333333",
+                                EXECUTION_ID,
+                                "local-cancel",
+                                "photo-a",
+                                "nameplate",
+                                WorkflowEvidenceUploadCoordinator.MediaKind.PHOTO,
+                                "task-evidence/cancel.jpg",
+                                0),
+                        file,
+                        "2026-08-05T15:00:00.000Z");
+                throw new AssertionError("expected upload cancellation");
+            } catch (WorkflowEvidenceUploadCoordinator.UploadCancelledException expected) {
+                assertTrue(expected.getMessage().contains("cancelled"));
+            }
+            assertEquals(2, connections.opened.size());
+            assertTrue(connections.opened.get(0).endsWith("/evidence/session"));
+            assertTrue(connections.opened.get(1).endsWith("/evidence/cancel"));
+            JSONObject body = new JSONObject(connections.used.get(1).requestText());
+            assertEquals(uploadId, body.getString("uploadId"));
+            assertEquals(assetId, body.getString("assetId"));
+        } finally {
+            assertTrue(file.delete());
+        }
+    }
+
+    @Test
+    public void cancellationRequestedBeforeUploadStartsSurvivesSessionCreation() throws Exception {
+        QueueConnectionFactory connections = new QueueConnectionFactory();
+        String uploadId = "88888888-8888-4888-8888-888888888888";
+        String assetId = "77777777-7777-4777-8777-777777777777";
+        String digest = "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81";
+        connections.enqueue(201, "{\"uploadId\":\"" + uploadId
+                + "\",\"assetId\":\"" + assetId
+                + "\",\"uploadStatus\":\"uploading\",\"byteSize\":3"
+                + ",\"sha256\":\"" + digest
+                + "\",\"chunkSize\":3,\"chunkCount\":1,\"receivedChunks\":[]"
+                + ",\"nextChunkIndex\":0}");
+        connections.enqueue(200, "{\"uploadId\":\"" + uploadId
+                + "\",\"assetId\":\"" + assetId
+                + "\",\"uploadStatus\":\"cancelled\",\"receivedChunks\":[]}");
+        WorkflowDeviceHttpClient client = client(configuration(), connections);
+        client.cancelActiveUpload();
+        File file = Files.createTempFile("workflow-pre-cancel-evidence", ".jpg").toFile();
+        Files.write(file.toPath(), new byte[]{1, 2, 3});
+        try {
+            try {
+                client.uploadResumable(
+                        new WorkflowEvidenceUploadCoordinator.PendingEvidence(
+                                "33333333-3333-4333-8333-333333333333",
+                                EXECUTION_ID,
+                                "local-pre-cancel",
+                                "photo-a",
+                                "nameplate",
+                                WorkflowEvidenceUploadCoordinator.MediaKind.PHOTO,
+                                "task-evidence/pre-cancel.jpg",
+                                0),
+                        file,
+                        "2026-08-05T15:00:00.000Z");
+                throw new AssertionError("expected upload cancellation");
+            } catch (WorkflowEvidenceUploadCoordinator.UploadCancelledException expected) {
+                assertTrue(expected.getMessage().contains("cancelled"));
+            }
+            assertEquals(2, connections.opened.size());
+            assertTrue(connections.opened.get(0).endsWith("/evidence/session"));
+            assertTrue(connections.opened.get(1).endsWith("/evidence/cancel"));
+        } finally {
+            assertTrue(file.delete());
+        }
+    }
+
     @Test(expected = IOException.class)
     public void rejectsExecutionStartWhenServerReturnsADifferentExecutionId() throws Exception {
         QueueConnectionFactory connections = new QueueConnectionFactory();
@@ -274,14 +417,18 @@ public final class WorkflowDeviceHttpClientTest {
         private final java.util.List<CapturingConnection> used = new java.util.ArrayList<>();
 
         void enqueue(int status, String body) {
-            responses.add(new Response(status, body));
+            enqueue(status, body, null);
+        }
+
+        void enqueue(int status, String body, Runnable onResponse) {
+            responses.add(new Response(status, body, onResponse));
         }
 
         @Override
         public HttpURLConnection open(String endpoint) throws IOException {
             Response response = responses.remove();
             CapturingConnection connection = new CapturingConnection(
-                    new URL(endpoint), response.status, response.body);
+                    new URL(endpoint), response.status, response.body, response.onResponse);
             opened.add(endpoint);
             used.add(connection);
             return connection;
@@ -291,10 +438,12 @@ public final class WorkflowDeviceHttpClientTest {
     private static final class Response {
         private final int status;
         private final String body;
+        private final Runnable onResponse;
 
-        private Response(int status, String body) {
+        private Response(int status, String body, Runnable onResponse) {
             this.status = status;
             this.body = body;
+            this.onResponse = onResponse;
         }
     }
 
@@ -302,17 +451,26 @@ public final class WorkflowDeviceHttpClientTest {
         private final int status;
         private final byte[] response;
         private final ByteArrayOutputStream request = new ByteArrayOutputStream();
+        private final Runnable onResponse;
         private String method = "";
+        private boolean responseCallbackInvoked;
 
-        private CapturingConnection(URL url, int status, String body) {
+        private CapturingConnection(URL url, int status, String body, Runnable onResponse) {
             super(url);
             this.status = status;
             this.response = body.getBytes(StandardCharsets.UTF_8);
+            this.onResponse = onResponse;
         }
 
         @Override public void setRequestMethod(String method) { this.method = method; }
         @Override public OutputStream getOutputStream() { return request; }
-        @Override public int getResponseCode() { return status; }
+        @Override public int getResponseCode() {
+            if (!responseCallbackInvoked && onResponse != null) {
+                responseCallbackInvoked = true;
+                onResponse.run();
+            }
+            return status;
+        }
         @Override public InputStream getInputStream() { return new ByteArrayInputStream(response); }
         @Override public InputStream getErrorStream() { return new ByteArrayInputStream(response); }
         @Override public void disconnect() { }

@@ -1,18 +1,21 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Bot, Image, Mic, RefreshCw, Video } from "lucide-react";
+import { ArrowLeft, BookPlus, Bot, Image, Mic, RefreshCw, Video } from "lucide-react";
 import type { ManagementApi, MediaAsset, TaskDetail, TaskEvent } from "../../api/management-api";
 import { eventText } from "../../api/management-api";
 import { formatTime, statusLabel } from "../dashboard/DashboardPage";
+import { KnowledgeCaseDraftDialog } from "../governance/GovernanceDialogs";
 
 type TimelineItem = { id: string; createdAt: string; kind: "message" | "media"; value: TaskEvent | MediaAsset };
 
 export function TaskTimelinePage({ taskId, api, onBack }: { taskId: string; api: ManagementApi; onBack?: () => void }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null); const [error, setError] = useState(""); const [retrying, setRetrying] = useState("");
+  const [caseDraftOpen, setCaseDraftOpen] = useState(false); const [caseDraftMessage, setCaseDraftMessage] = useState("");
   useEffect(() => { let alive = true; api.getTask(taskId).then((value) => alive && setDetail(value)).catch((cause: unknown) => alive && setError(cause instanceof Error ? cause.message : "无法读取任务详情")); return () => { alive = false; }; }, [api, taskId]);
   async function retry(mediaId: string) { setRetrying(mediaId); try { await api.retryMedia(taskId, mediaId); setDetail(await api.getTask(taskId)); } catch (cause) { setError(cause instanceof Error ? cause.message : "重传请求失败"); } finally { setRetrying(""); } }
   if (error) return <section className="notice error">{error}</section>; if (!detail) return <section className="notice">正在加载任务时间线…</section>;
   const items: TimelineItem[] = [...detail.messages.map((value) => ({ id: value.id, createdAt: value.created_at, kind: "message" as const, value })), ...detail.media.map((value) => ({ id: value.id, createdAt: value.captured_at ?? value.created_at ?? "", kind: "media" as const, value }))].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  return <section className="page-stack"><div className="task-title"><button className="icon-button" aria-label="返回任务列表" onClick={onBack} title="返回任务列表"><ArrowLeft size={19} /></button><div><h2>{detail.task.title || "未命名任务"}</h2><p>{detail.task.current_step || "现场任务进行中"}</p></div><span className={`status ${detail.task.status}`}>{statusLabel(detail.task.status)}</span></div><section className="surface timeline">{items.length ? items.map((item) => item.kind === "message" ? <MessageItem event={item.value as TaskEvent} key={item.id} /> : <MediaItem media={item.value as MediaAsset} retrying={retrying === item.id} onRetry={() => retry(item.id)} key={item.id} />) : <div className="empty">该任务尚未同步对话或现场证据。</div>}</section></section>;
+  const canCreateKnowledgeCase = detail.task.status === "completed" || detail.task.status === "closed";
+  return <section className="page-stack"><div className="task-title"><button className="icon-button" aria-label="返回任务列表" onClick={onBack} title="返回任务列表"><ArrowLeft size={19} /></button><div><h2>{detail.task.title || "未命名任务"}</h2><p>{detail.task.current_step || "现场任务进行中"}</p></div><div className="task-title-actions"><span className={`status ${detail.task.status}`}>{statusLabel(detail.task.status)}</span>{canCreateKnowledgeCase ? <button className="secondary-button" onClick={() => { setCaseDraftMessage(""); setCaseDraftOpen(true); }} type="button"><BookPlus size={16} />沉淀为知识草稿</button> : null}</div></div>{caseDraftMessage ? <section className="notice task-case-success" role="status">{caseDraftMessage}</section> : null}<section className="surface timeline">{items.length ? items.map((item) => item.kind === "message" ? <MessageItem event={item.value as TaskEvent} key={item.id} /> : <MediaItem media={item.value as MediaAsset} retrying={retrying === item.id} onRetry={() => retry(item.id)} key={item.id} />) : <div className="empty">该任务尚未同步对话或现场证据。</div>}</section>{caseDraftOpen ? <KnowledgeCaseDraftDialog taskId={detail.task.id} taskTitle={detail.task.title} onCancel={() => setCaseDraftOpen(false)} onSubmit={async (command) => { await api.createKnowledgeCaseDraft(detail.task.id, command); setCaseDraftOpen(false); setCaseDraftMessage("知识草稿已创建，请到华方知识库完成审核。"); }} /> : null}</section>;
 }
 
 function MessageItem({ event }: { event: TaskEvent }) { const isAi = event.event_type === "ai_response"; const Icon = isAi ? Bot : event.event_type === "voice_transcript" ? Mic : Image; return <article className={`timeline-item message ${isAi ? "ai" : "user"}`}><div className="timeline-icon"><Icon size={16} /></div><div><span>{isAi ? "AI 运维回复" : event.event_type === "voice_transcript" ? "现场语音" : "现场输入"}</span><p>{eventText(event)}</p><time>{formatTime(event.created_at)}</time></div></article>; }

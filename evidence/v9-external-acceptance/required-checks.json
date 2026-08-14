@@ -1,0 +1,88 @@
+{
+  "production_supabase": [
+    "auth_invitation_email",
+    "first_login_password_setup",
+    "organization_rls_isolation",
+    "project_scope_enforcement",
+    "multi_role_authorization",
+    "last_super_admin_protection",
+    "audit_event_persistence"
+  ],
+  "management_cloud": [
+    "isolated_release_directory",
+    "dedicated_container_and_port",
+    "tls_certificate_valid",
+    "caddy_configuration_valid",
+    "management_authentication",
+    "expert_health_unchanged",
+    "rollback_drill"
+  ],
+  "device_activation": [
+    "device_activation",
+    "engineer_project_binding",
+    "short_lived_session",
+    "session_expiry",
+    "credential_revocation",
+    "unauthorized_access_denied",
+    "mdm_compliance_enforced"
+  ],
+  "air3_voice_voiceprint_performance": [
+    "xiaodingdang_single_turn",
+    "voiceprint_direct_command",
+    "microphone_mutual_exclusion",
+    "camera_video_expert_preemption",
+    "no_automatic_listener_resume",
+    "owner_acceptance",
+    "impostor_rejection",
+    "replay_rejection",
+    "weak_network_recovery",
+    "p95_interaction_latency",
+    "twenty_minute_stability",
+    "power_budget",
+    "thermal_budget"
+  ],
+  "mvs_writeback": [
+    "engineer_task_list",
+    "work_order_detail_sop",
+    "evidence_upload",
+    "attachment_binding",
+    "dynamic_form_schema",
+    "explicit_confirmation",
+    "idempotent_write",
+    "process_transition",
+    "ai_write_prohibited"
+  ],
+  "expert_collaboration": [
+    "bidirectional_video",
+    "bidirectional_audio",
+    "microphone_handoff",
+    "reconnect_recovery",
+    "return_to_original_project_step",
+    "existing_expert_site_unchanged"
+  ],
+  "operations_resilience": [
+    "gateway_database_restore",
+    "voiceprint_database_restore",
+    "evidence_media_restore",
+    "rpo_rto_met",
+    "disk_full_recovery",
+    "monitoring_notification",
+    "object_storage_cleanup"
+  ],
+  "security_assessment": [
+    "authorized_dast",
+    "third_party_penetration_test",
+    "critical_findings_resolved",
+    "high_findings_resolved",
+    "remediation_retest",
+    "dependency_audit_clean"
+  ],
+  "supplier_sdk_approval": [
+    "aikit_usage_approved",
+    "voiceprint_service_approved",
+    "pem_material_reviewed",
+    "data_processing_approved",
+    "retention_deletion_approved",
+    "production_terms_accepted"
+  ]
+}

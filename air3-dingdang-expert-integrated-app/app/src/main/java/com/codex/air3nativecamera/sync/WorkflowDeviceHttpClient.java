@@ -5,9 +5,11 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -17,12 +19,18 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport, WorkflowAssignmentGateway {
+public final class WorkflowDeviceHttpClient implements
+        TaskSyncClient.Transport,
+        WorkflowAssignmentGateway,
+        WorkflowEvidenceUploadCoordinator.CancellableResumableTransport {
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
     private static final long MAX_SAFE_INTEGER = 9_007_199_254_740_991L;
     private static final int MAX_WORKFLOW_PHOTO_BYTES = 5 * 1024 * 1024;
     private static final int MAX_WORKFLOW_VIDEO_BYTES = 8 * 1024 * 1024;
+    private static final int WORKFLOW_CHUNK_SIZE = 256 * 1024;
+    private static final int MAX_WORKFLOW_CHUNK_SIZE = 1024 * 1024;
     private static final Set<String> ASSIGNMENT_MODES = set("required", "optional", "none");
     private static final Set<String> ASSIGNMENT_STATUSES = set(
             "queued", "notified", "delivered", "verified", "ready",
@@ -212,6 +220,7 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
     private final int schemaVersion;
     private final String capabilityHeader;
     private final HttpConnectionFactory connectionFactory;
+    private final AtomicBoolean evidenceUploadCancellationRequested = new AtomicBoolean();
 
     public WorkflowDeviceHttpClient(
             DeviceSyncConfiguration configuration,
@@ -415,6 +424,272 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
             throw new IOException("workflow_evidence_response_invalid");
         }
         return assetId;
+    }
+
+    @Override
+    public String upload(
+            WorkflowEvidenceUploadCoordinator.PendingEvidence evidence,
+            byte[] bytes,
+            String capturedAt
+    ) throws IOException {
+        if (evidence == null) {
+            throw new IllegalArgumentException("workflow evidence is required");
+        }
+        return uploadEvidence(
+                evidence.assignmentId(),
+                evidence.executionId(),
+                evidence.localEvidenceId(),
+                evidence.nodeId(),
+                evidence.evidenceKey(),
+                evidence.kind(),
+                evidence.contentType(),
+                evidence.durationSeconds(),
+                bytes,
+                capturedAt);
+    }
+
+    @Override
+    public String uploadResumable(
+            WorkflowEvidenceUploadCoordinator.PendingEvidence evidence,
+            File file,
+            String capturedAt
+    ) throws IOException {
+        if (evidence == null || file == null || !file.isFile()) {
+            throw new IllegalArgumentException("workflow evidence file is invalid");
+        }
+        long length = file.length();
+        if (length < 1L || length > evidence.maximumBytes() || length > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("workflow evidence file size is invalid");
+        }
+        String captured = clean(capturedAt);
+        if (captured.isEmpty() || captured.length() > 100) {
+            throw new IllegalArgumentException("workflow evidence timestamp is invalid");
+        }
+        int byteSize = (int) length;
+        String digest = sha256File(file, byteSize);
+        int chunkCount = (byteSize + WORKFLOW_CHUNK_SIZE - 1) / WORKFLOW_CHUNK_SIZE;
+        JSONObject sessionBody;
+        try {
+            sessionBody = new JSONObject()
+                    .put("assignmentId", requiredUuid(
+                            evidence.assignmentId(), "workflow assignment identifier is invalid"))
+                    .put("executionId", requiredUuid(
+                            evidence.executionId(), "workflow execution identifier is invalid"))
+                    .put("localEvidenceId", requiredShortIdentifier(
+                            evidence.localEvidenceId(), "workflow local evidence identifier is invalid"))
+                    .put("nodeId", requiredShortIdentifier(
+                            evidence.nodeId(), "workflow node identifier is invalid"))
+                    .put("evidenceKey", requiredShortIdentifier(
+                            evidence.evidenceKey(), "workflow evidence key is invalid"))
+                    .put("kind", evidence.kind())
+                    .put("contentType", evidence.contentType())
+                    .put("durationSeconds", evidence.durationSeconds())
+                    .put("byteSize", byteSize)
+                    .put("sha256", digest)
+                    .put("capturedAt", captured)
+                    .put("chunkSize", WORKFLOW_CHUNK_SIZE)
+                    .put("chunkCount", chunkCount);
+        } catch (JSONException exception) {
+            throw new IOException("workflow_evidence_session_payload_invalid", exception);
+        }
+        JSONObject session = request(
+                "POST",
+                configuration.workflowEndpoint() + "/evidence/session",
+                sessionBody,
+                false);
+        String uploadId = requiredUuid(
+                clean(session.optString("uploadId", "")),
+                "workflow evidence upload identifier is invalid");
+        String assetId = requiredUuid(
+                clean(session.optString("assetId", "")),
+                "workflow evidence asset identifier is invalid");
+        cancelIfRequested(uploadId, assetId);
+        int remoteChunkSize = exactPositiveInt(session.opt("chunkSize"));
+        int remoteChunkCount = exactPositiveInt(session.opt("chunkCount"));
+        if (remoteChunkSize > MAX_WORKFLOW_CHUNK_SIZE
+                || remoteChunkCount != (byteSize + remoteChunkSize - 1) / remoteChunkSize) {
+            throw new IOException("workflow_evidence_session_response_invalid");
+        }
+        String uploadStatus = clean(session.optString("uploadStatus", ""));
+        if ("synced".equals(uploadStatus)) {
+            validateResumableEvidenceResponse(session, assetId, digest, byteSize,
+                    evidence.durationSeconds());
+            return assetId;
+        }
+        if (!"uploading".equals(uploadStatus)) {
+            throw new IOException("workflow_evidence_session_response_invalid");
+        }
+        Set<Integer> received = parseReceivedChunks(
+                session.optJSONArray("receivedChunks"), remoteChunkCount);
+        for (int index = 0; index < remoteChunkCount; index += 1) {
+            cancelIfRequested(uploadId, assetId);
+            if (received.contains(index)) continue;
+            byte[] chunk = readChunk(file, (long) index * remoteChunkSize, remoteChunkSize);
+            String chunkDigest = sha256(chunk);
+            JSONObject chunkBody;
+            try {
+                chunkBody = new JSONObject()
+                        .put("uploadId", uploadId)
+                        .put("chunkIndex", index)
+                        .put("chunkCount", remoteChunkCount)
+                        .put("chunkByteSize", chunk.length)
+                        .put("chunkSha256", chunkDigest)
+                        .put("dataBase64", Base64.getEncoder().encodeToString(chunk));
+            } catch (JSONException exception) {
+                throw new IOException("workflow_evidence_chunk_payload_invalid", exception);
+            }
+            JSONObject chunkResponse = request(
+                    "POST",
+                    configuration.workflowEndpoint() + "/evidence/chunk",
+                    chunkBody,
+                    false);
+            if (!uploadId.equals(clean(chunkResponse.optString("uploadId", "")))) {
+                throw new IOException("workflow_evidence_chunk_response_invalid");
+            }
+            cancelIfRequested(uploadId, assetId);
+        }
+        cancelIfRequested(uploadId, assetId);
+        JSONObject completeBody;
+        try {
+            completeBody = new JSONObject()
+                    .put("uploadId", uploadId)
+                    .put("chunkCount", remoteChunkCount)
+                    .put("sha256", digest);
+        } catch (JSONException exception) {
+            throw new IOException("workflow_evidence_complete_payload_invalid", exception);
+        }
+        JSONObject completed = request(
+                "POST",
+                configuration.workflowEndpoint() + "/evidence/complete",
+                completeBody,
+                false);
+        validateResumableEvidenceResponse(
+                completed, assetId, digest, byteSize, evidence.durationSeconds());
+        return assetId;
+    }
+
+    @Override
+    public void cancelActiveUpload() {
+        evidenceUploadCancellationRequested.set(true);
+    }
+
+    public void cancelEvidenceUpload(String uploadId, String assetId) throws IOException {
+        String acceptedUploadId = requiredUuid(
+                uploadId, "workflow evidence upload identifier is invalid");
+        String acceptedAssetId = requiredUuid(
+                assetId, "workflow evidence asset identifier is invalid");
+        JSONObject body;
+        try {
+            body = new JSONObject()
+                    .put("uploadId", acceptedUploadId)
+                    .put("assetId", acceptedAssetId);
+        } catch (JSONException exception) {
+            throw new IOException("workflow_evidence_cancel_payload_invalid", exception);
+        }
+        JSONObject response = request(
+                "POST",
+                configuration.workflowEndpoint() + "/evidence/cancel",
+                body,
+                false);
+        if (!acceptedUploadId.equals(clean(response.optString("uploadId", "")))
+                || !acceptedAssetId.equals(clean(response.optString("assetId", "")))
+                || !"cancelled".equals(clean(response.optString("uploadStatus", "")))) {
+            throw new IOException("workflow_evidence_cancel_response_invalid");
+        }
+    }
+
+    private void cancelIfRequested(String uploadId, String assetId) throws IOException {
+        if (!evidenceUploadCancellationRequested.compareAndSet(true, false)) return;
+        try {
+            cancelEvidenceUpload(uploadId, assetId);
+        } catch (IOException exception) {
+            throw new WorkflowEvidenceUploadCoordinator.UploadCancelledException(exception);
+        }
+        throw new WorkflowEvidenceUploadCoordinator.UploadCancelledException();
+    }
+
+    private static void validateResumableEvidenceResponse(
+            JSONObject response,
+            String assetId,
+            String digest,
+            int byteSize,
+            int durationSeconds
+    ) throws IOException {
+        String remoteAssetId = clean(response.optString("assetId", ""));
+        String uploadStatus = clean(response.optString("uploadStatus", ""));
+        String remoteDigest = clean(response.optString("sha256", ""));
+        long remoteByteSize = exactNonNegativeLong(response.opt("byteSize"));
+        long remoteDuration = response.has("durationSeconds")
+                ? exactNonNegativeLong(response.opt("durationSeconds"))
+                : durationSeconds;
+        if (!assetId.equals(remoteAssetId) || !validUuid(remoteAssetId)
+                || !"synced".equals(uploadStatus)
+                || remoteByteSize != byteSize
+                || remoteDuration != durationSeconds
+                || !digest.equals(remoteDigest)) {
+            throw new IOException("workflow_evidence_response_invalid");
+        }
+    }
+
+    private static Set<Integer> parseReceivedChunks(JSONArray values, int chunkCount)
+            throws IOException {
+        if (values == null || values.length() > chunkCount) {
+            throw new IOException("workflow_evidence_session_response_invalid");
+        }
+        Set<Integer> received = new LinkedHashSet<>();
+        for (int index = 0; index < values.length(); index += 1) {
+            int chunk = exactPositiveOrZeroInt(values.opt(index));
+            if (chunk >= chunkCount || !received.add(chunk)) {
+                throw new IOException("workflow_evidence_session_response_invalid");
+            }
+        }
+        return received;
+    }
+
+    private static byte[] readChunk(File file, long offset, int maximumBytes) throws IOException {
+        try (RandomAccessFile input = new RandomAccessFile(file, "r")) {
+            if (offset < 0L || offset >= input.length()) {
+                throw new IOException("workflow evidence chunk offset is invalid");
+            }
+            input.seek(offset);
+            int remaining = (int) Math.min(maximumBytes, input.length() - offset);
+            byte[] bytes = new byte[remaining];
+            int cursor = 0;
+            while (cursor < bytes.length) {
+                int count = input.read(bytes, cursor, bytes.length - cursor);
+                if (count < 0) break;
+                cursor += count;
+            }
+            if (cursor != bytes.length) {
+                throw new IOException("workflow evidence file changed during upload");
+            }
+            return bytes;
+        }
+    }
+
+    private static String sha256File(File file, int expectedLength) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (Exception exception) {
+            throw new IOException("workflow evidence digest unavailable", exception);
+        }
+        byte[] buffer = new byte[64 * 1024];
+        int total = 0;
+        try (InputStream input = new java.io.FileInputStream(file)) {
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                total += count;
+                if (total > expectedLength) {
+                    throw new IOException("workflow evidence file changed during upload");
+                }
+                digest.update(buffer, 0, count);
+            }
+        }
+        if (total != expectedLength) {
+            throw new IOException("workflow evidence file changed during upload");
+        }
+        return toHex(digest.digest());
     }
 
     private JSONObject request(
@@ -665,6 +940,28 @@ public final class WorkflowDeviceHttpClient implements TaskSyncClient.Transport,
                 && integer >= 0L
                 && integer <= MAX_SAFE_INTEGER
                 ? integer : -1L;
+    }
+
+    private static int exactPositiveInt(Object raw) throws IOException {
+        long value = exactNonNegativeLong(raw);
+        if (value < 1L || value > Integer.MAX_VALUE) {
+            throw new IOException("workflow_evidence_session_response_invalid");
+        }
+        return (int) value;
+    }
+
+    private static int exactPositiveOrZeroInt(Object raw) throws IOException {
+        long value = exactNonNegativeLong(raw);
+        if (value < 0L || value > Integer.MAX_VALUE) {
+            throw new IOException("workflow_evidence_session_response_invalid");
+        }
+        return (int) value;
+    }
+
+    private static String toHex(byte[] bytes) {
+        StringBuilder value = new StringBuilder(bytes.length * 2);
+        for (byte item : bytes) value.append(String.format("%02x", item & 0xff));
+        return value.toString();
     }
 
     private static Set<String> set(String... values) {

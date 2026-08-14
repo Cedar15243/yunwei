@@ -27,9 +27,13 @@ for (const contract of [
   /handlers\.put\("camera\.photo",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
   /handlers\.put\("camera\.video",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
   /handlers\.put\("audio\.voice_input",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
+  /handlers\.put\("ai\.execution_context",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
+  /handlers\.put\("expert\.video",\s*new WorkflowCapabilityRegistry\.Handler\(\)/,
   /beginWorkflowPhotoCapture\(request, callback\)/,
   /beginWorkflowVideoCapture\(request, callback\)/,
   /beginWorkflowVoiceInput\(request, callback\)/,
+  /beginWorkflowAiAssist\(request, callback\)/,
+  /beginWorkflowExpertCall\(request, callback\)/,
   /new WorkflowCapabilityRegistry\(handlers\)/,
   /new WorkflowAssignmentRepository\(/,
   /new WorkflowAssignmentSyncCoordinator\(client, repository, packageCache, 4\)/,
@@ -40,7 +44,8 @@ for (const contract of [
   /workflowEvidenceUploadCoordinator\.request\(\)/,
   /shouldFailPendingImageUpload\(\s*sendAfterImageUpload,\s*voiceStreamState == VoiceStreamState\.AI_PENDING\)/,
   /failAssistantStreamingMessage\(error, null, "照片上传阶段"\)/,
-  /recoverableAiFailureMessage\(stage, detail, requestId\)/,
+  /String effectiveStage = aiFailureStage\(detail, stage\)/,
+  /recoverableAiFailureMessage\(effectiveStage, detail, requestId\)/,
   /new AndroidNetworkAvailabilityMonitor\(getApplicationContext\(\)\)/,
   /workflowDeliveryController\.start\(\)/,
   /workflowDeliveryController\.onForeground\(\)/,
@@ -51,9 +56,10 @@ for (const contract of [
 
 assert.equal(
   (main.match(/handlers\.put\(/g) ?? []).length,
-  3,
-  "only the implemented photo, video, and workflow voice capabilities may be advertised",
+  5,
+  "only the implemented photo, video, voice, AI, and expert capabilities may be advertised",
 );
+assert.doesNotMatch(main, /handlers\.put\("connector\.gateway"/);
 assert.match(main, /VoiceSessionPurpose \{ NONE, WAKE, COMMAND, OFFLINE_WAKE_COMMAND, WORKFLOW_INPUT \}/);
 assert.match(main, /"workflow_voice_input"\.equals\(value\)[\s\S]*?dispatchWorkflowVoiceInput\(\)/);
 assert.match(main, /private void completeWorkflowVoiceInput\(String transcript\)/);

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "gateId": "supplier_sdk_approval",
+  "release": {
+    "applicationId": "com.codex.air3nativecamera.dingdangexpert.v9",
+    "versionCode": 900000,
+    "versionName": "9.0.0",
+    "apkSha256": "02DABEE95134D8FA9376F415880E08F7AA2872BC43BB2BDE92CA51BCF05806E5",
+    "deliveryZipSha256": "E28FEDCC960418EC85B514297BA1061B9C00CA25FA2115F8CC46CF8C67BD8AEC",
+    "generatedAt": "2026-08-12T20:22:03.2076647+00:00"
+  },
+  "environment": "production",
+  "executedAt": null,
+  "runner": "",
+  "result": "pending",
+  "checks": [
+    {
+      "id": "aikit_usage_approved",
+      "status": "pending"
+    },
+    {
+      "id": "voiceprint_service_approved",
+      "status": "pending"
+    },
+    {
+      "id": "pem_material_reviewed",
+      "status": "pending"
+    },
+    {
+      "id": "data_processing_approved",
+      "status": "pending"
+    },
+    {
+      "id": "retention_deletion_approved",
+      "status": "pending"
+    },
+    {
+      "id": "production_terms_accepted",
+      "status": "pending"
+    }
+  ]
+}

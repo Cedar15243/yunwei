@@ -71,6 +71,44 @@ describe("App", () => {
     expect(screen.getByLabelText("账号邮箱")).toBeVisible();
   });
 
+  it("completes a recovery session by setting a new password and returning to sign in", async () => {
+    const user = userEvent.setup();
+    const completePasswordRecovery = vi.fn().mockResolvedValue(undefined);
+    const auth = {
+      restoreSession: vi.fn().mockResolvedValue({ authenticated: true, passwordRecovery: true }),
+      signIn: vi.fn(),
+      completePasswordRecovery,
+    };
+    render(<App auth={auth as any} />);
+
+    expect(await screen.findByRole("heading", { name: "设置新密码" })).toBeVisible();
+    await user.type(screen.getByLabelText("新密码"), "SecurePass123!");
+    await user.type(screen.getByLabelText("确认新密码"), "SecurePass123!");
+    await user.click(screen.getByRole("button", { name: "确认更新密码" }));
+
+    expect(completePasswordRecovery).toHaveBeenCalledWith("SecurePass123!");
+    expect(await screen.findByText("密码已更新，请使用新密码登录。")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "叮当 AI 运维管理平台" })).toBeVisible();
+  });
+
+  it("keeps password recovery local when the two new passwords do not match", async () => {
+    const user = userEvent.setup();
+    const completePasswordRecovery = vi.fn();
+    const auth = {
+      restoreSession: vi.fn().mockResolvedValue({ authenticated: true, passwordRecovery: true }),
+      signIn: vi.fn(),
+      completePasswordRecovery,
+    };
+    render(<App auth={auth as any} />);
+
+    await user.type(await screen.findByLabelText("新密码"), "SecurePass123!");
+    await user.type(screen.getByLabelText("确认新密码"), "DifferentPass123!");
+    await user.click(screen.getByRole("button", { name: "确认更新密码" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("两次输入的新密码不一致");
+    expect(completePasswordRecovery).not.toHaveBeenCalled();
+  });
+
   it("keeps desktop navigation after selecting tasks", async () => {
     const user = userEvent.setup();
     render(<App initialAuthenticated />);
@@ -87,6 +125,67 @@ describe("App", () => {
 
     expect(screen.getByRole("heading", { name: "现场应用", level: 1 })).toBeVisible();
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
+  });
+
+  it("exposes AI Skill and Huafang knowledge workspaces in the existing navigation", async () => {
+    render(<App initialAuthenticated />);
+
+    expect(screen.getByRole("link", { name: "AI 运维技能" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "华方知识库" })).toBeVisible();
+  });
+
+  it("opens the independent voiceprint management workspace", async () => {
+    const user = userEvent.setup();
+    const api = {
+      ...workflowApi(),
+      getPeople: vi.fn().mockResolvedValue([]),
+      getDevices: vi.fn().mockResolvedValue([]),
+      getVoiceprints: vi.fn().mockResolvedValue({ items: [], auditChainValid: true }),
+      revokeVoiceprint: vi.fn(),
+    } as unknown as ManagementApi;
+    render(<App api={api} initialAuthenticated />);
+
+    await user.click(screen.getByRole("link", { name: "声纹管理" }));
+
+    expect(screen.getByRole("heading", { name: "声纹管理", level: 1 })).toBeVisible();
+    expect(await screen.findByText("当前组织暂无声纹档案。")).toBeVisible();
+  }, 10_000);
+
+  it("opens the audit and system operations workspaces from the existing navigation", async () => {
+    const user = userEvent.setup();
+    const api = {
+      ...workflowApi(),
+      getAuditEvents: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+      getSystemStatus: vi.fn().mockResolvedValue({
+        modelContract: {
+          mainAiModel: "qwen3-vl-plus",
+          realtimeAsrModel: "fun-asr-realtime",
+          wakeEngine: "iflytek-aikit-previous",
+          voiceprintService: "iflytek/s1aa729d0",
+          locked: true,
+        },
+        integrations: {
+          contentSyncConfigured: true,
+          voiceprintAdminConfigured: true,
+          deviceActivationBackendConfigured: true,
+        },
+        contentDistribution: { totalDevices: 0, healthyDevices: 0, issueCount: 0, items: [] },
+        generatedAt: "2026-08-03T08:00:00.000Z",
+      }),
+    } as unknown as ManagementApi;
+    render(<App api={api} initialAuthenticated />);
+
+    await user.click(screen.getByRole("link", { name: "统一审计" }));
+    expect(screen.getByRole("heading", { name: "统一审计", level: 1 })).toBeVisible();
+    expect(await screen.findByText("当前筛选条件没有审计记录。")).toBeVisible();
+
+    await user.click(screen.getByRole("link", { name: "系统运行" }));
+    expect(screen.getByRole("heading", { name: "系统运行", level: 1 })).toBeVisible();
+    expect(await screen.findByText("模型与安全合同")).toBeVisible();
+
+    await user.click(screen.getByRole("link", { name: "系统设置" }));
+    expect(screen.getByRole("heading", { name: "系统设置", level: 1 })).toBeVisible();
+    expect(await screen.findByText("身份与密钥边界")).toBeVisible();
   });
 
   it("opens an existing workflow in the real studio route", async () => {
