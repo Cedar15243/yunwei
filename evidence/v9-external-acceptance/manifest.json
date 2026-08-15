@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-14T11:34:01.498Z",
+  "generatedAt": "2026-08-15T06:02:17.710Z",
   "release": {
     "applicationId": "com.codex.air3nativecamera.dingdangexpert.v9",
     "versionCode": 900000,
     "versionName": "9.0.0",
     "apkSha256": "02DABEE95134D8FA9376F415880E08F7AA2872BC43BB2BDE92CA51BCF05806E5",
-    "deliveryZipSha256": "0EC8165B2E12760CEB3E37FAF947D80D4D7BF70B46BD7AE74E2C2FDFF3730760",
+    "deliveryZipSha256": "5343BFED6263F06255B8AEEBA0CB9A46D8C46CC5A81B39940B3B8940C9AAB026",
     "generatedAt": "2026-08-12T20:22:03.2076647+00:00"
   },
   "gates": {},
