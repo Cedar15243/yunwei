@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 
 import { validateReleaseBoundDocuments } from "./v9-delivery-document-binding.mjs";
 
@@ -34,5 +36,20 @@ assert.throws(() => validateReleaseBoundDocuments({
     "docs/COMPLETION_MATRIX.md": `正式 APK SHA-256 \`${currentHash}\``,
   },
 }), /FORMAL_RELEASE\.md.*current release SHA-256/i);
+
+const root = path.resolve(import.meta.dirname, "..");
+const packager = fs.readFileSync(path.join(root, "scripts", "package-v9-formal-delivery.ps1"), "utf8");
+assert.match(packager, /function Update-ReleaseBoundDocument\(/);
+assert.match(packager, /Release-bound document has no APK SHA-256 statement/);
+assert.match(packager, /function Test-ReleaseDocumentationBinding\(/);
+assert.match(packager, /No formal V9 APK has documentation bound to its release SHA-256/);
+for (const document of [
+  "FORMAL_RELEASE.md",
+  "VERIFICATION.md",
+  "CURRENT_STATE_AUDIT.md",
+  "COMPLETION_MATRIX.md",
+]) {
+  assert.match(packager, new RegExp(`"${document}"`));
+}
 
 console.log("V9 delivery document release-binding tests passed.");

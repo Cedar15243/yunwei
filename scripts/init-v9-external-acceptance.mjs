@@ -27,12 +27,23 @@ function latestFile(paths) {
 }
 
 export function readExternalAcceptanceReleaseBinding(repositoryRoot, deliverySidecarPath) {
-  const releaseManifestPath = latestFile([
-    path.join(repositoryRoot, "output/v9.0.0-formal-release-rerun/release-manifest.json"),
-    path.join(repositoryRoot, "output/v9.0.0-formal-release/release-manifest.json"),
-    path.join(repositoryRoot, "output/v9.0.0-formal-release-current/release-manifest.json"),
-    path.join(repositoryRoot, "android/release-manifest.json"),
-  ]);
+  // A formal delivery is immutable once external acceptance starts. Newer local
+  // candidate builds must never silently rebind its evidence workspace.
+  const deliveryManifestPath = path.join(
+    repositoryRoot,
+    "output/v9.0.0-formal-delivery/android/release-manifest.json",
+  );
+  const releaseManifestPath = fs.statSync(
+    deliveryManifestPath,
+    { throwIfNoEntry: false },
+  )?.isFile()
+    ? deliveryManifestPath
+    : latestFile([
+      path.join(repositoryRoot, "output/v9.0.0-formal-release-rerun/release-manifest.json"),
+      path.join(repositoryRoot, "output/v9.0.0-formal-release/release-manifest.json"),
+      path.join(repositoryRoot, "output/v9.0.0-formal-release-current/release-manifest.json"),
+      path.join(repositoryRoot, "android/release-manifest.json"),
+    ]);
   if (!releaseManifestPath) {
     throw new Error(`V9 release manifest is missing under ${repositoryRoot}`);
   }

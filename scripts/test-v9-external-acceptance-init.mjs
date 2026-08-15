@@ -64,6 +64,10 @@ function createRepositoryFixture(root) {
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "v9-external-init-"));
 try {
   createRepositoryFixture(temporary);
+  writeJson(
+    path.join(temporary, "output/v9.0.0-formal-delivery/android/release-manifest.json"),
+    RELEASE_MANIFEST,
+  );
   const workspace = path.join(temporary, "evidence/v9-external-acceptance");
   const result = initializeExternalAcceptanceWorkspace({
     repositoryRoot: temporary,
@@ -77,12 +81,12 @@ try {
 
   const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
   const expectedRelease = {
-    applicationId: NEWER_RELEASE_MANIFEST.applicationId,
-    versionCode: NEWER_RELEASE_MANIFEST.versionCode,
-    versionName: NEWER_RELEASE_MANIFEST.versionName,
-    apkSha256: NEWER_RELEASE_MANIFEST.sha256,
+    applicationId: RELEASE_MANIFEST.applicationId,
+    versionCode: RELEASE_MANIFEST.versionCode,
+    versionName: RELEASE_MANIFEST.versionName,
+    apkSha256: RELEASE_MANIFEST.sha256,
     deliveryZipSha256: DELIVERY_ZIP_SHA256,
-    generatedAt: NEWER_RELEASE_MANIFEST.builtAt,
+    generatedAt: RELEASE_MANIFEST.builtAt,
   };
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.generatedAt, GENERATED_AT.toISOString());
@@ -187,6 +191,20 @@ try {
   const repositoryAuditReport = JSON.parse(repositoryAudit.stdout);
   assert.equal(repositoryAuditReport.releaseBindingStatus, "proven");
   assert.equal(repositoryAuditReport.status, "pending_external_validation");
+
+  const candidateOnlyRoot = path.join(temporary, "candidate-only-release");
+  createRepositoryFixture(candidateOnlyRoot);
+  const candidateWorkspace = path.join(temporary, "candidate-only-evidence");
+  initializeExternalAcceptanceWorkspace({
+    repositoryRoot: candidateOnlyRoot,
+    outputDirectory: candidateWorkspace,
+    generatedAt: GENERATED_AT,
+  });
+  const candidateManifest = JSON.parse(fs.readFileSync(
+    path.join(candidateWorkspace, "manifest.json"),
+    "utf8",
+  ));
+  assert.equal(candidateManifest.release.apkSha256, NEWER_RELEASE_MANIFEST.sha256);
 
   const sourceRoot = path.join(import.meta.dirname, "..");
   const packageJson = JSON.parse(fs.readFileSync(path.join(sourceRoot, "package.json"), "utf8"));

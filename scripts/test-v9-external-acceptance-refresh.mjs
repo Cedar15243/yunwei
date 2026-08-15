@@ -13,6 +13,11 @@ const RELEASE_MANIFEST = {
   sha256: "A".repeat(64),
   builtAt: "2026-08-14T00:00:00.000Z",
 };
+const NEWER_CANDIDATE_MANIFEST = {
+  ...RELEASE_MANIFEST,
+  sha256: "D".repeat(64),
+  builtAt: "2026-08-15T00:00:00.000Z",
+};
 const FIRST_ZIP = "B".repeat(64);
 const NEXT_ZIP = "C".repeat(64);
 
@@ -34,6 +39,10 @@ function writeRepositoryFixture(root, zipHash) {
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "v9-external-acceptance-refresh-"));
 try {
   writeRepositoryFixture(temporary, FIRST_ZIP);
+  writeJson(
+    path.join(temporary, "output/v9.0.0-formal-delivery/android/release-manifest.json"),
+    RELEASE_MANIFEST,
+  );
   const workspace = "evidence/v9-external-acceptance";
   initializeExternalAcceptanceWorkspace({
     repositoryRoot: temporary,
@@ -47,6 +56,17 @@ try {
   });
   assert.equal(alreadyCurrent.refreshed, false);
   assert.equal(alreadyCurrent.reason, "already_current");
+
+  writeJson(
+    path.join(temporary, "output/v9.0.0-formal-release/release-manifest.json"),
+    NEWER_CANDIDATE_MANIFEST,
+  );
+  const candidateIgnored = refreshExternalAcceptanceWorkspace({
+    repositoryRoot: temporary,
+    outputDirectory: workspace,
+  });
+  assert.equal(candidateIgnored.refreshed, false);
+  assert.equal(candidateIgnored.reason, "already_current");
 
   writeRepositoryFixture(temporary, NEXT_ZIP);
   const refreshed = refreshExternalAcceptanceWorkspace({

@@ -705,21 +705,30 @@ export function auditExternalAcceptance({
 }
 
 function readExpectedRelease(repositoryRoot) {
-  const releaseManifestPath = [
-    "output/v9.0.0-formal-release-rerun/release-manifest.json",
-    "output/v9.0.0-formal-release/release-manifest.json",
-    "output/v9.0.0-formal-release-current/release-manifest.json",
-    "android/release-manifest.json",
-  ]
-    .map((relativePath) => {
-      const absolutePath = path.join(repositoryRoot, relativePath);
-      return {
-        absolutePath,
-        stat: fs.statSync(absolutePath, { throwIfNoEntry: false }),
-      };
-    })
-    .filter(({ stat }) => stat?.isFile())
-    .sort((left, right) => right.stat.mtimeMs - left.stat.mtimeMs)[0]?.absolutePath;
+  const deliveryManifestPath = path.join(
+    repositoryRoot,
+    "output/v9.0.0-formal-delivery/android/release-manifest.json",
+  );
+  const releaseManifestPath = fs.statSync(
+    deliveryManifestPath,
+    { throwIfNoEntry: false },
+  )?.isFile()
+    ? deliveryManifestPath
+    : [
+      "output/v9.0.0-formal-release-rerun/release-manifest.json",
+      "output/v9.0.0-formal-release/release-manifest.json",
+      "output/v9.0.0-formal-release-current/release-manifest.json",
+      "android/release-manifest.json",
+    ]
+      .map((relativePath) => {
+        const absolutePath = path.join(repositoryRoot, relativePath);
+        return {
+          absolutePath,
+          stat: fs.statSync(absolutePath, { throwIfNoEntry: false }),
+        };
+      })
+      .filter(({ stat }) => stat?.isFile())
+      .sort((left, right) => right.stat.mtimeMs - left.stat.mtimeMs)[0]?.absolutePath;
   if (!releaseManifestPath) {
     throw new Error(`V9 release manifest is missing under ${repositoryRoot}`);
   }

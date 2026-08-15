@@ -11,6 +11,32 @@ if (-not $deliveryRoot.StartsWith($outputRoot + [IO.Path]::DirectorySeparatorCha
   throw "OutputDirectory must stay under output/"
 }
 
+$releaseBoundSourceDocuments = @(
+  (Join-Path $repoRoot "docs\releases\v9.0.0-formal-release.md"),
+  (Join-Path $repoRoot "docs\verification\2026-08-08-v9-formal-delivery-package.md"),
+  (Join-Path $repoRoot "docs\audits\2026-08-06-v9-current-state-audit.md"),
+  (Join-Path $repoRoot "docs\audits\2026-08-06-v9-completion-matrix.md")
+)
+
+function Test-ReleaseDocumentationBinding([string]$ReleaseHash) {
+  if ($ReleaseHash -notmatch '^[A-Fa-f0-9]{64}$') { return $false }
+  $expected = $ReleaseHash.ToUpperInvariant()
+  foreach ($document in $releaseBoundSourceDocuments) {
+    if (-not (Test-Path -LiteralPath $document -PathType Leaf)) { return $false }
+    $apkStatements = (Get-Content -Raw -Encoding UTF8 -LiteralPath $document) -split "`r?`n" |
+      ForEach-Object { $_ -split '[锛?]' } |
+      Where-Object { $_ -match '(?i)APK' }
+    $hashes = @($apkStatements | ForEach-Object {
+      [regex]::Matches($_, '\b[A-Fa-f0-9]{64}\b') | ForEach-Object { $_.Value.ToUpperInvariant() }
+    })
+    if ($hashes.Count -eq 0 -or $hashes -notcontains $expected -or
+        ($hashes | Where-Object { $_ -ne $expected }).Count -gt 0) {
+      return $false
+    }
+  }
+  return $true
+}
+
 $apkCandidates = @(
   (Join-Path $repoRoot "output\v9.0.0-formal-release-rerun\DingdangAI-V9-9.0.0-release.apk"),
   (Join-Path $repoRoot "output\v9.0.0-formal-release\DingdangAI-V9-9.0.0-release.apk"),
@@ -21,6 +47,14 @@ $apk = $apkCandidates |
   ForEach-Object {
     $file = Get-Item -LiteralPath $_
     $manifest = Join-Path $file.DirectoryName "release-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) { return }
+    try {
+      $releaseManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifest | ConvertFrom-Json
+    } catch {
+      return
+    }
+    $releaseHash = [string]$releaseManifest.sha256
+    if (-not (Test-ReleaseDocumentationBinding $releaseHash)) { return }
     $sortTime = if (Test-Path -LiteralPath $manifest -PathType Leaf) {
       (Get-Item -LiteralPath $manifest).LastWriteTimeUtc
     } else {
@@ -31,7 +65,9 @@ $apk = $apkCandidates |
   Sort-Object SortTime -Descending |
   ForEach-Object { $_.File } |
   Select-Object -First 1
-if (-not $apk) { throw "Formal V9 APK is missing. Run scripts/build-v9-release.ps1 first." }
+if (-not $apk) {
+  throw "No formal V9 APK has documentation bound to its release SHA-256. Run Air3 verification before packaging a new APK."
+}
 
 $webDist = Join-Path $repoRoot "ops-management-web\dist"
 if (-not (Test-Path -LiteralPath (Join-Path $webDist "index.html") -PathType Leaf)) {
@@ -276,6 +312,40 @@ foreach ($name in $air3EvidenceNames) {
 }
 $releaseManifest = Get-Content -Encoding UTF8 -LiteralPath (Join-Path $apk.DirectoryName "release-manifest.json") |
   ConvertFrom-Json
+$releaseHash = [string]$releaseManifest.sha256
+if ($releaseHash -notmatch '^[A-Fa-f0-9]{64}$') {
+  throw "Formal V9 release manifest contains an invalid APK SHA-256"
+}
+$releaseHash = $releaseHash.ToUpperInvariant()
+
+function Update-ReleaseBoundDocument([string]$Name) {
+  $path = Join-Path $docsRoot $Name
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    throw "Release-bound document is missing: $Name"
+  }
+  $changed = $false
+  $content = Get-Content -Raw -Encoding UTF8 -LiteralPath $path
+  $updated = (($content -split "`r?`n") | ForEach-Object {
+    if ($_ -match '(?i)APK' -and $_ -match '\b[A-Fa-f0-9]{64}\b') {
+      $changed = $true
+      [regex]::Replace($_, '\b[A-Fa-f0-9]{64}\b', $releaseHash)
+    } else {
+      $_
+    }
+  }) -join [Environment]::NewLine
+  if (-not $changed) {
+    throw "Release-bound document has no APK SHA-256 statement: $Name"
+  }
+  $updated | Set-Content -LiteralPath $path -Encoding UTF8
+}
+
+foreach ($document in @(
+    "FORMAL_RELEASE.md",
+    "VERIFICATION.md",
+    "CURRENT_STATE_AUDIT.md",
+    "COMPLETION_MATRIX.md")) {
+  Update-ReleaseBoundDocument $document
+}
 $air3EvidenceArtifacts = @($air3EvidenceNames | ForEach-Object {
     $relative = ($air3EvidenceRelativeRoot + "\" + $_).Replace("\", "/")
     $absolute = Join-Path $deliveryRoot ($relative.Replace("/", [IO.Path]::DirectorySeparatorChar))
