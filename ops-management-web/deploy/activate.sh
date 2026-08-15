@@ -153,6 +153,8 @@ CADDY_CONTAINER_BEFORE=$(container_fingerprint "$CADDY_CONTAINER")
 install -d -m 0755 "$STATE_DIR"
 CADDY_BACKUP=$STATE_DIR/Caddyfile.pre-$RELEASE_ID
 cp -a "$CADDYFILE" "$CADDY_BACKUP"
+# Persist the recovery point before any public route or container changes.
+printf '%s\n' "$CADDY_BACKUP" >"$STATE_DIR/last-caddy-backup"
 if test -L "$APP_ROOT/current"; then
   OLD_CURRENT=$(readlink -f "$APP_ROOT/current")
   ln -sfn "$OLD_CURRENT" "$APP_ROOT/previous"
@@ -204,7 +206,6 @@ OPS_MANAGEMENT_DOMAIN=$OPS_MANAGEMENT_DOMAIN \
 OPS_MANAGEMENT_PORT=$OPS_MANAGEMENT_PORT \
   "$RELEASE_DIR/deploy/health-check.sh"
 
-printf '%s\n' "$CADDY_BACKUP" >"$STATE_DIR/last-caddy-backup"
 printf '%s\n' "$RELEASE_DIR" >"$STATE_DIR/current-release"
 trap - EXIT HUP INT TERM
 printf 'Activated dingdang-ops-management-web release %s\n' "$RELEASE_ID"

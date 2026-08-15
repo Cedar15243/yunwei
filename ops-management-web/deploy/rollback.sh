@@ -70,10 +70,18 @@ compose_release() {
 }
 
 test "$(id -u)" -eq 0
-test -L "$APP_ROOT/current"
 test -f "$STATE_DIR/last-caddy-backup"
 test -f "$CADDYFILE"
-CURRENT=$(readlink -f "$APP_ROOT/current")
+CURRENT_LINK=false
+if test -L "$APP_ROOT/current"; then
+  CURRENT=$(readlink -f "$APP_ROOT/current")
+  CURRENT_LINK=true
+elif test -L "$APP_ROOT/candidate"; then
+  # The process may have been interrupted after candidate activation began.
+  CURRENT=$(readlink -f "$APP_ROOT/candidate")
+else
+  fail "management_release_pointer_missing"
+fi
 test -f "$CURRENT/release.env"
 CADDY_BACKUP=$(cat "$STATE_DIR/last-caddy-backup")
 test -f "$CADDY_BACKUP"
@@ -144,7 +152,8 @@ if test "$HAS_PREVIOUS" = true; then
   wait_for_service "http://127.0.0.1:$PREVIOUS_PORT/health" dingdang-ops-management-web
 else
   compose_release "$CURRENT" "$CURRENT_IMAGE" "$CURRENT_PORT" down --remove-orphans
-  unlink "$APP_ROOT/current"
+  if test "$CURRENT_LINK" = true && test -L "$APP_ROOT/current"; then unlink "$APP_ROOT/current"; fi
+  if test -L "$APP_ROOT/candidate"; then unlink "$APP_ROOT/candidate"; fi
 fi
 
 docker exec ai-edge-caddy caddy reload --config /etc/caddy/Caddyfile

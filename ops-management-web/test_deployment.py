@@ -170,6 +170,7 @@ bb.chinacedar.top:2305 {
         self.assertIn("RELEASE_DIR=$APP_ROOT/releases/$RELEASE_ID", activate)
         self.assertIn('ln -sfn "$RELEASE_DIR" "$APP_ROOT/current"', activate)
         self.assertIn('ln -sfn "$OLD_CURRENT" "$APP_ROOT/previous"', activate)
+        self.assertIn('printf \'%s\\n\' "$CADDY_BACKUP" >"$STATE_DIR/last-caddy-backup"', activate)
         self.assertIn("trap rollback_failed_activation EXIT HUP INT TERM", activate)
         self.assertIn("OPS_MANAGEMENT_IMAGE_ID", activate)
         self.assertIn("OPS_MANAGEMENT_BUILD_CONFIG_SHA256", activate)
@@ -191,6 +192,8 @@ bb.chinacedar.top:2305 {
         content = (DEPLOY / "rollback.sh").read_text("utf-8")
 
         self.assertIn('if test -L "$APP_ROOT/previous"', content)
+        self.assertIn('elif test -L "$APP_ROOT/candidate"', content)
+        self.assertIn('management_release_pointer_missing', content)
         self.assertIn('unlink "$APP_ROOT/current"', content)
         self.assertIn('compose_release "$CURRENT" "$CURRENT_IMAGE" "$CURRENT_PORT" down', content)
         self.assertIn("OPS_MANAGEMENT_IMAGE", content)
