@@ -12183,6 +12183,10 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         return offlineWakeEnabled && wakeAuthorized;
     }
 
+    static boolean canStartManagedVoiceCapture(boolean secureRuntime, boolean backendProvisioned) {
+        return !secureRuntime || backendProvisioned;
+    }
+
     private static String voiceprintStageLabel(VoiceprintEnrollmentFlow.Stage stage) {
         if (stage == VoiceprintEnrollmentFlow.Stage.CONSENT_REQUIRED) return "等待本人授权";
         if (stage == VoiceprintEnrollmentFlow.Stage.ENROLLING) return "录入中";
@@ -13067,6 +13071,24 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         voiceStartedFromAutoWindow = false;
         if (recordingVoice) {
             finishToggleVoiceRecording("manual_finish");
+            return;
+        }
+        boolean backendProvisioned = runtimeConfiguration != null
+                && runtimeConfiguration.isBackendProvisioned();
+        if (!canStartManagedVoiceCapture(SECURE_RUNTIME, backendProvisioned)) {
+            cancelForegroundVoiceListening();
+            voiceSessionPurpose = VoiceSessionPurpose.NONE;
+            if (workflowVoiceInputStart) {
+                failWorkflowVoiceInput(
+                        "workflow_voice_service_unavailable",
+                        "设备未激活，当前工作流语音未开始");
+                return;
+            }
+            boolean wakeAuthorized = runtimeConfiguration != null
+                    && runtimeConfiguration.hasIflytekCredentials();
+            recoverableAiError = runtimeStandbyNotice(
+                    SECURE_RUNTIME, backendProvisioned, OFFLINE_WAKE_ENABLED, wakeAuthorized);
+            renderChatScreen();
             return;
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {

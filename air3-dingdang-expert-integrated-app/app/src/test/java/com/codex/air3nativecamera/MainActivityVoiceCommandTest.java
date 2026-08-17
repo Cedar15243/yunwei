@@ -60,6 +60,13 @@ public final class MainActivityVoiceCommandTest {
     }
 
     @Test
+    public void unprovisionedSecureRuntimeCannotStartAnyVoiceCapture() {
+        assertFalse(MainActivity.canStartManagedVoiceCapture(true, false));
+        assertTrue(MainActivity.canStartManagedVoiceCapture(true, true));
+        assertTrue(MainActivity.canStartManagedVoiceCapture(false, false));
+    }
+
+    @Test
     public void secureRuntimeRequiresWakeAuthorizationBeforeClaimingXiaoDingdangReady() {
         assertEquals("语音未授权",
                 MainActivity.runtimeStandbyLabel(true, true, true, false));
