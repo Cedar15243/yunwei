@@ -5,6 +5,8 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -63,6 +65,8 @@ public final class ExpertCollabCoordinator implements
     private boolean started;
     private boolean released;
     private boolean initialCallRequested;
+    private final Handler mediaStartHandler = new Handler(Looper.getMainLooper());
+    private int mediaStartGeneration;
 
     public ExpertCollabCoordinator(Activity activity, String serverUrl, Host host) {
         if (activity == null || host == null || serverUrl == null || serverUrl.trim().isEmpty()) {
@@ -232,6 +236,8 @@ public final class ExpertCollabCoordinator implements
         }
         released = true;
         started = false;
+        mediaStartGeneration++;
+        mediaStartHandler.removeCallbacksAndMessages(null);
         endCurrentCall(true);
         if (signaling != null) {
             signaling.close();
@@ -372,7 +378,15 @@ public final class ExpertCollabCoordinator implements
                 stateMachine.onAccepted(expertId);
                 renderState();
                 host.prepareExpertMedia();
-                trtcSession.join(acceptedSessionId, expertId);
+                final int generation = ++mediaStartGeneration;
+                mediaStartHandler.postDelayed(() -> {
+                    if (released || generation != mediaStartGeneration
+                            || stateMachine.getState() != CollabStateMachine.State.CONNECTING
+                            || trtcSession == null) {
+                        return;
+                    }
+                    trtcSession.join(acceptedSessionId, expertId);
+                }, 2000L);
             } catch (RuntimeException error) {
                 onMediaError(error.getMessage());
             }

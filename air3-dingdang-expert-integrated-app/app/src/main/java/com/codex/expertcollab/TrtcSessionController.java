@@ -49,6 +49,8 @@ final class TrtcSessionController {
     private final Listener listener;
     private boolean active;
     private boolean joining;
+    private boolean localAudioStarted;
+    private boolean localPreviewStarted;
     private int joinGeneration;
     private String expertUserId;
 
@@ -68,9 +70,13 @@ final class TrtcSessionController {
                 if (result > 0) {
                     active = true;
                     joining = false;
-                    // Air3 applies its call-volume profile after the room becomes active.
-                    maximizeVoiceCallVolume();
-                    mainHandler.postDelayed(TrtcSessionController.this::maximizeVoiceCallVolume, 800L);
+                    if (!localPreviewStarted) {
+                        localPreviewStarted = true;
+                        // Air3 exposes a single rear camera; true selects a
+                        // front camera and leaves the local preview black.
+                        trtc.startLocalPreview(false, preview);
+                    }
+                    mainHandler.postDelayed(() -> startLocalCallAudio(), 300L);
                     listener.onMediaConnected();
                 } else {
                     joining = false;
@@ -173,6 +179,7 @@ final class TrtcSessionController {
 
     private void enterRoom(String sessionId, int sdkAppId, String signedUserId, String userSig) {
         joining = true;
+        localAudioStarted = false;
         TRTCCloudDef.TRTCVideoEncParam encoder = new TRTCCloudDef.TRTCVideoEncParam();
         encoder.videoResolution = TRTCCloudDef.TRTC_VIDEO_RESOLUTION_1920_1080;
         encoder.videoResolutionMode = TRTCCloudDef.TRTC_VIDEO_RESOLUTION_MODE_LANDSCAPE;
@@ -185,17 +192,25 @@ final class TrtcSessionController {
         qos.preference = TRTCCloudDef.TRTC_VIDEO_QOS_PREFERENCE_CLEAR;
         qos.controlMode = TRTCCloudDef.VIDEO_QOS_CONTROL_CLIENT;
         trtc.setNetworkQosParam(qos);
-        trtc.startLocalPreview(true, preview);
-        trtc.startLocalAudio(TRTCCloudDef.TRTC_AUDIO_QUALITY_SPEECH);
-        trtc.setAudioRoute(TRTCCloudDef.TRTC_AUDIO_ROUTE_SPEAKER);
-        trtc.setRemoteAudioVolume(expertUserId, 100);
-        maximizeVoiceCallVolume();
         TRTCCloudDef.TRTCParams params = new TRTCCloudDef.TRTCParams();
         params.sdkAppId = sdkAppId;
         params.userId = signedUserId;
         params.userSig = userSig;
         params.strRoomId = sessionId;
         trtc.enterRoom(params, TRTCCloudDef.TRTC_APP_SCENE_VIDEOCALL);
+    }
+
+    private void startLocalCallAudio() {
+        if (!active || localAudioStarted) {
+            return;
+        }
+        localAudioStarted = true;
+        trtc.startLocalAudio(TRTCCloudDef.TRTC_AUDIO_QUALITY_SPEECH);
+        trtc.setAudioRoute(TRTCCloudDef.TRTC_AUDIO_ROUTE_SPEAKER);
+        if (expertUserId != null) {
+            trtc.setRemoteAudioVolume(expertUserId, 100);
+        }
+        maximizeVoiceCallVolume();
     }
 
     private void maximizeVoiceCallVolume() {
@@ -218,9 +233,13 @@ final class TrtcSessionController {
             trtc.exitRoom();
         }
         trtc.stopLocalAudio();
-        trtc.stopLocalPreview();
+        if (localPreviewStarted) {
+            trtc.stopLocalPreview();
+        }
         active = false;
         joining = false;
+        localAudioStarted = false;
+        localPreviewStarted = false;
         expertUserId = null;
     }
 
@@ -228,6 +247,8 @@ final class TrtcSessionController {
         leave();
         trtc.setListener(null);
         httpClient.dispatcher().executorService().shutdown();
-        TRTCCloud.destroySharedInstance();
+        // Keep the process-wide TRTC singleton alive. Destroying it while a
+        // delayed native callback is still in flight can terminate the app on
+        // Air3; leave() has already released this session's resources.
     }
 }

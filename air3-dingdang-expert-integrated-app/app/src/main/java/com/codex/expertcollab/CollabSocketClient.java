@@ -42,6 +42,7 @@ final class CollabSocketClient {
     private final CollabProtocol protocol;
     private WebSocket socket;
     private boolean closed;
+    private boolean presenceRegistered;
 
     CollabSocketClient(String serverOrigin, String deviceId, String deviceName, Listener listener) {
         this.websocketUrl = serverOrigin.replaceFirst("^http", "ws") + "/collab";
@@ -57,6 +58,7 @@ final class CollabSocketClient {
         }
         handler.removeCallbacks(reconnect);
         closed = false;
+        presenceRegistered = false;
         socket = client.newWebSocket(new Request.Builder().url(websocketUrl).build(), new WebSocketListener() {
             @Override
             public void onOpen(WebSocket webSocket, Response response) {
@@ -70,7 +72,6 @@ final class CollabSocketClient {
                     payload.put("kind", "glasses");
                     payload.put("name", deviceName);
                     send(protocol.envelope("presence.registered", null, payload));
-                    listener.onSignalingConnected();
                 } catch (JSONException error) {
                     listener.onSignalingError(error.getMessage());
                 }
@@ -151,6 +152,11 @@ final class CollabSocketClient {
             Log.d(TAG, "event=" + type + " sessionId=" + sessionId);
             if ("call.requested".equals(type) && sessionId != null) {
                 listener.onSessionCreated(sessionId);
+            } else if ("presence.registered".equals(type)) {
+                if (!presenceRegistered) {
+                    presenceRegistered = true;
+                    listener.onSignalingConnected();
+                }
             } else if ("call.accepted".equals(type) && sessionId != null) {
                 listener.onAccepted(sessionId, payload.optString("expertId", "专家"));
             } else if ("call.ended".equals(type) && sessionId != null) {

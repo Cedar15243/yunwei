@@ -132,15 +132,33 @@ export function createCollabServer(config: ServerConfig, options: CollabServerOp
   });
 
   app.post("/api/trtc/credential", (request, response) => {
-    const userId = typeof request.body?.userId === "string" ? request.body.userId.trim() : "";
+    // Keep the eye-side contract backward compatible while accepting the SDK
+    // contract used by the expert console. Both identities must resolve to the
+    // same TRTC user ID; never trust a second conflicting identity.
+    const requestedUserId = typeof request.body?.userId === "string" ? request.body.userId.trim() : "";
+    const requestedExpertId = typeof request.body?.expertId === "string" ? request.body.expertId.trim() : "";
+    if (requestedUserId && requestedExpertId && requestedUserId !== requestedExpertId) {
+      response.status(400).json({ error: "userId and expertId must match" });
+      return;
+    }
+    const userId = requestedUserId || requestedExpertId;
     if (!userId || userId.length > 32) {
       response.status(400).json({ error: "userId must contain 1 to 32 characters" });
+      return;
+    }
+
+    const roomId = typeof request.body?.sessionId === "string" ? request.body.sessionId.trim() : "";
+    if (roomId.length > 64) {
+      response.status(400).json({ error: "sessionId must contain 1 to 64 characters" });
       return;
     }
 
     response.json({
       sdkAppId: config.sdkAppId,
       userId,
+      expertId: userId,
+      expertName: typeof request.body?.expertName === "string" ? request.body.expertName.trim() : "",
+      roomId,
       userSig: generateUserSig({
         sdkAppId: config.sdkAppId,
         sdkSecret: config.sdkSecret,

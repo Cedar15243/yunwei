@@ -3303,6 +3303,11 @@ public final class MainActivity extends Activity implements FeatureEntry.Feature
         cancelForegroundVoiceListening();
         stopVoiceRecording(false, "expert_media_start");
         resetVoiceSessionForForegroundWake();
+        // The expert media session is the sole Camera2/TRTC owner. Repeat the
+        // close defensively because an expert can be accepted while the mode
+        // transition is still draining a previous camera callback.
+        closeCamera();
+        stopCameraThread();
     }
 
     private void enterExpertMode() {

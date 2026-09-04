@@ -119,6 +119,37 @@ describe("collaboration server", () => {
     expect(JSON.stringify(credential)).not.toContain("private-secret");
   });
 
+  it("accepts the SDK expertId contract and returns the room identity", async () => {
+    const server = await startServer();
+    const response = await fetch(`${server.httpUrl}/api/trtc/credential`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "session-1", expertId: "expert-wang", expertName: "王工" }),
+    });
+    const credential = await response.json() as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(credential).toMatchObject({
+      userId: "expert-wang",
+      expertId: "expert-wang",
+      expertName: "王工",
+      roomId: "session-1",
+    });
+    expect(credential.userSig).toEqual(expect.any(String));
+  });
+
+  it("rejects conflicting userId and expertId values", async () => {
+    const server = await startServer();
+    const response = await fetch(`${server.httpUrl}/api/trtc/credential`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ userId: "glasses-01", expertId: "expert-wang" }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "userId and expertId must match" });
+  });
+
   it("stores and serves a frozen JPEG frame", async () => {
     const server = await startServer();
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
